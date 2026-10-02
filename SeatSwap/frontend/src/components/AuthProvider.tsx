@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { authApi, refreshSession, type RefreshResult } from "../api/auth";
+import { authApi } from "../api/auth";
+import { refreshSession, type RefreshResult } from "../api/session";
 import {
   ACCESS_TOKEN_KEY,
   REFRESH_TOKEN_KEY,
@@ -115,6 +116,23 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // 같은 탭에서 토큰이 바뀌면(401 인터셉터의 재발급/토큰 삭제 등) 상태 동기화.
+  // 삭제되면 session이 null이 되어 ProtectedRoute가 state.from과 함께 /login으로 보낸다.
+  // 일시 장애(unavailable)는 토큰을 건드리지 않으므로 알림도 없고 세션도 유지된다 (L-2 정책).
+  useEffect(
+    () =>
+      tokenStorage.subscribe(() => {
+        // accessToken과 user id가 그대로면 이전 객체를 유지해 불필요한 리렌더를 막는다
+        setSession((prev) => {
+          const next = readValidSession();
+          if (prev === null && next === null) return prev;
+          if (prev && next && prev.accessToken === next.accessToken && prev.user.id === next.user.id) return prev;
+          return next;
+        });
+      }),
+    []
+  );
 
   const login = useCallback(async (payload: LoginRequest): Promise<AuthUser> => {
     const tokens = await authApi.login(payload);

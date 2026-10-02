@@ -117,14 +117,14 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - **회원가입/로그인/JWT 인증(FR-01) 실제 구현 완료**: JwtTokenProvider, JwtAuthenticationFilter,
   CustomUserDetailsService, SecurityConfig(CORS 포함), AuthService/AuthController,
   POST /api/auth/signup·login·refresh
-- **FR-01 프론트 로그인 연동 구현 + 리뷰 반영 완료 (2026-10-02, 커밋 전)**: authApi(login/signup/refresh),
+- **FR-01 프론트 로그인 연동 구현 + 리뷰 반영 완료 (2026-10-02, 커밋 7dcf8a0)**: authApi(login/signup/refresh),
   AuthProvider(localStorage 토큰 저장·복원, 탭 간 동기화), ProtectedRoute(state.from 복귀),
   LoginPage(입력 검증, 백엔드 400 `{message}`/`{field:msg}` 에러 표시, 모바일 우선 CSS Modules).
   code-reviewer 리뷰 반영 완료: access exp 60초 전 선제 재발급 타이머, single-flight refreshSession,
   refresh 400일 때만 토큰 삭제(네트워크/5xx는 보존), redirect 경로 검증(`//`·백슬래시 거부),
   필드 오류 중복 표시 제거, 인터셉터 없는 refresh 전용 authClient. `npm run build` 통과
 - 프론트 tsconfig에 `noEmit` 추가 (tsc가 src에 .js를 생성해 vite가 옛 .js를 번들하던 문제 해결)
-- **FR-01 회원가입 구현 + 2차 리뷰 반영 완료 (2026-10-02, 커밋 전)**
+- **FR-01 회원가입 구현 + 2차 리뷰 반영 완료 (2026-10-02, 커밋 7dcf8a0)**
   - 프론트 SignupPage: 이메일/비밀번호/비밀번호 확인/닉네임, 클라이언트 검증 + 서버 필드 오류 표시,
     가입 후 자동 로그인 → 원래 경로 복귀, 자동 로그인 실패 시 /login 안내 + 이메일 프리필
   - 로그인/가입 공용 모듈: authValidation.ts, useAuthRedirect.ts, AuthTextField.tsx, AuthForm.module.css
@@ -142,15 +142,35 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     (단위 테스트 포함)만 통과
   - 주의: 가입 검증 규칙이 DTO 어노테이션 / 서비스 상수 / 프론트 authValidation.ts 세 곳에 중복 —
     규칙 변경 시 세 곳 모두 수정
+- **FR-01 401/403 구분 + 401 재발급 인터셉터 구현, 3차 리뷰 반영 완료 (2026-10-03, 커밋 전)**
+  - 원칙: 401 = 미인증(재발급 대상), 403 = 권한 없음(재발급 안 함). refresh 일시 장애 시 로그아웃하지 않고 토큰 보존
+  - [backend] JwtAuthenticationEntryPoint / JwtAccessDeniedHandler / SecurityErrorResponseWriter
+    (SecurityConfig 등록): 401 `{"message":"로그인이 필요합니다."}`, 403 `{"message":"접근 권한이 없습니다."}`,
+    401/403에도 CORS 헤더 유지, `/api/auth/**` 동작 유지
+  - [backend] JwtAuthenticationFilter: 삭제된 사용자·JWT 파싱 오류(UsernameNotFoundException | JwtException)만
+    401, 그 외 예외는 전파. 필터 서블릿 자동 등록 비활성화(이중 등록 방지). RefreshRequest 메시지 한국어화
+  - [frontend] 401 인터셉터: 401 + 미재시도 + 인증 엔드포인트(`/auth/login|signup|refresh`, 화이트리스트) 아님
+    → single-flight refresh → 1회 재시도. refresh 400·토큰 없음·재시도 후 401 → 토큰 삭제 + 로그아웃
+    (→ /login, 원래 경로 유지). 네트워크/5xx → 토큰 유지 + "서버 오류/연결 불가" 표시, 5초 쿨다운.
+    403은 재발급 안 함. tokenStorage.subscribe로 같은 탭 로그아웃 알림.
+    모듈: authInterceptor.ts, session.ts, authClient.ts (순환 import 없음)
+  - 테스트: 백엔드 총 42건(이번에 19건 추가) 통과, `npm run build` 통과. curl 15케이스·프론트 통합 5/5·
+    목 시나리오 18/18 확인. 단 3차 리뷰 반영분은 빌드·단위 테스트·목 시나리오로만 검증(Docker 중지)
 - FR-01 후속 과제:
-  - [backend] 미인증 시 401 반환 AuthenticationEntryPoint (현재 403이라 권한부족과 구분 불가)
   - [backend] 내 정보 조회 `GET /api/users/me` (현재 프론트는 JWT 클레임 id/email만 사용)
-  - [frontend] 401 응답 인터셉터(재발급 후 재시도, single-flight) — 백엔드 401 통일 후
   - [frontend] Header 로그인 상태 메뉴/로그아웃
+  - 3차 리뷰 반영분 Docker 재기동 후 curl·통합 itest 재검증
   - 2차 리뷰 반영분 Docker 스택 재기동 후 E2E 재검증, 브라우저에서 가입/로그인 화면 직접 확인
+  - 필터에서 전파된 예외(DB 장애 등)는 Spring 기본 `/error` 포맷(`{timestamp,status,error,path}`)으로 나감 —
+    `{message}` 포맷 통일 검토, CORS 헤더 유지 여부 실측
+  - 403 경로는 역할 기반 규칙이 없어 슬라이스 테스트로만 확인
   - (참고) Spring Boot 3.3.0의 Security 6.3.0은 CVE-2025-22228 영향 버전 — 72바이트 차단으로
     완화했으나 패치 버전 업그레이드 검토
   - (완료 2026-10-02) `/error` permitAll + 공통 예외 핸들러, SignupPage
+  - (완료 2026-10-03) 401 AuthenticationEntryPoint, 401 재발급·재시도 인터셉터
+  - (결정 2026-10-03) 프론트 테스트 러너(vitest) 도입 안 함 → 해당 후속 과제 종료
 - 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
-- 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음 (07 작업일지는
-  `산출물/07_작업일지/2026-10-02.md`부터 새로 작성). 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
+- 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
+- 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.
+  현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 섹션)
+- 결정 (2026-10-03): 프론트 테스트 러너(vitest)는 도입하지 않음 — 인터셉터 분기는 저장소 밖 임시 스크립트로만 검증된 상태

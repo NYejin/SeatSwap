@@ -4,16 +4,46 @@ import type { AuthUser, TokenResponse } from "../types/auth";
 export const ACCESS_TOKEN_KEY = "accessToken";
 export const REFRESH_TOKEN_KEY = "refreshToken";
 
+/**
+ * 같은 탭 안의 토큰 변경 알림. (window "storage" 이벤트는 다른 탭에만 오므로 별도 구독 경로가 필요)
+ * 401 인터셉터/refreshSession이 토큰을 저장·삭제하면 AuthProvider가 이를 받아 세션 상태를 동기화한다.
+ */
+type TokenListener = () => void;
+const listeners = new Set<TokenListener>();
+
+/** 리스너별로 예외를 격리해 한 구독자의 오류가 다른 구독자나 토큰 저장/삭제 흐름을 깨지 않게 한다 */
+function notify(): void {
+  listeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (err) {
+      console.error("[tokenStorage] listener error", err);
+    }
+  });
+}
+
+// 메서드는 this에 의존하지 않는다 (client.ts에서 함수 참조로 넘김)
 export const tokenStorage = {
   getAccessToken: (): string | null => localStorage.getItem(ACCESS_TOKEN_KEY),
   getRefreshToken: (): string | null => localStorage.getItem(REFRESH_TOKEN_KEY),
   save(tokens: Pick<TokenResponse, "accessToken" | "refreshToken">): void {
     localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
     localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    notify();
   },
   clear(): void {
+    const hadTokens =
+      localStorage.getItem(ACCESS_TOKEN_KEY) !== null || localStorage.getItem(REFRESH_TOKEN_KEY) !== null;
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
+    if (hadTokens) notify();
+  },
+  /** 같은 탭 토큰 변경 구독. 반환값은 구독 해제 함수 */
+  subscribe(listener: TokenListener): () => void {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
   },
 };
 

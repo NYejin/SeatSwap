@@ -1,14 +1,17 @@
 package com.seatswap.security;
 
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -18,7 +21,9 @@ import java.io.IOException;
 /**
  * Authorization: Bearer {accessToken} 헤더를 읽어 SecurityContext에 인증 정보를 채운다.
  * refresh token으로는 일반 API 접근을 허용하지 않는다 (isRefreshToken 체크).
+ * 토큰이 없거나 무효이면 인증 정보를 채우지 않고 통과시킨다 — 401 응답은 JwtAuthenticationEntryPoint 책임.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -40,15 +45,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (header != null && header.startsWith(PREFIX)) {
             String token = header.substring(PREFIX.length());
+            try {
+                if (jwtTokenProvider.validateToken(token) && !jwtTokenProvider.isRefreshToken(token)) {
+                    String email = jwtTokenProvider.getEmail(token);
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
-            if (jwtTokenProvider.validateToken(token) && !jwtTokenProvider.isRefreshToken(token)) {
-                String email = jwtTokenProvider.getEmail(token);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            } catch (UsernameNotFoundException | JwtException e) {
+                // 토큰은 서명상 유효하지만 사용자가 삭제된 경우(UsernameNotFoundException) 등.
+                // 여기서 직접 응답을 쓰지 않고 "인증 안 됨" 상태로 체인을 계속 진행한다.
+                // → 보호 API면 AuthorizationFilter → EntryPoint(401), /api/auth/** 등 permitAll이면 정상 처리.
+                // catch 범위는 "토큰은 왔지만 인증 불가"인 두 경우로 한정한다(사용자 없음, JWT 파싱 실패).
+                // DB 장애·AuthenticationServiceException·데이터 이상(IllegalArgumentException 등)은 401로 숨기지 않고 전파한다.
+                log.debug("JWT authentication skipped: {}", e.getMessage());
+                SecurityContextHolder.clearContext();
             }
         }
 
