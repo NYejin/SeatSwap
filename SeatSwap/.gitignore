@@ -1,0 +1,28 @@
+# 환경변수/시크릿 — 절대 커밋 금지
+.env
+*/.env
+backend/.env
+
+# backend (Gradle)
+backend/build/
+backend/.gradle/
+backend/bin/
+*.class
+
+# frontend (Node)
+frontend/node_modules/
+frontend/dist/
+
+# seatmap-service (Python)
+seatmap-service/.venv/
+seatmap-service/__pycache__/
+**/__pycache__/
+*.pyc
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

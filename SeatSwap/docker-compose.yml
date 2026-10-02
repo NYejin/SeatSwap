@@ -1,0 +1,58 @@
+# SeatSwap 전체 스택을 하나의 격리된(가상) 환경에서 띄우기 위한 구성.
+# backend(Spring Boot) / frontend(React) / seatmap-service(FastAPI) / mysql 4개 컨테이너.
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: seatswap-mysql
+    environment:
+      MYSQL_DATABASE: seatswap
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
+      # 앱 전용 계정 — 이미지가 최초 기동 시 자동으로 생성하고 MYSQL_DATABASE에 대한 권한을 부여한다.
+      MYSQL_USER: seatswap
+      MYSQL_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  seatmap-service:
+    build: ./seatmap-service
+    container_name: seatswap-seatmap-service
+    ports:
+      - "8001:8001"
+
+  backend:
+    build: ./backend
+    container_name: seatswap-backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+      seatmap-service:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/seatswap
+      SPRING_DATASOURCE_USERNAME: seatswap
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-changeme}
+      JWT_SECRET: ${JWT_SECRET:-changeme-dev-secret}
+      SEATMAP_SERVICE_URL: http://seatmap-service:8001
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: ./frontend
+    container_name: seatswap-frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8080/api
+    ports:
+      - "5173:5173"
+
+volumes:
+  mysql_data:
