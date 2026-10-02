@@ -117,4 +117,40 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - **회원가입/로그인/JWT 인증(FR-01) 실제 구현 완료**: JwtTokenProvider, JwtAuthenticationFilter,
   CustomUserDetailsService, SecurityConfig(CORS 포함), AuthService/AuthController,
   POST /api/auth/signup·login·refresh
-- 다음 단계: 프론트 연동 테스트, 나머지 도메인(공연/티켓/교환/채팅) 구현
+- **FR-01 프론트 로그인 연동 구현 + 리뷰 반영 완료 (2026-10-02, 커밋 전)**: authApi(login/signup/refresh),
+  AuthProvider(localStorage 토큰 저장·복원, 탭 간 동기화), ProtectedRoute(state.from 복귀),
+  LoginPage(입력 검증, 백엔드 400 `{message}`/`{field:msg}` 에러 표시, 모바일 우선 CSS Modules).
+  code-reviewer 리뷰 반영 완료: access exp 60초 전 선제 재발급 타이머, single-flight refreshSession,
+  refresh 400일 때만 토큰 삭제(네트워크/5xx는 보존), redirect 경로 검증(`//`·백슬래시 거부),
+  필드 오류 중복 표시 제거, 인터셉터 없는 refresh 전용 authClient. `npm run build` 통과
+- 프론트 tsconfig에 `noEmit` 추가 (tsc가 src에 .js를 생성해 vite가 옛 .js를 번들하던 문제 해결)
+- **FR-01 회원가입 구현 + 2차 리뷰 반영 완료 (2026-10-02, 커밋 전)**
+  - 프론트 SignupPage: 이메일/비밀번호/비밀번호 확인/닉네임, 클라이언트 검증 + 서버 필드 오류 표시,
+    가입 후 자동 로그인 → 원래 경로 복귀, 자동 로그인 실패 시 /login 안내 + 이메일 프리필
+  - 로그인/가입 공용 모듈: authValidation.ts, useAuthRedirect.ts, AuthTextField.tsx, AuthForm.module.css
+  - 백엔드 가입 입력 규칙: 이메일 trim + 소문자 정규화(가입·로그인 공통), 최대 100자 /
+    비밀번호 8~64자 + UTF-8 72바이트 이하(bcrypt 한계), 공백만 불가 / 닉네임 trim 후 2~20자,
+    보이지 않는 문자(Cf/Cc, 한글 채움 문자) 불가, **닉네임 중복 허용**
+  - 이메일 중복(동시 가입 레이스 포함) → 400 `{"email": "이미 가입된 이메일입니다."}`
+    (DataIntegrityViolation은 email unique 위반만 중복으로 매핑, 그 외는 로그 + 500)
+  - 공통 예외 처리: 깨진 JSON 400, Spring 표준 예외는 원래 상태코드 + 한국어 문구, 그 외 500,
+    5xx 상태 유지, Security 예외 rethrow. `/error` permitAll. 오류 메시지 한국어로 통일
+  - 요청 DTO toString 비밀번호 마스킹, 로그인 시 72바이트 넘는 비밀번호 즉시 실패
+  - 백엔드 단위 테스트 23건(AuthInputNormalizer 7, GlobalExceptionHandler 5, AuthService 11),
+    build.gradle에 `useJUnitPlatform()` 추가(없어서 테스트가 0건으로 건너뛰어졌음)
+  - 검증: Docker 스택 E2E는 2차 리뷰 반영 전에만 수행. 반영 후에는 `npm run build`, `gradle build`
+    (단위 테스트 포함)만 통과
+  - 주의: 가입 검증 규칙이 DTO 어노테이션 / 서비스 상수 / 프론트 authValidation.ts 세 곳에 중복 —
+    규칙 변경 시 세 곳 모두 수정
+- FR-01 후속 과제:
+  - [backend] 미인증 시 401 반환 AuthenticationEntryPoint (현재 403이라 권한부족과 구분 불가)
+  - [backend] 내 정보 조회 `GET /api/users/me` (현재 프론트는 JWT 클레임 id/email만 사용)
+  - [frontend] 401 응답 인터셉터(재발급 후 재시도, single-flight) — 백엔드 401 통일 후
+  - [frontend] Header 로그인 상태 메뉴/로그아웃
+  - 2차 리뷰 반영분 Docker 스택 재기동 후 E2E 재검증, 브라우저에서 가입/로그인 화면 직접 확인
+  - (참고) Spring Boot 3.3.0의 Security 6.3.0은 CVE-2025-22228 영향 버전 — 72바이트 차단으로
+    완화했으나 패치 버전 업그레이드 검토
+  - (완료 2026-10-02) `/error` permitAll + 공통 예외 핸들러, SignupPage
+- 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
+- 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음 (07 작업일지는
+  `산출물/07_작업일지/2026-10-02.md`부터 새로 작성). 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처

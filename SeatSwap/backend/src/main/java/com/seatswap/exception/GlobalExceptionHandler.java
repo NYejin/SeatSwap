@@ -1,30 +1,113 @@
 package com.seatswap.exception;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final String SERVER_ERROR_MESSAGE = "서버 오류가 발생했습니다.";
+
+    // 한 필드에 제약이 여러 개 걸려 동시에 실패할 때(예: 빈 값 → NotBlank + Size) 어떤 메시지를
+    // 보여줄지 결정적으로 고르기 위한 우선순위. 값이 작을수록 우선.
+    private static final Set<String> REQUIRED_CODES = Set.of("NotNull", "NotBlank", "NotEmpty");
+
+    // 필드에 귀속되는 비즈니스 오류(이메일 중복 등) — @Valid 실패와 동일한 {field: message} 포맷
+    @ExceptionHandler(FieldValidationException.class)
+    public ResponseEntity<Map<String, String>> handleFieldValidationException(FieldValidationException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(e.getField(), e.getMessage()));
+    }
 
     @ExceptionHandler(SeatSwapException.class)
     public ResponseEntity<Map<String, String>> handleSeatSwapException(SeatSwapException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", e.getMessage()));
     }
 
-    // @Valid 바인딩 실패 시 필드별 오류 메시지 반환 (SignupRequest 등)
+    // @Valid 바인딩 실패 시 필드별 오류 메시지 반환 (필드당 메시지 1개)
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> handleValidationException(MethodArgumentNotValidException e) {
+        Map<String, FieldError> picked = new LinkedHashMap<>();
+        for (FieldError fieldError : e.getBindingResult().getFieldErrors()) {
+            picked.merge(fieldError.getField(), fieldError, (current, candidate) ->
+                    constraintPriority(candidate) < constraintPriority(current) ? candidate : current);
+        }
         Map<String, String> errors = new LinkedHashMap<>();
-        e.getBindingResult().getFieldErrors().forEach(fieldError ->
-                errors.put(fieldError.getField(), fieldError.getDefaultMessage())
-        );
+        picked.forEach((field, fieldError) -> errors.put(field, fieldError.getDefaultMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
     }
-    // TODO: 그 외 공통 예외(404, 인증 실패 등) 핸들러 추가
+
+    // 깨진 JSON, 타입 불일치 등 요청 본문을 읽을 수 없는 경우
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleNotReadable(HttpMessageNotReadableException e) {
+        log.debug("Unreadable request body: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "요청 형식이 올바르지 않습니다."));
+    }
+
+    /**
+     * Spring Security 예외는 여기서 처리하지 않고 다시 던진다.
+     * 컨트롤러/메서드 보안에서 발생한 인증·인가 예외가 아래 Exception 핸들러에 잡혀 500으로 둔갑하지 않도록,
+     * Security의 ExceptionTranslationFilter(→ AuthenticationEntryPoint / AccessDeniedHandler)에 맡긴다.
+     */
+    @ExceptionHandler({AccessDeniedException.class, AuthenticationException.class})
+    public void rethrowSecurityException(RuntimeException e) {
+        throw e;
+    }
+
+    /**
+     * 그 외 모든 예외. 스택트레이스는 로그에만 남기고 응답에는 노출하지 않는다.
+     * 단, ErrorResponse 구현체(Spring MVC 표준 예외, ResponseStatusException 등)는 원래 상태코드를
+     * 4xx/5xx 모두 유지하고, 메시지는 영문 detail 대신 한국어 일반 문구로 대체한다.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, String>> handleException(Exception e) {
+        if (e instanceof ErrorResponse errorResponse) {
+            HttpStatusCode status = errorResponse.getStatusCode();
+            if (status.is5xxServerError()) {
+                log.error("Server error response ({})", status.value(), e);
+            } else {
+                log.debug("Client error response ({}): {}", status.value(), e.getMessage());
+            }
+            return ResponseEntity.status(status).body(Map.of("message", messageFor(status)));
+        }
+        log.error("Unhandled exception", e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("message", SERVER_ERROR_MESSAGE));
+    }
+
+    private static String messageFor(HttpStatusCode status) {
+        if (status.is5xxServerError()) {
+            return SERVER_ERROR_MESSAGE;
+        }
+        return switch (status.value()) {
+            case 404 -> "요청한 리소스를 찾을 수 없습니다.";
+            case 405 -> "지원하지 않는 요청 방식입니다.";
+            case 415 -> "지원하지 않는 형식입니다.";
+            default -> "잘못된 요청입니다.";
+        };
+    }
+
+    private static int constraintPriority(FieldError fieldError) {
+        String code = fieldError.getCode();
+        if (code != null && REQUIRED_CODES.contains(code)) {
+            return 0;
+        }
+        if ("Size".equals(code)) {
+            return 1;
+        }
+        return 2;
+    }
 }

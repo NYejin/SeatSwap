@@ -13,7 +13,8 @@ interface Props {
  * 선택됨/선택안됨만 구분한다. 좌표는 원본 이미지 픽셀 기준이므로
  * 실제 렌더링 크기에 맞춰 스케일링이 필요하다 (TODO).
  */
-export default function SeatMapOverlay({ imageUrl, seats, selectedSeatId, onSelectSeat }: Props) {
+// TODO: 구현 시 _props 대신 { imageUrl, seats, selectedSeatId, onSelectSeat } 구조분해로 교체
+export default function SeatMapOverlay(_props: Props) {
   // TODO: viewBox 스케일링, <image> + <rect> 오버레이 렌더링
   return null;
 }

@@ -40,6 +40,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         // WebSocket(STOMP) 핸드셰이크 — 인증은 핸드셰이크 이후 메시지 레벨에서 처리 예정
                         .requestMatchers("/ws/**").permitAll()
+                        // 예외 발생 시 서블릿 컨테이너가 /error로 포워드하는데, 여기서 막히면 원래 오류가
+                        // 403 빈 바디로 둔갑한다. 오류 응답 자체는 인증 없이 내려가야 한다.
+                        .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
