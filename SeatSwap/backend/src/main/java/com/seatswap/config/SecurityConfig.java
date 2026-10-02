@@ -1,7 +1,10 @@
 package com.seatswap.config;
 
+import com.seatswap.security.JwtAccessDeniedHandler;
+import com.seatswap.security.JwtAuthenticationEntryPoint;
 import com.seatswap.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -23,10 +26,25 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * JwtAuthenticationFilter는 @Component라 Spring Boot가 서블릿 필터로도 자동 등록한다.
+     * 시큐리티 체인 안(addFilterBefore)에서만 동작해야 하므로 서블릿 레벨 자동 등록은 끈다.
+     * (켜져 있으면 /api/auth/** 등 체인 밖 순서에서도 한 번 더 실행될 수 있음)
+     */
+    @Bean
+    public FilterRegistrationBean<JwtAuthenticationFilter> jwtAuthenticationFilterRegistration(
+            JwtAuthenticationFilter filter) {
+        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean
@@ -44,6 +62,12 @@ public class SecurityConfig {
                         // 403 빈 바디로 둔갑한다. 오류 응답 자체는 인증 없이 내려가야 한다.
                         .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated()
+                )
+                // 미인증 → 401 {"message":"로그인이 필요합니다."}, 권한 없음 → 403 {"message":"접근 권한이 없습니다."}
+                // (기본값은 Http403ForbiddenEntryPoint라 미인증도 403 빈 바디였다)
+                .exceptionHandling(eh -> eh
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                        .accessDeniedHandler(jwtAccessDeniedHandler)
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
