@@ -19,8 +19,9 @@ seatmap-service/__pycache__/
 **/__pycache__/
 *.pyc
 
-# IDE
-.vscode/settings.json
+# IDE — extensions.json(추천 확장 목록)은 유지
+.vscode/*
+!.vscode/extensions.json
 .idea/
 
 # OS
