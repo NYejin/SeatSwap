@@ -1,0 +1,13 @@
+/* 전역 기본 스타일. 화면별 스타일은 CSS Modules(*.module.css)에 둔다 */
+body {
+  margin: 0;
+  font-family: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+}
+
+/* 폼 컨트롤은 기본적으로 글꼴을 상속하지 않으므로 맞춰준다 */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
