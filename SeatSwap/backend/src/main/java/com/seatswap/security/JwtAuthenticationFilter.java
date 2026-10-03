@@ -10,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
@@ -19,7 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Authorization: Bearer {accessToken} 헤더를 읽어 SecurityContext에 인증 정보를 채운다.
+ * Authorization: Bearer {accessToken} 헤더를 읽어 SecurityContext에 인증 정보(AuthUserPrincipal)를 채운다.
  * refresh token으로는 일반 API 접근을 허용하지 않는다 (isRefreshToken 체크).
  * 토큰이 없거나 무효이면 인증 정보를 채우지 않고 통과시킨다 — 401 응답은 JwtAuthenticationEntryPoint 책임.
  */
@@ -47,11 +46,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = header.substring(PREFIX.length());
             try {
                 if (jwtTokenProvider.validateToken(token) && !jwtTokenProvider.isRefreshToken(token)) {
-                    String email = jwtTokenProvider.getEmail(token);
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+                    // 식별은 토큰 sub(userId) 기준 — email 클레임은 변경될 수 있어 식별자로 쓰지 않는다
+                    Long userId = jwtTokenProvider.getUserId(token);
+                    AuthUserPrincipal principal = userDetailsService.loadUserById(userId);
 
                     UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                            new UsernamePasswordAuthenticationToken(principal, null, principal.authorities());
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }

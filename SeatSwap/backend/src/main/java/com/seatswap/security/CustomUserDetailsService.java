@@ -8,14 +8,30 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * 인증 사용자 로딩.
+ * JWT 인증 경로는 {@link #loadUserById(Long)}(토큰 sub = userId)만 사용한다.
+ * UserDetailsService 구현은 유지한다 — 이 빈이 없으면 Spring Boot가 기본 in-memory 사용자
+ * (generated security password)를 자동 생성하기 때문. email 기반 loadUserByUsername은
+ * 현재 인증 경로에서 쓰지 않는다 (폼/Basic 로그인 미사용).
+ */
 @Service
 @RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
 
     private final UserRepository userRepository;
+
+    /** JWT 인증용. 사용자 없음 → UsernameNotFoundException (필터가 잡아 미인증 처리 → 401). */
+    @Transactional(readOnly = true)
+    public AuthUserPrincipal loadUserById(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: id=" + userId));
+        return AuthUserPrincipal.of(user.getId(), user.getEmail());
+    }
 
     @Override
     public UserDetails loadUserByUsername(String email) {

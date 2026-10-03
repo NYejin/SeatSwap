@@ -9,13 +9,26 @@ import {
   isTokenExpired,
   tokenStorage,
 } from "../api/tokenStorage";
-import { AuthContext, type AuthContextValue } from "../hooks/useAuth";
+import { parseApiError } from "../api/errors";
+import { usersApi } from "../api/users";
+import { AuthContext, type AuthContextValue, type ProfileStatus } from "../hooks/useAuth";
 import type { AuthUser, LoginRequest } from "../types/auth";
+import type { User } from "../types/user";
 
 interface Session {
   user: AuthUser;
   accessToken: string;
 }
+
+/** 프로필 조회 상태 — userId로 어느 세션의 결과인지 표시 */
+interface ProfileState {
+  userId: number;
+  status: Exclude<ProfileStatus, "idle">;
+  profile: User | null;
+  error: string | null;
+}
+
+const PROFILE_ERROR_FALLBACK = "내 정보를 불러오지 못했습니다.";
 
 /** access token 만료 이 시간 전에 선제 재발급 (백엔드 access 유효기간 1시간 기준) */
 const REFRESH_LEAD_MS = 60_000;
@@ -149,10 +162,74 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
   }, []);
 
+  // ---- 내 정보(/api/users/me) — 표시용 프로필. 세션 user id 단위로 보관한다.
+  const userId = session?.user.id ?? null;
+  const [profileState, setProfileState] = useState<ProfileState | null>(null);
+  const [profileReloadKey, setProfileReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (userId === null) {
+      setProfileState(null);
+      return;
+    }
+    let cancelled = false;
+    // 같은 사용자 재조회면 기존 프로필은 유지한 채 로딩 표시
+    setProfileState((prev) => ({
+      userId,
+      status: "loading",
+      profile: prev?.userId === userId ? prev.profile : null,
+      error: null,
+    }));
+    usersApi
+      .me()
+      .then((profile) => {
+        // 로그아웃·재로그인으로 세션이 바뀌었으면(cleanup) 늦게 온 응답은 버린다
+        if (cancelled) return;
+        if (profile.id !== userId) {
+          // 요청 사이 토큰이 다른 사용자로 바뀐 경우 — 이 세션의 프로필이 아니므로 버림
+          setProfileState({ userId, status: "error", profile: null, error: PROFILE_ERROR_FALLBACK });
+          return;
+        }
+        setProfileState({ userId, status: "success", profile, error: null });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setProfileState((prev) => ({
+          userId,
+          status: "error",
+          profile: prev?.userId === userId ? prev.profile : null,
+          error: parseApiError(err, PROFILE_ERROR_FALLBACK).message,
+        }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, profileReloadKey]);
+
+  // 프로필은 세션 user id가 바뀔 때만 자동으로 다시 불러온다. 닉네임 수정·리뷰 반영(신뢰도 변경) 등
+  // 프로필이 바뀌는 기능을 만들면 성공 후 reloadProfile()을 호출해야 화면(헤더·마이페이지)이 갱신된다.
+  const reloadProfile = useCallback(() => setProfileReloadKey((k) => k + 1), []);
+
   const user = session?.user ?? null;
+  // 렌더 시점에도 현재 세션 사용자의 것만 노출 (상태 갱신 전 한 프레임의 이전 사용자 정보 방지)
+  const current = profileState && user && profileState.userId === user.id ? profileState : null;
+  const profile = current?.profile ?? null;
+  const profileStatus: ProfileStatus = user === null ? "idle" : (current?.status ?? "loading");
+  const profileError = current?.error ?? null;
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isAuthenticated: user !== null, isInitializing, login, logout }),
-    [user, isInitializing, login, logout]
+    () => ({
+      user,
+      isAuthenticated: user !== null,
+      isInitializing,
+      profile,
+      profileStatus,
+      profileError,
+      reloadProfile,
+      login,
+      logout,
+    }),
+    [user, isInitializing, profile, profileStatus, profileError, reloadProfile, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
