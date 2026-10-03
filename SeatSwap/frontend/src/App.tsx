@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import AppLayout from "./components/AppLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
@@ -15,18 +16,21 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/performances/:id" element={<PerformanceDetailPage />} />
+        {/* 공통 레이아웃: 모든 화면 상단에 Header */}
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/performances/:id" element={<PerformanceDetailPage />} />
 
-        <Route element={<ProtectedRoute />}>
-          <Route path="/tickets/new" element={<TicketRegisterPage />} />
-          <Route path="/seatmaps/:id/select" element={<SeatMapSelectPage />} />
-          <Route path="/exchange" element={<ExchangeListPage />} />
-          <Route path="/exchange/:id" element={<ExchangeDetailPage />} />
-          <Route path="/chat/:matchId" element={<ChatPage />} />
-          <Route path="/me" element={<MyPage />} />
+          <Route element={<ProtectedRoute />}>
+            <Route path="/tickets/new" element={<TicketRegisterPage />} />
+            <Route path="/seatmaps/:id/select" element={<SeatMapSelectPage />} />
+            <Route path="/exchange" element={<ExchangeListPage />} />
+            <Route path="/exchange/:id" element={<ExchangeDetailPage />} />
+            <Route path="/chat/:matchId" element={<ChatPage />} />
+            <Route path="/me" element={<MyPage />} />
+          </Route>
         </Route>
       </Routes>
     </BrowserRouter>

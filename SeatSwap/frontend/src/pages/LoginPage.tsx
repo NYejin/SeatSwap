@@ -78,7 +78,7 @@ export default function LoginPage() {
   };
 
   return (
-    <main className={styles.page}>
+    <div className={styles.page}>
       <div className={styles.card}>
         <h1 className={styles.title}>SeatSwap 로그인</h1>
         <p className={styles.subtitle}>같은 공연 티켓 보유자와 좌석을 교환하세요.</p>
@@ -134,6 +134,6 @@ export default function LoginPage() {
           </Link>
         </p>
       </div>
-    </main>
+    </div>
   );
 }

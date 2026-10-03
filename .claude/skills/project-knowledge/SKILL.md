@@ -142,7 +142,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     (단위 테스트 포함)만 통과
   - 주의: 가입 검증 규칙이 DTO 어노테이션 / 서비스 상수 / 프론트 authValidation.ts 세 곳에 중복 —
     규칙 변경 시 세 곳 모두 수정
-- **FR-01 401/403 구분 + 401 재발급 인터셉터 구현, 3차 리뷰 반영 완료 (2026-10-03, 커밋 전)**
+- **FR-01 401/403 구분 + 401 재발급 인터셉터 구현, 3차 리뷰 반영 완료 (2026-10-03, token 브랜치 커밋 33bca20, 푸시됨)**
   - 원칙: 401 = 미인증(재발급 대상), 403 = 권한 없음(재발급 안 함). refresh 일시 장애 시 로그아웃하지 않고 토큰 보존
   - [backend] JwtAuthenticationEntryPoint / JwtAccessDeniedHandler / SecurityErrorResponseWriter
     (SecurityConfig 등록): 401 `{"message":"로그인이 필요합니다."}`, 403 `{"message":"접근 권한이 없습니다."}`,
@@ -156,9 +156,18 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     모듈: authInterceptor.ts, session.ts, authClient.ts (순환 import 없음)
   - 테스트: 백엔드 총 42건(이번에 19건 추가) 통과, `npm run build` 통과. curl 15케이스·프론트 통합 5/5·
     목 시나리오 18/18 확인. 단 3차 리뷰 반영분은 빌드·단위 테스트·목 시나리오로만 검증(Docker 중지)
+- **Header + 공통 레이아웃 구현, 4차 리뷰 반영 완료 (2026-10-03, token 브랜치, 커밋 전)**
+  - AppLayout + Outlet으로 전 페이지 공통 레이아웃, 콘텐츠 영역 `<main>`. 공통 전역 스타일은 `src/index.css`
+  - 로고 → `/`, 메뉴: 교환 목록(`/exchange`)·티켓 등록(`/tickets/new`), 현재 경로 강조(aria-current)
+  - 로그인: 이메일(말줄임) + 마이페이지 + 로그아웃(홈 이동 후 로그아웃). `/me` API가 없어 닉네임 대신 이메일 표시
+  - 비로그인: 로그인·회원가입 링크, 로그인 후 원래 페이지 복귀(로그인/회원가입 화면에서는 기존 복귀 경로 유지)
+  - 초기 로딩 중 인증 영역 자리 유지(레이아웃 이동 방지)
+  - 768px 미만 햄버거 메뉴(Esc·바깥 터치·경로 이동·화면 확대 시 닫힘, 포커스 관리), 상단 고정, 터치 영역 44px 이상.
+    768px 기준은 640px에서 한 줄에 안 들어간다는 추정치 계산에 근거
+  - 검증: `npm run build`, tsc(미사용 검사 포함) 통과, dev 서버 `/`·`/login`·`/signup`·`/exchange` 200.
+    브라우저 클릭 확인은 미실시
 - FR-01 후속 과제:
   - [backend] 내 정보 조회 `GET /api/users/me` (현재 프론트는 JWT 클레임 id/email만 사용)
-  - [frontend] Header 로그인 상태 메뉴/로그아웃
   - 3차 리뷰 반영분 Docker 재기동 후 curl·통합 itest 재검증
   - 2차 리뷰 반영분 Docker 스택 재기동 후 E2E 재검증, 브라우저에서 가입/로그인 화면 직접 확인
   - 필터에서 전파된 예외(DB 장애 등)는 Spring 기본 `/error` 포맷(`{timestamp,status,error,path}`)으로 나감 —
@@ -167,7 +176,10 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - (참고) Spring Boot 3.3.0의 Security 6.3.0은 CVE-2025-22228 영향 버전 — 72바이트 차단으로
     완화했으나 패치 버전 업그레이드 검토
   - (완료 2026-10-02) `/error` permitAll + 공통 예외 핸들러, SignupPage
-  - (완료 2026-10-03) 401 AuthenticationEntryPoint, 401 재발급·재시도 인터셉터
+  - 브라우저에서 Header 직접 확인 (햄버거 열고 닫기, 로그아웃 이동, 메뉴 강조, 640~1024px 폭 넘침 여부)
+  - index.html viewport에 `viewport-fit=cover` 없음 → safe-area 여백 미적용 (켜려면 다른 화면 여백도 함께 조정)
+  - 알림 아이콘 (백엔드 기능 필요)
+  - (완료 2026-10-03) 401 AuthenticationEntryPoint, 401 재발급·재시도 인터셉터, Header 로그인 상태 메뉴/로그아웃
   - (결정 2026-10-03) 프론트 테스트 러너(vitest) 도입 안 함 → 해당 후속 과제 종료
 - 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처

@@ -99,7 +99,7 @@ export default function SignupPage() {
   };
 
   return (
-    <main className={styles.page}>
+    <div className={styles.page}>
       <div className={styles.card}>
         <h1 className={styles.title}>SeatSwap 회원가입</h1>
         <p className={styles.subtitle}>가입하고 같은 공연 티켓 보유자와 좌석을 교환하세요.</p>
@@ -173,6 +173,6 @@ export default function SignupPage() {
           </Link>
         </p>
       </div>
-    </main>
+    </div>
   );
 }
