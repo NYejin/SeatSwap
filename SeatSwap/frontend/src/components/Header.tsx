@@ -3,13 +3,67 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useAuthRedirect, type AuthRouteState } from "../hooks/useAuthRedirect";
 import type { AuthUser } from "../types/auth";
-import styles from "./Header.module.css";
+import { FOCUS_RING } from "./authFormClasses";
 
 // 공통 상단 헤더 (FR-01 로그인 상태 표시 + 주요 화면 진입점)
 // TODO: 알림 아이콘 (교환 요청/채팅 알림) — 별도 작업
 
-/** 데스크톱(가로 메뉴) 전환 기준. Header.module.css의 @media (min-width: 768px)와 반드시 같은 값 */
+/** 데스크톱(가로 메뉴) 전환 기준. index.css @theme --breakpoint-md(768px)와 같은 값 (클래스의 md: 접두사) */
 const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
+
+// ---- Tailwind 클래스 조합 (모바일 우선: 기본은 햄버거 + 펼침 패널, md 이상에서 가로 배치) ----
+const cls = {
+  /** 하단 경계선은 보조색(장식 용도 — 글자에는 쓰지 않음) */
+  header: "sticky top-0 z-[100] border-b border-secondary-200 bg-white pt-[env(safe-area-inset-top)]",
+  bar: "relative mx-auto flex min-h-14 max-w-[1080px] items-center gap-2 pr-2 pl-4 md:gap-4 md:px-4",
+  logo:
+    "mr-auto inline-flex min-h-11 shrink-0 items-center text-xl/[normal] font-extrabold tracking-[-0.02em] " +
+    "whitespace-nowrap text-primary-600 no-underline active:opacity-70 " +
+    FOCUS_RING,
+  menuToggle:
+    "inline-flex size-11 shrink-0 cursor-pointer touch-manipulation items-center justify-center rounded-[10px] " +
+    "border-0 bg-transparent p-0 md:hidden " +
+    FOCUS_RING,
+  /** 햄버거 아이콘: 가운데 막대 + before/after 막대 */
+  menuIcon:
+    "relative block h-0.5 w-5 rounded-[1px] bg-gray-900 " +
+    "before:absolute before:-top-1.5 before:left-0 before:block before:h-0.5 before:w-5 before:rounded-[1px] before:bg-gray-900 " +
+    "after:absolute after:top-1.5 after:left-0 after:block after:h-0.5 after:w-5 after:rounded-[1px] after:bg-gray-900",
+  /** 패널 공통: md 이상에서는 항상 가로 배치 */
+  panel:
+    "md:static md:flex md:min-w-0 md:flex-row md:items-center md:gap-4 md:border-0 md:bg-transparent md:p-0 md:shadow-none",
+  /** 모바일 닫힘: display:none으로 숨겨 탭 순서에서도 제외 */
+  panelClosed: "hidden",
+  /** 모바일 열림: 바 아래로 펼침 */
+  panelOpen:
+    "absolute inset-x-0 top-full flex flex-col gap-1 border-b border-gray-200 bg-white px-4 pt-2 pb-4 " +
+    "shadow-[0_8px_24px_rgba(0,0,0,0.08)]",
+  nav: "flex flex-col md:shrink-0 md:flex-row md:gap-1",
+  navLink:
+    "flex min-h-11 items-center rounded-[10px] px-3 text-base/[normal] font-semibold whitespace-nowrap no-underline " +
+    "active:bg-gray-100 md:text-[0.9375rem]/[normal] " +
+    FOCUS_RING,
+  navLinkIdle: "text-gray-700",
+  navLinkActive: "bg-primary-50 text-primary-600",
+  auth:
+    "flex min-w-0 flex-col gap-1 border-t border-gray-200 pt-2 whitespace-nowrap " +
+    "md:flex-row md:items-center md:gap-2 md:border-t-0 md:pt-0",
+  /** 초기화 중: 로그인 상태 영역과 같은 크기로 자리만 차지 */
+  authPending: "invisible",
+  /** 768px 기준 로고+메뉴+이메일+마이페이지+로그아웃 합계 약 710px — 이메일은 최대 168px(lg 248px)에서 말줄임 */
+  userName:
+    "block min-w-0 truncate px-3 py-2 text-sm/[normal] text-gray-500 md:max-w-[168px] md:px-1 md:py-0 lg:max-w-[248px]",
+  userNamePending: "min-h-[1.25em] md:w-[168px] lg:w-[248px]",
+  button:
+    "inline-flex min-h-11 shrink-0 cursor-pointer touch-manipulation items-center justify-center rounded-[10px] " +
+    "px-4 text-base/[normal] font-semibold whitespace-nowrap no-underline md:px-3.5 md:text-[0.9375rem]/[normal] " +
+    FOCUS_RING,
+  buttonOutline: "border border-gray-300 bg-white text-gray-900 active:bg-gray-100",
+  buttonSolid: "border border-primary-600 bg-primary-600 text-white active:bg-primary-700",
+} as const;
+
+const outlineButton = `${cls.button} ${cls.buttonOutline}`;
+const solidButton = `${cls.button} ${cls.buttonSolid}`;
 
 const AUTH_PATHS = ["/login", "/signup"];
 
@@ -24,7 +78,7 @@ function displayName(user: AuthUser): string {
 }
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
-  isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink;
+  `${cls.navLink} ${isActive ? cls.navLinkActive : cls.navLinkIdle}`;
 
 export default function Header() {
   const { user, isInitializing, logout } = useAuth();
@@ -90,34 +144,34 @@ export default function Header() {
     // 토큰 확인 중: 로그인 상태 영역과 같은 구조를 보이지 않게 렌더해 자리를 유지 (깜빡임/레이아웃 이동 방지).
     // 초기화는 refresh token이 있을 때만 일어나므로 대개 로그인 상태로 끝난다
     authArea = (
-      <div className={`${styles.auth} ${styles.authPending}`} aria-hidden="true">
-        <span className={`${styles.userName} ${styles.userNamePending}`} />
-        <span className={styles.navLink}>마이페이지</span>
-        <span className={styles.logoutButton}>로그아웃</span>
+      <div className={`${cls.auth} ${cls.authPending}`} aria-hidden="true">
+        <span className={`${cls.userName} ${cls.userNamePending}`} />
+        <span className={navClass({ isActive: false })}>마이페이지</span>
+        <span className={outlineButton}>로그아웃</span>
       </div>
     );
   } else if (user) {
     const name = displayName(user);
     authArea = (
-      <div className={styles.auth}>
-        <span className={styles.userName} title={name}>
+      <div className={cls.auth}>
+        <span className={cls.userName} title={name}>
           {name}
         </span>
         <NavLink to="/me" className={navClass} onClick={closeMenu}>
           마이페이지
         </NavLink>
-        <button type="button" className={styles.logoutButton} onClick={handleLogout}>
+        <button type="button" className={outlineButton} onClick={handleLogout}>
           로그아웃
         </button>
       </div>
     );
   } else {
     authArea = (
-      <div className={styles.auth}>
-        <Link to="/login" state={authLinkState} className={styles.loginLink} onClick={closeMenu}>
+      <div className={cls.auth}>
+        <Link to="/login" state={authLinkState} className={outlineButton} onClick={closeMenu}>
           로그인
         </Link>
-        <Link to="/signup" state={authLinkState} className={styles.signupLink} onClick={closeMenu}>
+        <Link to="/signup" state={authLinkState} className={solidButton} onClick={closeMenu}>
           회원가입
         </Link>
       </div>
@@ -125,26 +179,26 @@ export default function Header() {
   }
 
   return (
-    <header ref={headerRef} className={styles.header}>
-      <div className={styles.bar}>
-        <Link ref={logoRef} to="/" className={styles.logo} onClick={closeMenu}>
+    <header ref={headerRef} className={cls.header}>
+      <div className={cls.bar}>
+        <Link ref={logoRef} to="/" className={cls.logo} onClick={closeMenu}>
           SeatSwap
         </Link>
 
         <button
           ref={toggleRef}
           type="button"
-          className={styles.menuToggle}
+          className={cls.menuToggle}
           aria-expanded={menuOpen}
           aria-controls={menuId}
           aria-label={menuOpen ? "메뉴 닫기" : "메뉴 열기"}
           onClick={() => setMenuOpen((open) => !open)}
         >
-          <span className={styles.menuIcon} aria-hidden="true" />
+          <span className={cls.menuIcon} aria-hidden="true" />
         </button>
 
-        <div id={menuId} className={menuOpen ? `${styles.panel} ${styles.panelOpen}` : styles.panel}>
-          <nav className={styles.nav} aria-label="주요 메뉴">
+        <div id={menuId} className={`${cls.panel} ${menuOpen ? cls.panelOpen : cls.panelClosed}`}>
+          <nav className={cls.nav} aria-label="주요 메뉴">
             {MENU.map((item) => (
               <NavLink key={item.to} to={item.to} className={navClass} onClick={closeMenu}>
                 {item.label}
