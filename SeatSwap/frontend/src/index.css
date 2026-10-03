@@ -1,13 +1,56 @@
-/* 전역 기본 스타일. 화면별 스타일은 CSS Modules(*.module.css)에 둔다 */
-body {
-  margin: 0;
-  font-family: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
-}
+@import "tailwindcss";
 
-/* 폼 컨트롤은 기본적으로 글꼴을 상속하지 않으므로 맞춰준다 */
-button,
-input,
-select,
-textarea {
-  font-family: inherit;
+/* 스타일은 컴포넌트의 Tailwind 유틸리티 클래스로 작성한다 (react-conventions 스킬 "CSS 전략").
+   이 파일에는 Tailwind import와 테마 토큰만 둔다 — 전역 규칙 추가 금지. */
+@theme {
+  --font-sans: "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+
+  /* 브레이크포인트를 기존 CSS와 같은 px 기준으로 고정 (v4 기본값은 rem — 루트 글자 크기를 바꾸면 달라짐).
+     md(768px)는 Header.tsx DESKTOP_MEDIA_QUERY와 같은 값이어야 한다. */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+
+  /* ---- 브랜드 색 (사용자 결정). 컴포넌트에서는 이 토큰(primary/secondary/accent)만 쓰고
+     blue·purple 등 팔레트 이름을 브랜드 색 용도로 직접 쓰지 않는다.
+     스케일은 기준색을 흰색(연한 단계)/검정(진한 단계)과 sRGB로 섞어 계산한 값. */
+
+  /* primary: 메인 #8A2BE2 (600). 700/800은 눌림·진한 글자용, 50/100은 연한 배경용.
+     대비(WCAG): 600 배경+흰 글자 5.96:1, 흰 배경+600 글자 5.96:1, 50 배경+600 글자 5.42:1, 50 배경+800 글자 9.02:1 */
+  --color-primary-50: #f8f2fd;
+  --color-primary-100: #f1e6fc;
+  --color-primary-200: #e1c8f7;
+  --color-primary-300: #cca2f2;
+  --color-primary-400: #af6feb;
+  --color-primary-500: #9a49e6;
+  --color-primary-600: #8a2be2;
+  --color-primary-700: #7424be;
+  --color-primary-800: #5e1d9a;
+  --color-primary-900: #481676;
+
+  /* secondary: 보조 #BEA886 (500). 흰 배경 대비 2.3:1이라 글자색 금지 — 배경·테두리·장식선 용도만.
+     글자가 꼭 필요하면 700(5.02:1) 이상. */
+  --color-secondary-50: #f7f5f0;
+  --color-secondary-100: #efeae2;
+  --color-secondary-200: #e2d8c9;
+  --color-secondary-500: #bea886;
+  --color-secondary-700: #7c6d57;
+
+  /* accent: 강조 #E8A33D (500). 흰 배경 대비 2.16:1 — 흰 배경 글자 금지. 배경으로 쓰면 글자는 gray-900(8.23:1).
+     현재 사용처 없음 (토큰만 정의) */
+  --color-accent-100: #faedd8;
+  --color-accent-500: #e8a33d;
+  --color-accent-700: #a2722b;
+
+  /* ---- 중립·상태 색: 기존 CSS hex 값(Tailwind v3 팔레트)으로 고정.
+     v4 기본 팔레트는 oklch라 같은 이름이어도 색이 미세하게 다르다. */
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-500: #6b7280;
+  --color-gray-700: #374151;
+  --color-gray-900: #111827;
+  --color-red-50: #fef2f2;
+  --color-red-600: #dc2626;
+  --color-red-700: #b91c1c;
 }

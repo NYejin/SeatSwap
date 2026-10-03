@@ -11,7 +11,7 @@ import {
   validateLoginPassword,
 } from "../api/authValidation";
 import AuthTextField from "../components/AuthTextField";
-import styles from "../components/AuthForm.module.css";
+import { authFormClasses as ui } from "../components/authFormClasses";
 
 // FR-01 회원가입/로그인 — 로그인 화면
 
@@ -78,18 +78,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className={styles.page}>
-      <div className={styles.card}>
-        <h1 className={styles.title}>SeatSwap 로그인</h1>
-        <p className={styles.subtitle}>같은 공연 티켓 보유자와 좌석을 교환하세요.</p>
+    <div className={ui.page}>
+      <div className={ui.card}>
+        <h1 className={ui.title}>SeatSwap 로그인</h1>
+        <p className={ui.subtitle}>같은 공연 티켓 보유자와 좌석을 교환하세요.</p>
 
         {notice && (
-          <p className={styles.notice} role="status">
+          <p className={ui.notice} role="status">
             {notice}
           </p>
         )}
 
-        <form className={styles.form} onSubmit={handleSubmit} noValidate>
+        <form className={ui.form} onSubmit={handleSubmit} noValidate>
           <AuthTextField
             id="login-email"
             label="이메일"
@@ -117,19 +117,19 @@ export default function LoginPage() {
           />
 
           {formError && (
-            <p className={styles.formError} role="alert">
+            <p className={ui.formError} role="alert">
               {formError}
             </p>
           )}
 
-          <button type="submit" className={styles.submit} disabled={submitting} aria-busy={submitting}>
+          <button type="submit" className={ui.submit} disabled={submitting} aria-busy={submitting}>
             {submitting ? "로그인 중..." : "로그인"}
           </button>
         </form>
 
-        <p className={styles.footer}>
+        <p className={ui.footer}>
           아직 계정이 없나요?{" "}
-          <Link to="/signup" state={forwardState} className={styles.link}>
+          <Link to="/signup" state={forwardState} className={ui.link}>
             회원가입
           </Link>
         </p>

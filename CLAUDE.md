@@ -32,7 +32,7 @@
 - **좌석맵 확보 방식**: 사용자가 입력한 티켓팅 사이트 링크에서 좌석맵 "이미지"만 스크래핑 (페이지 전체 크롤링 아님)
 - **좌석 인식 파이프라인**: 색상/판매상태 매핑은 하지 않음 (이미 판매 완료된 좌석만 다루는 서비스이므로). 필요한 건 오직 ①좌표 검출 ②행번호(OCR) ③열번호(x좌표 순 자동 부여) 뿐
 - **오류 보정**: 사용자 오류 신고 버튼 → 동일한 정정 내용이 2건 이상 접수되면 자동 반영, 1건이면 검토 대기
-- **기술 스택**: React+TS(Vite) / Spring Boot+Security(JWT)+JPA+WebSocket(STOMP) / FastAPI+OpenCV+Tesseract(좌석 인식 전용 마이크로서비스), DB는 MySQL
+- **기술 스택**: React+TS(Vite)+Tailwind CSS v4 / Spring Boot+Security(JWT)+JPA+WebSocket(STOMP) / FastAPI+OpenCV+Tesseract(좌석 인식 전용 마이크로서비스), DB는 MySQL
 - **범위 제외**: 실결제(PG) 연동 없음, 티켓팅 사이트 공식 API 연동 없음, 네이티브 앱 없음(모바일 웹/PWA로 결정)
 - **파일 전달 규칙**: 소스코드 수정분은 `MMDD-순번_수정내역영문.zip`으로 전달, 문서(계획서/요구사항정의서 등)는 압축 없이 단일 파일로 전달
 

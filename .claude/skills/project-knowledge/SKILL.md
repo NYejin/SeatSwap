@@ -119,7 +119,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   POST /api/auth/signup·login·refresh
 - **FR-01 프론트 로그인 연동 구현 + 리뷰 반영 완료 (2026-10-02, 커밋 7dcf8a0)**: authApi(login/signup/refresh),
   AuthProvider(localStorage 토큰 저장·복원, 탭 간 동기화), ProtectedRoute(state.from 복귀),
-  LoginPage(입력 검증, 백엔드 400 `{message}`/`{field:msg}` 에러 표시, 모바일 우선 CSS Modules).
+  LoginPage(입력 검증, 백엔드 400 `{message}`/`{field:msg}` 에러 표시, 모바일 우선 CSS Modules — 2026-10-03 Tailwind로 전환됨).
   code-reviewer 리뷰 반영 완료: access exp 60초 전 선제 재발급 타이머, single-flight refreshSession,
   refresh 400일 때만 토큰 삭제(네트워크/5xx는 보존), redirect 경로 검증(`//`·백슬래시 거부),
   필드 오류 중복 표시 제거, 인터셉터 없는 refresh 전용 authClient. `npm run build` 통과
@@ -142,7 +142,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     (단위 테스트 포함)만 통과
   - 주의: 가입 검증 규칙이 DTO 어노테이션 / 서비스 상수 / 프론트 authValidation.ts 세 곳에 중복 —
     규칙 변경 시 세 곳 모두 수정
-- **FR-01 401/403 구분 + 401 재발급 인터셉터 구현, 3차 리뷰 반영 완료 (2026-10-03, token 브랜치 커밋 33bca20, 푸시됨)**
+- **FR-01 401/403 구분 + 401 재발급 인터셉터 구현, 3차 리뷰 반영 완료 (2026-10-03, 커밋 33bca20, PR #1로 master 머지)**
   - 원칙: 401 = 미인증(재발급 대상), 403 = 권한 없음(재발급 안 함). refresh 일시 장애 시 로그아웃하지 않고 토큰 보존
   - [backend] JwtAuthenticationEntryPoint / JwtAccessDeniedHandler / SecurityErrorResponseWriter
     (SecurityConfig 등록): 401 `{"message":"로그인이 필요합니다."}`, 403 `{"message":"접근 권한이 없습니다."}`,
@@ -156,7 +156,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     모듈: authInterceptor.ts, session.ts, authClient.ts (순환 import 없음)
   - 테스트: 백엔드 총 42건(이번에 19건 추가) 통과, `npm run build` 통과. curl 15케이스·프론트 통합 5/5·
     목 시나리오 18/18 확인. 단 3차 리뷰 반영분은 빌드·단위 테스트·목 시나리오로만 검증(Docker 중지)
-- **Header + 공통 레이아웃 구현, 4차 리뷰 반영 완료 (2026-10-03, token 브랜치, 커밋 전)**
+- **Header + 공통 레이아웃 구현, 4차 리뷰 반영 완료 (2026-10-03, 커밋 c77eea8, PR #2로 master 머지)**
   - AppLayout + Outlet으로 전 페이지 공통 레이아웃, 콘텐츠 영역 `<main>`. 공통 전역 스타일은 `src/index.css`
   - 로고 → `/`, 메뉴: 교환 목록(`/exchange`)·티켓 등록(`/tickets/new`), 현재 경로 강조(aria-current)
   - 로그인: 이메일(말줄임) + 마이페이지 + 로그아웃(홈 이동 후 로그아웃). `/me` API가 없어 닉네임 대신 이메일 표시
@@ -166,6 +166,20 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     768px 기준은 640px에서 한 줄에 안 들어간다는 추정치 계산에 근거
   - 검증: `npm run build`, tsc(미사용 검사 포함) 통과, dev 서버 `/`·`/login`·`/signup`·`/exchange` 200.
     브라우저 클릭 확인은 미실시
+- **브랜치 전략 (2026-10-03, CLAUDE.md에 추가, PR #3으로 master 머지)**: 접두사 feature/(새 기능), fix/(버그),
+  chore/(설정·인프라), docs/(문서만)
+- **프론트 스타일링 CSS Modules → Tailwind CSS v4 전환, 5차 리뷰 반영 완료 (2026-10-03, chore/tailwind-css 브랜치, 커밋 전)**
+  - 현재 프론트 스택: React + TypeScript + Vite + **Tailwind CSS v4** (tailwindcss, @tailwindcss/vite 4.3.3,
+    vite 플러그인 등록, postcss/tailwind 설정 파일 없음). 2절 표는 03 계획서 기준이라 Tailwind가 없음
+  - 규칙(react-conventions 스킬 "CSS 전략" 절): Tailwind 유틸리티 클래스만 사용(CSS Module·@apply 미사용),
+    완성된 클래스 문자열만 사용, 브레이크포인트 640/768/1024px 고정(rem 아님 — JS matchMedia와 일치),
+    지원 브라우저 Safari 16.4+ / Chrome 111+ / Firefox 128+
+  - index.css: `@import "tailwindcss"` + `@theme`(폰트, 브랜드 색 토큰 primary #8A2BE2 / secondary #BEA886 / accent #E8A33D, gray·red hex 고정, 브레이크포인트 px 고정).
+    AuthForm/Header/AppLayout.module.css 삭제, 반복 클래스 조합은 authFormClasses.ts 상수
+  - 추가: 버튼·링크 focus-visible 포커스 링, 오류 입력칸 빨간 테두리·빨간 포커스 링
+  - 5차 리뷰 높음 0 / 중간 2 / 낮음 9, 삭제된 CSS 규칙 누락 0건(빌드 CSS 대조)
+  - 검증: tsc, vite build 통과, dev 서버 `/`·`/login`·`/signup`·`/exchange` 200. 브라우저 육안 확인 미실시
+  - 결정: 브랜드 컬러 메인 #8A2BE2 / 보조 #BEA886(글자색 금지) / 강조 #E8A33D, blue 클래스는 primary 토큰으로 교체
 - FR-01 후속 과제:
   - [backend] 내 정보 조회 `GET /api/users/me` (현재 프론트는 JWT 클레임 id/email만 사용)
   - 3차 리뷰 반영분 Docker 재기동 후 curl·통합 itest 재검증
@@ -179,6 +193,9 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - 브라우저에서 Header 직접 확인 (햄버거 열고 닫기, 로그아웃 이동, 메뉴 강조, 640~1024px 폭 넘침 여부)
   - index.html viewport에 `viewport-fit=cover` 없음 → safe-area 여백 미적용 (켜려면 다른 화면 여백도 함께 조정)
   - 알림 아이콘 (백엔드 기능 필요)
+  - 브라우저에서 Tailwind 전환 화면 확인 (360 / 640 / 768 / 1024px)
+  - (완료 2026-10-03) 색 팔레트 방침 결정 — 브랜드 토큰
+  - iOS 실기기에서 비활성 입력칸 흐림 정도 확인
   - (완료 2026-10-03) 401 AuthenticationEntryPoint, 401 재발급·재시도 인터셉터, Header 로그인 상태 메뉴/로그아웃
   - (결정 2026-10-03) 프론트 테스트 러너(vitest) 도입 안 함 → 해당 후속 과제 종료
 - 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
