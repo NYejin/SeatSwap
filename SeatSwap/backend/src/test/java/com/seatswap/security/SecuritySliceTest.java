@@ -13,8 +13,6 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -80,17 +78,16 @@ class SecuritySliceTest {
     void setUp() {
         when(tokenProvider.validateToken("good")).thenReturn(true);
         when(tokenProvider.isRefreshToken("good")).thenReturn(false);
-        when(tokenProvider.getEmail("good")).thenReturn("a@b.com");
-        when(userDetailsService.loadUserByUsername("a@b.com")).thenReturn(
-                new User("a@b.com", "pw", List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        when(tokenProvider.getUserId("good")).thenReturn(1L);
+        when(userDetailsService.loadUserById(1L)).thenReturn(AuthUserPrincipal.of(1L, "a@b.com"));
 
         when(tokenProvider.validateToken("refresh")).thenReturn(true);
         when(tokenProvider.isRefreshToken("refresh")).thenReturn(true);
 
         when(tokenProvider.validateToken("ghost")).thenReturn(true);
         when(tokenProvider.isRefreshToken("ghost")).thenReturn(false);
-        when(tokenProvider.getEmail("ghost")).thenReturn("ghost@b.com");
-        when(userDetailsService.loadUserByUsername("ghost@b.com"))
+        when(tokenProvider.getUserId("ghost")).thenReturn(99L);
+        when(userDetailsService.loadUserById(99L))
                 .thenThrow(new UsernameNotFoundException("not found"));
 
         when(tokenProvider.validateToken("expired")).thenReturn(false);
@@ -159,7 +156,7 @@ class SecuritySliceTest {
                 .andExpect(status().isOk());
         // 시큐리티 체인 안에서 요청당 정확히 한 번 실행된다
         verify(tokenProvider, times(1)).validateToken("good");
-        verify(tokenProvider, atLeastOnce()).getEmail("good");
+        verify(tokenProvider, atLeastOnce()).getUserId("good");
     }
 
     @Test

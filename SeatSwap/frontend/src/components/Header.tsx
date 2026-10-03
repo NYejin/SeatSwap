@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../hooks/useAuth";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { getDisplayName, useAuth } from "../hooks/useAuth";
 import { useAuthRedirect, type AuthRouteState } from "../hooks/useAuthRedirect";
-import type { AuthUser } from "../types/auth";
+import { useLogout } from "../hooks/useLogout";
 import { FOCUS_RING } from "./authFormClasses";
 
 // 공통 상단 헤더 (FR-01 로그인 상태 표시 + 주요 화면 진입점)
@@ -51,15 +51,31 @@ const cls = {
   /** 초기화 중: 로그인 상태 영역과 같은 크기로 자리만 차지 */
   authPending: "invisible",
   /** 768px 기준 로고+메뉴+이메일+마이페이지+로그아웃 합계 약 710px — 이메일은 최대 168px(lg 248px)에서 말줄임 */
-  userName:
-    "block min-w-0 truncate px-3 py-2 text-sm/[normal] text-gray-500 md:max-w-[168px] md:px-1 md:py-0 lg:max-w-[248px]",
-  userNamePending: "min-h-[1.25em] md:w-[168px] lg:w-[248px]",
+  userName: "flex min-w-0 items-baseline gap-2 px-3 py-2 md:max-w-[168px] md:px-1 md:py-0 lg:max-w-[248px]",
+  /** 표시 이름(닉네임, 없으면 email) */
+  userNameMain: "min-w-0 truncate text-sm/[normal] text-gray-500",
+  /** 모바일 패널에서만 닉네임 옆에 작은 email (흰 배경 gray-500 4.83:1). md 이상은 공간 계산상 숨김 */
+  userEmail: "min-w-0 flex-1 truncate text-xs/[normal] text-gray-500 md:hidden",
+  /** 초기화 중 자리 표시 — em 기준을 표시 이름(text-sm)과 맞춰 높이 유지 */
+  userNamePending: "min-h-[1.25em] text-sm/[normal] md:w-[168px] lg:w-[248px]",
   button:
     "inline-flex min-h-11 shrink-0 cursor-pointer touch-manipulation items-center justify-center rounded-[10px] " +
     "px-4 text-base/[normal] font-semibold whitespace-nowrap no-underline md:px-3.5 md:text-[0.9375rem]/[normal] " +
     FOCUS_RING,
   buttonOutline: "border border-gray-300 bg-white text-gray-900 active:bg-gray-100",
   buttonSolid: "border border-primary-600 bg-primary-600 text-white active:bg-primary-700",
+  /** 로그인 상태의 마이페이지·로그아웃을 한 줄로 묶고 두 항목이 폭을 나눠 가진다 */
+  accountActions: "flex gap-1",
+  accountActionItem: "grow justify-center",
+  /** 계정 줄의 마이페이지 — 모바일 패널(md 미만)은 메인색 채운 버튼(흰 글자/primary-600 5.96:1),
+      md 이상은 메뉴 링크 모양. navLink는 무접두 active:bg-gray-100이 있어 섞지 않고 별도 조합으로 둔다 */
+  accountNav:
+    "flex min-h-11 grow items-center justify-center rounded-[10px] px-4 text-base/[normal] font-semibold " +
+    "whitespace-nowrap no-underline md:px-3 md:text-[0.9375rem]/[normal] " +
+    "border border-primary-600 bg-primary-600 text-white active:bg-primary-700 " +
+    FOCUS_RING,
+  accountNavIdle: "md:border-0 md:bg-transparent md:text-gray-700 md:active:bg-gray-100",
+  accountNavActive: "md:border-0 md:bg-primary-50 md:text-primary-600 md:active:bg-gray-100",
 } as const;
 
 const outlineButton = `${cls.button} ${cls.buttonOutline}`;
@@ -72,19 +88,18 @@ const MENU = [
   { to: "/tickets/new", label: "티켓 등록" },
 ] as const;
 
-/** 헤더에 표시할 사용자 이름. /me API가 생기면 nickname으로 교체 */
-function displayName(user: AuthUser): string {
-  return user.email;
-}
-
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `${cls.navLink} ${isActive ? cls.navLinkActive : cls.navLinkIdle}`;
+// 모바일은 /me에서도 채운 버튼 모양 유지, md 이상에서만 활성 여부로 분기 (aria-current는 NavLink 기본)
+const accountNavClass = ({ isActive }: { isActive: boolean }) =>
+  `${cls.accountNav} ${isActive ? cls.accountNavActive : cls.accountNavIdle}`;
+const accountLogoutButton = `${outlineButton} ${cls.accountActionItem}`;
 
 export default function Header() {
-  const { user, isInitializing, logout } = useAuth();
+  const { user, profile, isInitializing } = useAuth();
+  const logoutAndGoHome = useLogout();
   const { forwardState } = useAuthRedirect();
   const location = useLocation();
-  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
   const headerRef = useRef<HTMLElement>(null);
@@ -125,10 +140,8 @@ export default function Header() {
   const closeMenu = () => setMenuOpen(false);
 
   const handleLogout = () => {
-    // 보호 화면을 먼저 벗어난 뒤 세션을 지운다. 순서가 반대면 ProtectedRoute가 현재 화면을 from으로
-    // /login 리다이렉트를 걸 수 있어 "/" 이동과 경합한다
-    navigate("/", { replace: true });
-    logout();
+    // 홈 이동 후 세션 삭제 (순서 이유는 useLogout 주석)
+    logoutAndGoHome();
     closeMenu();
     // 로그아웃 버튼이 사라지며 포커스가 body로 떨어지지 않게 로고로 옮긴다
     logoRef.current?.focus();
@@ -146,23 +159,31 @@ export default function Header() {
     authArea = (
       <div className={`${cls.auth} ${cls.authPending}`} aria-hidden="true">
         <span className={`${cls.userName} ${cls.userNamePending}`} />
-        <span className={navClass({ isActive: false })}>마이페이지</span>
-        <span className={outlineButton}>로그아웃</span>
+        <div className={cls.accountActions}>
+          <span className={accountNavClass({ isActive: false })}>마이페이지</span>
+          <span className={accountLogoutButton}>로그아웃</span>
+        </div>
       </div>
     );
   } else if (user) {
-    const name = displayName(user);
+    // 닉네임 우선, 프로필 로딩 중·실패 시 email
+    const name = getDisplayName(user, profile);
+    // 닉네임이 있을 때만 email을 덧붙인다 (email로 대체 표시 중이면 두 번 보이지 않게)
+    const hasNickname = !!profile?.nickname;
     authArea = (
       <div className={cls.auth}>
-        <span className={cls.userName} title={name}>
-          {name}
+        <span className={cls.userName} title={hasNickname ? `${name} (${user.email})` : name}>
+          <span className={cls.userNameMain}>{name}</span>
+          {hasNickname && <span className={cls.userEmail}>{user.email}</span>}
         </span>
-        <NavLink to="/me" className={navClass} onClick={closeMenu}>
-          마이페이지
-        </NavLink>
-        <button type="button" className={outlineButton} onClick={handleLogout}>
-          로그아웃
-        </button>
+        <div className={cls.accountActions}>
+          <NavLink to="/me" className={accountNavClass} onClick={closeMenu}>
+            마이페이지
+          </NavLink>
+          <button type="button" className={accountLogoutButton} onClick={handleLogout}>
+            로그아웃
+          </button>
+        </div>
       </div>
     );
   } else {

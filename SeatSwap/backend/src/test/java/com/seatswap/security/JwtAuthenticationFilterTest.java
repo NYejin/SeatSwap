@@ -8,9 +8,7 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.authentication.AuthenticationServiceException;
@@ -24,6 +22,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 
 class JwtAuthenticationFilterTest {
@@ -69,22 +68,26 @@ class JwtAuthenticationFilterTest {
     void validAccessTokenAuthenticates() throws Exception {
         when(tokenProvider.validateToken("good")).thenReturn(true);
         when(tokenProvider.isRefreshToken("good")).thenReturn(false);
-        when(tokenProvider.getEmail("good")).thenReturn("a@b.com");
-        when(userDetailsService.loadUserByUsername("a@b.com")).thenReturn(
-                new User("a@b.com", "pw", List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        when(tokenProvider.getUserId("good")).thenReturn(1L);
+        when(userDetailsService.loadUserById(1L)).thenReturn(AuthUserPrincipal.of(1L, "a@b.com"));
 
         Authentication auth = runFilter("Bearer good", new MockHttpServletResponse());
 
         assertThat(auth).isNotNull();
-        assertThat(auth.getName()).isEqualTo("a@b.com");
+        assertThat(auth.getPrincipal()).isInstanceOf(AuthUserPrincipal.class);
+        AuthUserPrincipal principal = (AuthUserPrincipal) auth.getPrincipal();
+        assertThat(principal.userId()).isEqualTo(1L);
+        assertThat(principal.email()).isEqualTo("a@b.com");
+        assertThat(auth.getName()).isEqualTo("1");
+        assertThat(auth.getAuthorities()).extracting("authority").containsExactly("ROLE_USER");
     }
 
     @Test
     void deletedUserTokenLeavesContextEmptyAndDoesNotWriteResponse() throws Exception {
         when(tokenProvider.validateToken("ghost")).thenReturn(true);
         when(tokenProvider.isRefreshToken("ghost")).thenReturn(false);
-        when(tokenProvider.getEmail("ghost")).thenReturn("ghost@b.com");
-        when(userDetailsService.loadUserByUsername("ghost@b.com"))
+        when(tokenProvider.getUserId("ghost")).thenReturn(99L);
+        when(userDetailsService.loadUserById(99L))
                 .thenThrow(new UsernameNotFoundException("not found"));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -111,7 +114,7 @@ class JwtAuthenticationFilterTest {
         when(tokenProvider.isRefreshToken("refresh")).thenReturn(true);
 
         assertThat(runFilter("Bearer refresh", new MockHttpServletResponse())).isNull();
-        verify(userDetailsService, never()).loadUserByUsername(anyString());
+        verify(userDetailsService, never()).loadUserById(any());
     }
 
     @Test
@@ -127,8 +130,8 @@ class JwtAuthenticationFilterTest {
     void infrastructureErrorsAreNotDisguisedAs401() {
         when(tokenProvider.validateToken("good")).thenReturn(true);
         when(tokenProvider.isRefreshToken("good")).thenReturn(false);
-        when(tokenProvider.getEmail("good")).thenReturn("a@b.com");
-        when(userDetailsService.loadUserByUsername("a@b.com"))
+        when(tokenProvider.getUserId("good")).thenReturn(1L);
+        when(userDetailsService.loadUserById(1L))
                 .thenThrow(new DataAccessResourceFailureException("db down"));
 
         assertThatThrownBy(() -> runFilter("Bearer good", new MockHttpServletResponse()))
@@ -139,8 +142,8 @@ class JwtAuthenticationFilterTest {
     void authenticationServiceExceptionIsNotSwallowed() {
         when(tokenProvider.validateToken("good")).thenReturn(true);
         when(tokenProvider.isRefreshToken("good")).thenReturn(false);
-        when(tokenProvider.getEmail("good")).thenReturn("a@b.com");
-        when(userDetailsService.loadUserByUsername("a@b.com"))
+        when(tokenProvider.getUserId("good")).thenReturn(1L);
+        when(userDetailsService.loadUserById(1L))
                 .thenThrow(new AuthenticationServiceException("user store failure"));
 
         assertThatThrownBy(() -> runFilter("Bearer good", new MockHttpServletResponse()))
@@ -151,9 +154,32 @@ class JwtAuthenticationFilterTest {
     void dataAnomalyIllegalArgumentIsNotSwallowed() {
         when(tokenProvider.validateToken("odd")).thenReturn(true);
         when(tokenProvider.isRefreshToken("odd")).thenReturn(false);
-        when(tokenProvider.getEmail("odd")).thenThrow(new IllegalArgumentException("unexpected claim"));
+        // sub가 숫자가 아닌 등 데이터 이상 (Long.valueOf → NumberFormatException)
+        when(tokenProvider.getUserId("odd")).thenThrow(new NumberFormatException("For input string: \"abc\""));
 
         assertThatThrownBy(() -> runFilter("Bearer odd", new MockHttpServletResponse()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void identifiesUserByTokenUserIdNotByEmailClaim() throws Exception {
+        // 이메일 변경 시나리오: 토큰(sub=1)의 email 클레임은 옛 주소 old@b.com이고,
+        // 지금 old@b.com은 다른 사용자(id=2)가 쓰고 있다. 인증 주체는 반드시 토큰의 userId(1)여야 한다.
+        when(tokenProvider.validateToken("stale-email")).thenReturn(true);
+        when(tokenProvider.isRefreshToken("stale-email")).thenReturn(false);
+        when(tokenProvider.getUserId("stale-email")).thenReturn(1L);
+        when(tokenProvider.getEmail("stale-email")).thenReturn("old@b.com");
+        when(userDetailsService.loadUserById(1L)).thenReturn(AuthUserPrincipal.of(1L, "new@b.com"));
+        when(userDetailsService.loadUserByUsername("old@b.com")).thenReturn(
+                org.springframework.security.core.userdetails.User.withUsername("old@b.com")
+                        .password("pw").roles("USER").build()); // id=2 사용자 — 쓰이면 안 됨
+
+        Authentication auth = runFilter("Bearer stale-email", new MockHttpServletResponse());
+
+        AuthUserPrincipal principal = (AuthUserPrincipal) auth.getPrincipal();
+        assertThat(principal.userId()).isEqualTo(1L);
+        assertThat(principal.email()).isEqualTo("new@b.com");
+        verify(userDetailsService, never()).loadUserByUsername(anyString());
+        verify(tokenProvider, never()).getEmail(anyString());
     }
 }

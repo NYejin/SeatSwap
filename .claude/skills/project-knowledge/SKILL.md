@@ -160,6 +160,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - AppLayout + Outlet으로 전 페이지 공통 레이아웃, 콘텐츠 영역 `<main>`. 공통 전역 스타일은 `src/index.css`
   - 로고 → `/`, 메뉴: 교환 목록(`/exchange`)·티켓 등록(`/tickets/new`), 현재 경로 강조(aria-current)
   - 로그인: 이메일(말줄임) + 마이페이지 + 로그아웃(홈 이동 후 로그아웃). `/me` API가 없어 닉네임 대신 이메일 표시
+    (→ feature/user-me에서 /me 기반 닉네임 표시로 변경, 아래 항목 참고)
   - 비로그인: 로그인·회원가입 링크, 로그인 후 원래 페이지 복귀(로그인/회원가입 화면에서는 기존 복귀 경로 유지)
   - 초기 로딩 중 인증 영역 자리 유지(레이아웃 이동 방지)
   - 768px 미만 햄버거 메뉴(Esc·바깥 터치·경로 이동·화면 확대 시 닫힘, 포커스 관리), 상단 고정, 터치 영역 44px 이상.
@@ -168,7 +169,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     브라우저 클릭 확인은 미실시
 - **브랜치 전략 (2026-10-03, CLAUDE.md에 추가, PR #3으로 master 머지)**: 접두사 feature/(새 기능), fix/(버그),
   chore/(설정·인프라), docs/(문서만)
-- **프론트 스타일링 CSS Modules → Tailwind CSS v4 전환, 5차 리뷰 반영 완료 (2026-10-03, chore/tailwind-css 브랜치, 커밋 전)**
+- **프론트 스타일링 CSS Modules → Tailwind CSS v4 전환, 5차 리뷰 반영 완료 (2026-10-03, 커밋 33704a4, PR #4로 master 머지 — 브랜드 컬러 포함)**
   - 현재 프론트 스택: React + TypeScript + Vite + **Tailwind CSS v4** (tailwindcss, @tailwindcss/vite 4.3.3,
     vite 플러그인 등록, postcss/tailwind 설정 파일 없음). 2절 표는 03 계획서 기준이라 Tailwind가 없음
   - 규칙(react-conventions 스킬 "CSS 전략" 절): Tailwind 유틸리티 클래스만 사용(CSS Module·@apply 미사용),
@@ -180,15 +181,34 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - 5차 리뷰 높음 0 / 중간 2 / 낮음 9, 삭제된 CSS 규칙 누락 0건(빌드 CSS 대조)
   - 검증: tsc, vite build 통과, dev 서버 `/`·`/login`·`/signup`·`/exchange` 200. 브라우저 육안 확인 미실시
   - 결정: 브랜드 컬러 메인 #8A2BE2 / 보조 #BEA886(글자색 금지) / 강조 #E8A33D, blue 클래스는 primary 토큰으로 교체
+- **내 정보 조회 `/me` + 마이페이지 + 인증 주체 userId 전환, 6차 리뷰 반영 완료 (2026-10-03, feature/user-me 브랜치, 커밋 전)**
+  - [backend] `GET /api/users/me` → 200 `{id, email, nickname, trustScore}`. 미인증·삭제된 사용자·refresh token 사용 → 401
+  - [backend] **인증 사용자 식별은 토큰 userId 기준** (email 기준에서 전환): AuthUserPrincipal, 필터는 토큰 sub로 findById.
+    이유: 향후 이메일 변경 시 옛 토큰이 같은 이메일을 새로 쓰는 다른 사용자로 인증될 위험 차단.
+    spring-boot-conventions 스킬에 "인증 사용자 식별은 userId", "인증 주체 소실은 AuthenticationException → 401" 조항 추가
+  - [backend] 테스트 51건 통과
+  - [frontend] 헤더: 닉네임 표시(로딩·실패 시 이메일), 햄버거 메뉴에서는 닉네임 옆에 이메일 작게, 마이페이지 버튼은
+    메인색 채운 버튼(데스크톱은 메뉴 링크 유지), 마이페이지·로그아웃 한 줄 배치
+  - [frontend] 마이페이지: 닉네임·이메일·신뢰도 점수·로그아웃, 로딩/오류/다시 시도. 내 티켓·거래 내역·받은 리뷰는
+    "준비 중", **회원탈퇴 버튼은 "준비 중"으로 비활성화**
+  - [frontend] 프로필 상태: 사용자 전환·로그아웃 시 늦게 온 응답 폐기, 공용 useLogout 훅. trustScore 타입 `number | null`
+  - 6차 리뷰 높음 0 / 중간 3 / 낮음 8 반영
+  - 검증: 프론트 통합(usersApi.me 200, 토큰 없음 401), curl(200, 401 케이스), `npm run build`·tsc 통과.
+    userId 전환 이후분은 Docker 중지로 빌드·단위 테스트로만 검증. 브라우저 육안 확인은 사용자 몫
+- **Spring Boot 3.3.0 → 3.3.13 업그레이드로 CVE-2025-22228 해결 (2026-10-03, chore/upgrade-spring-security 브랜치·별도 worktree, 커밋 전)**
+  - dependency-management 1.1.4 → 1.1.7, Spring Security 6.3.10
+  - BCrypt 72바이트 회귀 테스트 추가(이 브랜치 기준 총 49건 통과). 업그레이드 후에도 matches는 앞 72바이트만 비교 →
+    **로그인 72바이트 사전 차단은 계속 유지해야 함** (테스트로 고정)
+  - plain jar 생성 비활성화 (Docker 빌드 jar 다중 COPY 문제 방지). code-reviewer 리뷰 높음 0, 회귀 없음
+  - mysql-connector-j 8.4.0 수동 지정 유지 (Boot 3.3.13 BOM 관리 버전 8.3.0이 더 낮음)
+  - 결정: 3.3.13으로 일단 마무리, 추후 4.x 메이저 업그레이드 (3.3·3.4·3.5 라인 OSS 지원 종료, 3.3.13에도
+    Security·Framework·Tomcat CVE 다수 잔존)
 - FR-01 후속 과제:
-  - [backend] 내 정보 조회 `GET /api/users/me` (현재 프론트는 JWT 클레임 id/email만 사용)
   - 3차 리뷰 반영분 Docker 재기동 후 curl·통합 itest 재검증
   - 2차 리뷰 반영분 Docker 스택 재기동 후 E2E 재검증, 브라우저에서 가입/로그인 화면 직접 확인
   - 필터에서 전파된 예외(DB 장애 등)는 Spring 기본 `/error` 포맷(`{timestamp,status,error,path}`)으로 나감 —
     `{message}` 포맷 통일 검토, CORS 헤더 유지 여부 실측
   - 403 경로는 역할 기반 규칙이 없어 슬라이스 테스트로만 확인
-  - (참고) Spring Boot 3.3.0의 Security 6.3.0은 CVE-2025-22228 영향 버전 — 72바이트 차단으로
-    완화했으나 패치 버전 업그레이드 검토
   - (완료 2026-10-02) `/error` permitAll + 공통 예외 핸들러, SignupPage
   - 브라우저에서 Header 직접 확인 (햄버거 열고 닫기, 로그아웃 이동, 메뉴 강조, 640~1024px 폭 넘침 여부)
   - index.html viewport에 `viewport-fit=cover` 없음 → safe-area 여백 미적용 (켜려면 다른 화면 여백도 함께 조정)
@@ -198,6 +218,12 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - iOS 실기기에서 비활성 입력칸 흐림 정도 확인
   - (완료 2026-10-03) 401 AuthenticationEntryPoint, 401 재발급·재시도 인터셉터, Header 로그인 상태 메뉴/로그아웃
   - (결정 2026-10-03) 프론트 테스트 러너(vitest) 도입 안 함 → 해당 후속 과제 종료
+  - (완료 2026-10-03) 내 정보 조회 `GET /api/users/me`, Spring Security CVE-2025-22228 패치 업그레이드(3.3.13 / 6.3.10)
+  - [backend] Spring Boot 4.x 메이저 업그레이드 (Spring 7 / Security 7 / Hibernate 7 / Jackson 3, Gradle 업그레이드 가능성) — 배포 전
+  - [backend] 회원탈퇴 기능
+  - /me 요청 하나에 사용자 조회 2회(필터 + 서비스) — 필요 시 최적화
+  - 브라우저에서 헤더·마이페이지 확인 (햄버거 메뉴 이메일·마이페이지 버튼, 회원탈퇴 비활성)
+  - [docs] 04 요구사항정의서 FR-01 하위에 "내 정보 조회" 추가 필요 (원본 확보 후)
 - 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
 - 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.

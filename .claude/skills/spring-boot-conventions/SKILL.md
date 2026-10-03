@@ -16,7 +16,7 @@ com.seatswap
 ├── service      # @Service — 비즈니스 로직, 트랜잭션 경계
 ├── repository   # JpaRepository 인터페이스
 ├── config       # SecurityConfig, WebSocketConfig
-├── security     # JwtTokenProvider
+├── security     # JwtTokenProvider, JwtAuthenticationFilter, AuthUserPrincipal, EntryPoint/AccessDeniedHandler
 ├── exception    # 커스텀 예외 + GlobalExceptionHandler
 └── dto          # Request/Response 객체
 ```
@@ -26,6 +26,13 @@ com.seatswap
 - 인증은 JWT — `SecurityFilterChain`에서 화이트리스트(로그인/회원가입 등)만 permitAll.
 - 비밀번호는 `BCryptPasswordEncoder`로 암호화.
 - 서비스 계층에서 예외는 `SeatSwapException`으로 던지고, `@RestControllerAdvice`로 일괄 처리한다.
+  - **예외 조항 — 인증 주체 소실**: 토큰은 유효하나 해당 사용자가 없는 경우(삭제 등)는
+    `SeatSwapException`(400) 대신 `AuthenticationException` 계열(예: `InsufficientAuthenticationException`)을
+    던진다. `GlobalExceptionHandler`가 Security 예외를 rethrow → `ExceptionTranslationFilter` →
+    `JwtAuthenticationEntryPoint`가 401 `{"message":"로그인이 필요합니다."}`로 응답한다.
+- 인증 사용자 식별은 **principal의 userId 기준**(email 아님 — email은 변경될 수 있는 값).
+  컨트롤러는 `@AuthenticationPrincipal AuthUserPrincipal principal`로 받고 `principal.userId()`를
+  서비스에 넘겨 `findById`로 조회한다. JWT 필터도 토큰 sub(userId)로 사용자를 로딩한다.
 - WebSocket(STOMP)은 채팅 전용 — `/topic/chat/{matchId}` 형태의 destination 규칙을 따른다.
 - 엔티티 연관관계는 기본 `FetchType.LAZY`, N+1 우려되는 조회는 fetch join 또는 `@EntityGraph` 사용.
 - 좌석 인식(OpenCV/OCR)은 이 서버의 책임이 아니다 — `SeatSwap/seatmap-service`(FastAPI)가
