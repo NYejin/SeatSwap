@@ -1,7 +1,7 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '3.3.0'
-    id 'io.spring.dependency-management' version '1.1.4'
+    id 'org.springframework.boot' version '3.3.13'
+    id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'com.seatswap'
@@ -24,6 +24,12 @@ dependencies {
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+// bootJar만 생성한다. plain jar(-plain.jar)까지 생기면 Dockerfile의 COPY build/libs/*.jar가
+// 파일 2개를 단일 대상(app.jar)으로 복사하려다 실패하므로 비활성화.
+tasks.named('jar') {
+    enabled = false
 }
 
 // JUnit 5(Jupiter) 테스트 실행. 이 설정이 없으면 Gradle이 테스트를 0건으로 조용히 건너뛴다.
