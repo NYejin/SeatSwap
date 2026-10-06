@@ -3,10 +3,13 @@ package com.seatswap.domain;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")
+@EntityListeners(AuditingEntityListener.class)
 @Getter
 @NoArgsConstructor
 public class User {
@@ -27,6 +30,9 @@ public class User {
     // 신뢰도 점수 — 거래 완료 후 Review 누적 기반 (요구사항정의서 FR-13)
     private Double trustScore = 0.0;
 
+    /** 저장 시 JPA Auditing이 KST(Clock) 기준으로 채운다 — JpaAuditingConfig. */
+    @CreatedDate
+    @Column(updatable = false)
     private LocalDateTime createdAt;
 
     /**
@@ -39,7 +45,6 @@ public class User {
         user.password = encodedPassword;
         user.nickname = nickname;
         user.trustScore = 0.0;
-        user.createdAt = LocalDateTime.now();
         return user;
     }
 }

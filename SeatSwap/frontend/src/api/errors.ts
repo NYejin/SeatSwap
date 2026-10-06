@@ -57,6 +57,11 @@ export function parseApiError(error: unknown, fallback = "요청을 처리하지
   }
 
   const data: unknown = error.response.data;
+  // {message, ...details} — 409 등은 message 외에 숫자 필드(예: performanceId)가 함께 와도 message를 쓴다
+  if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+    const message: unknown = (data as Record<string, unknown>).message;
+    if (typeof message === "string" && message) return { message, fieldErrors: {} };
+  }
   if (isStringRecord(data)) {
     const body: ApiErrorBody = data;
     if ("message" in body && typeof body.message === "string") {

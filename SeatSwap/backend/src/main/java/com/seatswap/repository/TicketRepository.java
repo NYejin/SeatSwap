@@ -4,5 +4,10 @@ import com.seatswap.domain.Ticket;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
-    // TODO: 도메인별 조회 메서드 추가
+
+    /** 공연의 모든 회차에 등록된 티켓 수 (공연장 변경·공연 삭제 가능 여부 판정). */
+    long countByPerformanceSession_Performance_Id(Long performanceId);
+
+    /** 회차에 등록된 티켓 수 (회차 수정·삭제 가능 여부 판정). */
+    long countByPerformanceSession_Id(Long performanceSessionId);
 }

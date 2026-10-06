@@ -95,17 +95,29 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 
 ## 6. 데이터 모델 (산출물/08_ERD 요약)
 
-11개 엔티티: User, Venue, Performance, Ticket, SeatMapLayout, SeatCorrection,
+12개 엔티티: User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection,
 ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
+(2026-10-06 공연 회차 `PerformanceSession` 추가로 11 → 12. 08_ERD 원본 png는 아직 11개 기준 —
+반영할 변경 목록은 erd-conventions 스킬 "08_ERD 원본 반영 대기" 절)
 
 주요 관계:
 - Venue 1:N SeatMapLayout / 1:N Performance
+- Performance 1:N PerformanceSession (회차: 날짜·시간), User 1:N Performance (등록자)
 - SeatMapLayout 1:N SeatCorrection / 1:N Ticket
-- User 1:N Ticket, Performance 1:N Ticket
+- User 1:N Ticket, PerformanceSession 1:N Ticket (Ticket은 공연이 아니라 회차를 참조)
 - Ticket 1:1 ExchangeRequest
 - ExchangeRequest 1:N ExchangeMatch (A측/B측)
 - ExchangeMatch 1:1 ChatRoom, ChatRoom 1:N Message
 - ExchangeMatch 1:N Review
+
+공연·회차·공연장 규칙 (2026-10-06 결정):
+- 공연 등록: 로그인 사용자 누구나, 티켓팅 링크(sourceUrl) 입력. 중복 판정은 링크 정규화 값 `source_key` unique
+  (사이트별 상품 ID `{site}:{productId}`, 미지원 사이트는 일반 URL 정규화)
+- 회차: 공연 1:N, `starts_at` 분 단위, (공연, 일시) unique. **좌석 교환은 같은 회차끼리만**
+- 공연장: 검색 후 선택, 없으면 추가. 중복 판정은 이름 정규화 값 `normalized_name` unique
+  (공백·구두점·대소문자·전각 차이 흡수). SeatMapLayout은 Venue 단위 재사용(NFR-03)
+- 수정/삭제: 공연은 등록자만(공연장 변경·삭제는 티켓 0건일 때만, 링크 수정 불가), 회차 추가는 누구나,
+  회차 수정·삭제는 공연 등록자만 + 티켓 0건일 때만, 공연장은 일반 사용자 수정·삭제 불가
 
 상세 다이어그램은 `산출물/08_ERD/ERD.png` (및 `erd.dot` 소스) 참고.
 
@@ -181,7 +193,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - 5차 리뷰 높음 0 / 중간 2 / 낮음 9, 삭제된 CSS 규칙 누락 0건(빌드 CSS 대조)
   - 검증: tsc, vite build 통과, dev 서버 `/`·`/login`·`/signup`·`/exchange` 200. 브라우저 육안 확인 미실시
   - 결정: 브랜드 컬러 메인 #8A2BE2 / 보조 #BEA886(글자색 금지) / 강조 #E8A33D, blue 클래스는 primary 토큰으로 교체
-- **내 정보 조회 `/me` + 마이페이지 + 인증 주체 userId 전환, 6차 리뷰 반영 완료 (2026-10-03, feature/user-me 브랜치, 커밋 전)**
+- **내 정보 조회 `/me` + 마이페이지 + 인증 주체 userId 전환, 6차 리뷰 반영 완료 (2026-10-03, feature/user-me 브랜치, PR #6으로 master 머지)**
   - [backend] `GET /api/users/me` → 200 `{id, email, nickname, trustScore}`. 미인증·삭제된 사용자·refresh token 사용 → 401
   - [backend] **인증 사용자 식별은 토큰 userId 기준** (email 기준에서 전환): AuthUserPrincipal, 필터는 토큰 sub로 findById.
     이유: 향후 이메일 변경 시 옛 토큰이 같은 이메일을 새로 쓰는 다른 사용자로 인증될 위험 차단.
@@ -195,7 +207,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - 6차 리뷰 높음 0 / 중간 3 / 낮음 8 반영
   - 검증: 프론트 통합(usersApi.me 200, 토큰 없음 401), curl(200, 401 케이스), `npm run build`·tsc 통과.
     userId 전환 이후분은 Docker 중지로 빌드·단위 테스트로만 검증. 브라우저 육안 확인은 사용자 몫
-- **Spring Boot 3.3.0 → 3.3.13 업그레이드로 CVE-2025-22228 해결 (2026-10-03, chore/upgrade-spring-security 브랜치·별도 worktree, 커밋 전)**
+- **Spring Boot 3.3.0 → 3.3.13 업그레이드로 CVE-2025-22228 해결 (2026-10-03, chore/upgrade-spring-security 브랜치, PR #5로 master 머지)**
   - dependency-management 1.1.4 → 1.1.7, Spring Security 6.3.10
   - BCrypt 72바이트 회귀 테스트 추가(이 브랜치 기준 총 49건 통과). 업그레이드 후에도 matches는 앞 72바이트만 비교 →
     **로그인 72바이트 사전 차단은 계속 유지해야 함** (테스트로 고정)
@@ -224,8 +236,39 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - /me 요청 하나에 사용자 조회 2회(필터 + 서비스) — 필요 시 최적화
   - 브라우저에서 헤더·마이페이지 확인 (햄버거 메뉴 이메일·마이페이지 버튼, 회원탈퇴 비활성)
   - [docs] 04 요구사항정의서 FR-01 하위에 "내 정보 조회" 추가 필요 (원본 확보 후)
-- 다음 단계: 위 후속 과제, 나머지 도메인(공연/티켓/교환/채팅) 구현
+- **공연·공연장·회차 등록/조회(FR-02) 구현 + 7차 리뷰 반영 완료 (2026-10-06, feature/performance 브랜치, 커밋·푸시 예정)**
+  - 스키마 12개 엔티티, 규칙은 6절 참고. 시각은 KST 일원화(JpaAuditingConfig + Clock(Asia/Seoul), Dockerfile·compose TZ=Asia/Seoul)
+  - [backend] 공연장 검색·추가(같은 이름 재추가는 200으로 기존 반환), 공연 목록(asOf로 기준 시각 고정)·상세·lookup·등록·수정·삭제,
+    회차 추가·수정·삭제. 공연 중복(링크) 409 + performanceId, 회차 중복 409, 과거 회차 400, 수정·삭제는 등록자만(403),
+    티켓이 있으면 공연장 변경·삭제·회차 변경 불가(409). 오류 포맷 400/401/403/404/409 통일
+  - [backend] SourceKeyResolver·TicketingSite: 인터파크/멜론/YES24/티켓링크는 `{site}:{productId}`, 그 외는 호스트+경로+정렬 쿼리+프래그먼트
+    (합쳐지는 것보다 놓치는 쪽 선택), SSRF 대비 허용 호스트 목록(좌석맵 수집 단계용)
+  - [backend] 동시성: 공연 행 PESSIMISTIC_WRITE로 변경·삭제·회차 변경 직렬화, 제약 이름으로 중복 판별,
+    분류 안 된 DataIntegrityViolation은 409, `spring.jpa.open-in-view=false`. source_key는 utf8mb4_bin(대소문자 구분)
+  - [frontend] 홈(공개 라우트: 비로그인 서비스 소개 / 로그인 공연 검색·목록·더 보기), 공연 등록 5단계(링크 확인·제목·공연장·회차·등록),
+    공연 상세(보호 라우트, 등록자만 수정·삭제, 페이지 내 확인 상자, 외부 링크 호스트 표시 + 비공식 예매처 안내),
+    AuthTextField→TextField·components/ui.ts 공용화, 포커스 링 대비 5.96:1, 중립 배경 surface 토큰
+  - 테스트: 백엔드 161건 통과. 7차 리뷰 높음 2 / 중간 8 / 낮음 13 반영
+  - DB 조치: Docker DB를 새 스키마로 재생성(users 유지), source_key를 utf8mb4_bin으로 ALTER, 기존 행 시각 +9시간 보정
+  - 검증: 실제 서버 smoke 통과, 프론트 itest 13/13. 브라우저 육안 확인은 미실시. 사용자가 등록한 공연 데이터는 보존
+  - 결정: 공연은 로그인 사용자 누구나 등록, 홈 공개·공연 상세 보호 라우트, 링크 기반 공연정보 자동 입력(아래 다음 단계 3번),
+    정정 정책 보류, 메인 페이지 Phase 1 구현 보류. venue.normalized_name은 ai_ci 유지, idx_performance_session_starts_at은 미사용이나 유지
+  - 이슈: ddl-auto update는 컬럼 길이·NOT NULL·collation 변경·컬럼 삭제를 반영하지 못해 이번엔 수동 DDL·테이블 재생성 처리
+  - 후속: 회차 추가 개수 상한·스팸 정리, 공연장 무제한 생성·중복 정리, 예매처별로 같은 공연이 갈라지는 문제(같은 공연장+비슷한 제목 안내),
+    티켓 등록 시 공연 행 잠금(M6), 실제 MySQL 통합 테스트 없음(Testcontainers는 의존성 승인 필요), Flyway 도입 검토(의존성 승인 필요),
+    좌석맵 수집 시 SSRF 대비, 브라우저에서 홈·공연 등록·공연 상세 확인,
+    [docs] 04 FR-02 하위 항목(공연장 검색·추가, 링크 조회, 회차)·08_ERD 원본에 PerformanceSession·source_key 반영 (원본 확보 후)
+- 다음 단계 (2026-10-06 확정 순서):
+  1. 공연·공연장·회차 등록/조회(`feature/performance`) 마무리 — 커밋·푸시·머지
+  2. 좌석맵 인식 서비스 1차 구현 — 안전한 요청 기반(SSRF 방어: https·443, 호스트 정확 일치, 사설 IP 차단, 리다이렉트 재검증,
+     크기·시간 제한)과 사이트별 어댑터(`TicketingSite`)를 함께 구현
+  3. 같은 어댑터로 공연정보(제목·공연장·회차) 읽기 → 등록 화면에 미리 채워 사용자가 확인한 뒤 등록
+     (CLAUDE.md "링크 기반 공연정보 자동 입력" 결정 참고). 악의적 수정·허위 정보 방지책은 추후 결정
+  4. 티켓 등록 + 좌석맵에서 내 좌석 선택
+- 후속 과제 (2026-10-06 결정): 공연 정보 정정 정책(등록자 외 수정 수단, 리뷰 M3) — 보류, 상세는 `산출물/04_요구사항정의서/FR-02_공연정보_정정정책_후속과제.md`
+- 완료 (2026-10-06): 시간대 수정 전에 저장된 `created_at`/`updated_at`을 KST로 +9시간 보정 (users 2, venue 1, performance 1, performance_session 1행, `starts_at`은 제외)
+- 보류 (참고용): 메인 페이지 Phase 1 명세 — react-conventions 스킬 "계획된 화면 명세" 참고, 당장 구현하지 않음
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
 - 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.
-  현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 섹션)
+  현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 + 2026-10-06 섹션)
 - 결정 (2026-10-03): 프론트 테스트 러너(vitest)는 도입하지 않음 — 인터셉터 분기는 저장소 밖 임시 스크립트로만 검증된 상태
