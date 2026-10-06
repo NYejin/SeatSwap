@@ -14,8 +14,9 @@ import {
 } from "../api/dateTime";
 import type { PerformanceDetail, PerformanceSession, Venue } from "../types/performance";
 import TextField from "../components/TextField";
+import SessionDateTimePicker from "../components/SessionDateTimePicker";
 import VenuePicker from "../components/VenuePicker";
-import { button, input, linkButton, liveRegionClass, ui } from "../components/ui";
+import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 상세 (보호 라우트 /performances/:id).
 // 로그인 사용자 누구나 회차 추가. 등록자(canEdit)만 제목·공연장 수정, 회차 수정·삭제, 공연 삭제.
@@ -361,156 +362,6 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
   );
 }
 
-// ---- 날짜/시간 Picker ----
-type SessionDateTimePickerProps = {
-  value: string;
-  onChange: (value: string) => void;
-  idPrefix: string;
-  disabled?: boolean;
-  invalid?: boolean;
-  "aria-describedby"?: string;
-};
-
-function SessionDateTimePicker({
-  value,
-  onChange,
-  idPrefix,
-  disabled = false,
-  invalid = false,
-  "aria-describedby": ariaDescribedby,
-}: SessionDateTimePickerProps) {
-  const parseValue = (nextValue: string) => {
-    const normalized = normalizeLocalDateTime(nextValue);
-
-    if (!normalized) {
-      return {
-        date: "",
-        hour: "",
-        minute: "",
-      };
-    }
-
-    const [nextDate, nextTime = ""] = normalized.split("T");
-    const [nextHour = "", nextMinute = ""] = nextTime.split(":");
-
-    return {
-      date: nextDate,
-      hour: nextHour,
-      minute: Number(nextMinute) % 10 === 0 ? nextMinute : "",
-    };
-  };
-
-  const initial = parseValue(value);
-
-  const [date, setDate] = useState(initial.date);
-  const [hour, setHour] = useState(initial.hour);
-  const [minute, setMinute] = useState(initial.minute);
-
-  /**
-   * 부모에서 value가 외부적으로 변경됐을 때만
-   * 내부 선택값을 동기화한다.
-   */
-  const lastEmittedValue = useRef<string | null>(null);
-
-  useEffect(() => {
-    // 내가 방금 onChange로 보낸 값이면
-    // 사용자가 선택한 내부 state를 그대로 유지한다.
-    if (lastEmittedValue.current === value) {
-      lastEmittedValue.current = null;
-      return;
-    }
-
-    const parsed = parseValue(value);
-
-    setDate(parsed.date);
-    setHour(parsed.hour);
-    setMinute(parsed.minute);
-  }, [value]);
-
-  const emitValue = (
-    nextDate: string,
-    nextHour: string,
-    nextMinute: string,
-  ) => {
-    setDate(nextDate);
-    setHour(nextHour);
-    setMinute(nextMinute);
-
-    // 하나라도 비어 있으면 아직 완성되지 않은 상태
-    const nextValue =
-      nextDate && nextHour && nextMinute
-        ? `${nextDate}T${nextHour.padStart(2, "0")}:${nextMinute.padStart(2, "0")}`
-        : "";
-
-    lastEmittedValue.current = nextValue;
-    onChange(nextValue);
-  };
-
-  const hours = Array.from(
-    { length: 24 },
-    (_, i) => String(i).padStart(2, "0"),
-  );
-
-  const minutes = ["00", "10", "20", "30", "40", "50"];
-
-  return (
-    <div className="flex flex-1 gap-2">
-      <input
-        id={`${idPrefix}-date`}
-        type="date"
-        className={invalid ? input.invalid : input.normal}
-        value={date}
-        onChange={(e) =>
-          emitValue(e.target.value, hour, minute)
-        }
-        disabled={disabled}
-        aria-invalid={invalid}
-        aria-describedby={ariaDescribedby}
-      />
-
-      <select
-        id={`${idPrefix}-hour`}
-        className={invalid ? input.invalid : input.normal}
-        value={hour}
-        onChange={(e) =>
-          emitValue(date, e.target.value, minute)
-        }
-        disabled={disabled}
-        aria-invalid={invalid}
-        aria-describedby={ariaDescribedby}
-      >
-        <option value="">시</option>
-
-        {hours.map((h) => (
-          <option key={h} value={h}>
-            {h}시
-          </option>
-        ))}
-      </select>
-
-      <select
-        id={`${idPrefix}-minute`}
-        className={invalid ? input.invalid : input.normal}
-        value={minute}
-        onChange={(e) =>
-          emitValue(date, hour, e.target.value)
-        }
-        disabled={disabled}
-        aria-invalid={invalid}
-        aria-describedby={ariaDescribedby}
-      >
-        <option value="">분</option>
-
-        {minutes.map((m) => (
-          <option key={m} value={m}>
-            {m}분
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
 // ---- 회차 ----
 
 /** 회차 행 포커스 복귀 대상: 행의 수정/삭제 버튼, 없으면 섹션 제목 */
@@ -681,17 +532,14 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
               <li key={session.id} className={cls.sessionRow}>
                 {editingId === session.id ? (
                   <form className="flex flex-col gap-2" onSubmit={(e) => saveEdit(e, session)} noValidate>
-                    <label htmlFor={`session-edit-${session.id}`} className={ui.label}>
-                      {label} 회차의 새 날짜·시간 (한국 시간)
-                    </label>
                     <SessionDateTimePicker
+                      legend={`${label} 회차의 새 날짜·시간 (한국 시간)`}
                       value={editValue}
                       onChange={setEditValue}
-                      idPrefix={`session-edit-${session.id}`}
                       disabled={busy}
                       invalid={!!errorForRow}
-                      aria-describedby={`session-edit-${session.id}-hint${errorForRow ? ` session-edit-${session.id}-error` : ""
-                        }`}
+                      describedBy={errorForRow ? `session-edit-${session.id}-error` : undefined}
+                      autoFocus
                     />
                     {/* TODO: 지우기 */}
                     {/* <p id={`session-edit-${session.id}-hint`} className={ui.hint}>
@@ -780,18 +628,15 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
       )}
 
       {/* 회차 추가는 로그인 사용자 누구나 (빠진 회차를 다른 관객이 채울 수 있게) */}
-      <form className="flex flex-col gap-2 pt-6" onSubmit={add} noValidate>
-        <label htmlFor="session-new" className={ui.label}>
-          회차 추가 (한국 시간)
-        </label>
-        <div className="flex flex-wrap gap-2">
+      <form className="flex flex-col gap-2 border-t border-gray-200 pt-4" onSubmit={add} noValidate>
+        <div className="flex flex-wrap items-end gap-2">
           <SessionDateTimePicker
+            legend="회차 추가 (한국 시간)"
             value={newValue}
             onChange={setNewValue}
-            idPrefix="session-new"
             disabled={adding}
             invalid={!!addError}
-            aria-describedby={addError ? "session-new-hint session-new-error" : "session-new-hint"}
+            describedBy={addError ? "session-new-error" : undefined}
           />
           <button type="submit" className={button.solid} disabled={adding} aria-busy={adding}>
             {adding ? "추가 중..." : "회차 추가"}
@@ -807,7 +652,7 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
           {SESSION_TIME_STEP_HINT}
         </p> */}
       </form>
-      
+
       <p className={liveRegionClass(notice, ui.notice)} role="status">
         {notice ?? ""}
       </p>

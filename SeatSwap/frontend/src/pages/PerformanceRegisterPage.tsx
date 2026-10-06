@@ -14,8 +14,9 @@ import {
 } from "../api/dateTime";
 import type { Venue } from "../types/performance";
 import TextField from "../components/TextField";
+import SessionDateTimePicker from "../components/SessionDateTimePicker";
 import VenuePicker from "../components/VenuePicker";
-import { button, input, linkButton, liveRegionClass, ui } from "../components/ui";
+import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 등록 (보호 라우트 /performances/new) — 단계형:
 // ① 티켓팅 링크(이미 등록됐는지 확인) ② 제목 ③ 공연장(검색·추가) ④ 회차(여러 개) ⑤ 확인 후 등록.
@@ -140,156 +141,6 @@ export default function PerformanceRegisterPage() {
     setVenueError(undefined);
     goTo(3);
   };
-
-  // ---- 날짜/시간 Picker ----
-  type SessionDateTimePickerProps = {
-    value: string;
-    onChange: (value: string) => void;
-    idPrefix: string;
-    disabled?: boolean;
-    invalid?: boolean;
-    "aria-describedby"?: string;
-  };
-
-  function SessionDateTimePicker({
-    value,
-    onChange,
-    idPrefix,
-    disabled = false,
-    invalid = false,
-    "aria-describedby": ariaDescribedby,
-  }: SessionDateTimePickerProps) {
-    const parseValue = (nextValue: string) => {
-      const normalized = normalizeLocalDateTime(nextValue);
-
-      if (!normalized) {
-        return {
-          date: "",
-          hour: "",
-          minute: "",
-        };
-      }
-
-      const [nextDate, nextTime = ""] = normalized.split("T");
-      const [nextHour = "", nextMinute = ""] = nextTime.split(":");
-
-      return {
-        date: nextDate,
-        hour: nextHour,
-        minute: Number(nextMinute) % 10 === 0 ? nextMinute : "",
-      };
-    };
-
-    const initial = parseValue(value);
-
-    const [date, setDate] = useState(initial.date);
-    const [hour, setHour] = useState(initial.hour);
-    const [minute, setMinute] = useState(initial.minute);
-
-    /**
-     * 부모에서 value가 외부적으로 변경됐을 때만
-     * 내부 선택값을 동기화한다.
-     */
-    const lastEmittedValue = useRef<string | null>(null);
-
-    useEffect(() => {
-      // 내가 방금 onChange로 보낸 값이면
-      // 사용자가 선택한 내부 state를 그대로 유지한다.
-      if (lastEmittedValue.current === value) {
-        lastEmittedValue.current = null;
-        return;
-      }
-
-      const parsed = parseValue(value);
-
-      setDate(parsed.date);
-      setHour(parsed.hour);
-      setMinute(parsed.minute);
-    }, [value]);
-
-    const emitValue = (
-      nextDate: string,
-      nextHour: string,
-      nextMinute: string,
-    ) => {
-      setDate(nextDate);
-      setHour(nextHour);
-      setMinute(nextMinute);
-
-      // 하나라도 비어 있으면 아직 완성되지 않은 상태
-      const nextValue =
-        nextDate && nextHour && nextMinute
-          ? `${nextDate}T${nextHour.padStart(2, "0")}:${nextMinute.padStart(2, "0")}`
-          : "";
-
-      lastEmittedValue.current = nextValue;
-      onChange(nextValue);
-    };
-
-    const hours = Array.from(
-      { length: 24 },
-      (_, i) => String(i).padStart(2, "0"),
-    );
-
-    const minutes = ["00", "10", "20", "30", "40", "50"];
-
-    return (
-      <div className="flex flex-1 gap-2">
-        <input
-          id={`${idPrefix}-date`}
-          type="date"
-          className={invalid ? input.invalid : input.normal}
-          value={date}
-          onChange={(e) =>
-            emitValue(e.target.value, hour, minute)
-          }
-          disabled={disabled}
-          aria-invalid={invalid}
-          aria-describedby={ariaDescribedby}
-        />
-
-        <select
-          id={`${idPrefix}-hour`}
-          className={invalid ? input.invalid : input.normal}
-          value={hour}
-          onChange={(e) =>
-            emitValue(date, e.target.value, minute)
-          }
-          disabled={disabled}
-          aria-invalid={invalid}
-          aria-describedby={ariaDescribedby}
-        >
-          <option value="">시</option>
-
-          {hours.map((h) => (
-            <option key={h} value={h}>
-              {h}시
-            </option>
-          ))}
-        </select>
-
-        <select
-          id={`${idPrefix}-minute`}
-          className={invalid ? input.invalid : input.normal}
-          value={minute}
-          onChange={(e) =>
-            emitValue(date, hour, e.target.value)
-          }
-          disabled={disabled}
-          aria-invalid={invalid}
-          aria-describedby={ariaDescribedby}
-        >
-          <option value="">분</option>
-
-          {minutes.map((m) => (
-            <option key={m} value={m}>
-              {m}분
-            </option>
-          ))}
-        </select>
-      </div>
-    );
-  }
 
   const addSession = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -453,16 +304,13 @@ export default function PerformanceRegisterPage() {
     body = (
       <div className={cls.stepBody}>
         <form className="flex flex-col gap-2" onSubmit={addSession} noValidate>
-          <label htmlFor="perf-session" className={ui.label}>
-            회차 날짜·시간 (한국 시간)
-          </label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <SessionDateTimePicker
+              legend="회차 날짜·시간 (한국 시간)"
               value={sessionInput}
               onChange={setSessionInput}
-              idPrefix="perf-session"
               invalid={!!sessionError}
-              aria-describedby={`perf-session-hint${sessionError ? " perf-session-error" : ""}`}
+              describedBy={`perf-session-hint${sessionError ? " perf-session-error" : ""}`}
             />
             <button type="submit" className={button.outline}>
               회차 추가

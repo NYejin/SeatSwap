@@ -116,6 +116,29 @@ class PerformanceSessionServiceTest {
     }
 
     @Test
+    void rescheduleByNonRegistrantWithInvalidValueIs403Not400() {
+        PerformanceSession s = session(3L, performance, future);
+        when(sessionRepository.findWithPerformanceById(3L)).thenReturn(Optional.of(s));
+
+        // 비등록자 + 10분 단위 아님 / 과거 / null → 모두 403
+        assertThatThrownBy(() -> service.reschedule(100L, 3L, 2L, future.withMinute(44)))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> service.reschedule(100L, 3L, 2L, NOW.minusDays(1)))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> service.reschedule(100L, 3L, 2L, null))
+                .isInstanceOf(AccessDeniedException.class);
+        // 없는 회차 id + 잘못된 값 → 404
+        assertThatThrownBy(() -> service.reschedule(100L, 999L, 1L, future.withMinute(44)))
+                .isInstanceOf(NotFoundException.class);
+        // 없는 공연 + 잘못된 값 → 404
+        when(performanceRepository.findByIdForUpdate(404L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.add(404L, future.withMinute(44))).isInstanceOf(NotFoundException.class);
+        // 등록자 본인이면 400
+        assertThatThrownBy(() -> service.reschedule(100L, 3L, 1L, future.withMinute(44)))
+                .isInstanceOf(FieldValidationException.class);
+    }
+
+    @Test
     void rescheduleToOtherSessionsTimeIs409AndSuccessReturnsSession() {
         PerformanceSession s = session(3L, performance, future);
         when(sessionRepository.findWithPerformanceById(3L)).thenReturn(Optional.of(s));
