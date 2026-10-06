@@ -19,7 +19,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 추가금액을 주고받으며 자리를 교환하는 개인 포트폴리오 웹 서비스.
 
 - **핵심 시나리오**: 단순 교환(1:1 맞교환) / 차액 거래(등급 차이 시 추가금 지불). 매칭은
-  추천 알고리즘이 아닌 **단순 1:1 신청/수락**.
+  추천 알고리즘이 아닌 **단순 1:1 신청/수락**. 교환 범위는 **같은 공연 단위**(다른 회차끼리도 가능, 2026-10-07 결정, 7절 참고).
 - **타겟 플랫폼**: 모바일 웹(반응형, 필요 시 PWA). 네이티브 앱 제외.
 - **제외 범위**: 실결제(PG) 연동 없음, 티켓팅 사이트 공식 API 연동 없음, 좌석 실시간 재고 연동 없음.
 
@@ -60,7 +60,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 | 좌석 자동 인식 | OpenCV+OCR로 좌표·행/열 번호 자동 추출 |
 | 좌석맵 터치 선택 | SVG 오버레이로 본인 좌석 선택 |
 | 오류 신고/보정 | OFFICIAL 좌석표: 동일 정정 2건 이상 시 자동 반영, 1건은 검토 대기 / DRAFT: 수정 즉시 반영 + 수정 로그 |
-| 교환 요청/매칭 | 단순 교환 또는 차액 거래, 1:1 신청·수락 |
+| 교환 요청/매칭 | 단순 교환 또는 차액 거래, 1:1 신청·수락. 같은 공연이면 다른 회차 티켓끼리도 가능(2026-10-07), 교환 후 티켓의 회차가 바뀜. 차액 계산·같은 회차 우선 노출 여부는 미정 |
 | 실시간 채팅 | WebSocket(STOMP) |
 | 거래 상태 관리 | 제안→수락→교환완료 |
 | 리뷰/신뢰도 | 거래 완료 후 상호 리뷰, 신뢰도 점수 반영 |
@@ -113,7 +113,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - Performance 1:N PerformanceSession (회차: 날짜·시간), User 1:N Performance (등록자)
 - SeatMapLayout 1:N SeatCorrection / 1:N Ticket
 - User 1:N Ticket, PerformanceSession 1:N Ticket (Ticket은 공연이 아니라 회차를 참조)
-- Ticket 1:1 ExchangeRequest
+- Ticket 1:1 ExchangeRequest (교환 후보·매칭 검증은 회차가 속한 **공연이 같은지** 기준, 회차까지 같을 필요 없음)
 - ExchangeRequest 1:N ExchangeMatch (A측/B측)
 - ExchangeMatch 1:1 ChatRoom, ChatRoom 1:N Message
 - ExchangeMatch 1:N Review
@@ -121,7 +121,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 공연·회차·공연장 규칙 (2026-10-06 결정):
 - 공연 등록: 로그인 사용자 누구나, 티켓팅 링크(sourceUrl) 입력. 중복 판정은 링크 정규화 값 `source_key` unique
   (사이트별 상품 ID `{site}:{productId}`, 미지원 사이트는 일반 URL 정규화)
-- 회차: 공연 1:N, `starts_at` 분 단위, (공연, 일시) unique. **좌석 교환은 같은 회차끼리만**
+- 회차: 공연 1:N, `starts_at` 분 단위, (공연, 일시) unique. **좌석 교환은 같은 공연 안이면 회차가 달라도 가능**(2026-10-07 변경, 이전에는 같은 회차끼리만으로 기록됨). 교환 조건은 좌석 위치 + 회차 일시이고, 다른 회차끼리 교환하면 교환 후 티켓의 회차가 바뀐다
 - 공연장: 검색 후 선택, 없으면 추가. 중복 판정은 이름 정규화 값 `normalized_name` unique
   (공백·구두점·대소문자·전각 차이 흡수). SeatMapLayout은 Venue 단위 재사용(NFR-03)
 - 수정/삭제: 공연은 등록자만(공연장 변경·삭제는 티켓 0건일 때만, 링크 수정 불가), 회차 추가는 누구나,
@@ -278,11 +278,14 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - 보류 (참고용): 메인 페이지 Phase 1 명세 — react-conventions 스킬 "계획된 화면 명세" 참고, 당장 구현하지 않음
 - **2026-10-07 결정·진행 (docs/seatmap-decisions, 상세는 위 4절 및 산출물/07_작업일지/2026-10-07.md)**
   - 좌석맵은 사용자 이미지 업로드/주소 입력이 정식 경로, DRAFT/OFFICIAL 좌석표 흐름, 열 번호 continue 기본, 링크 자동 입력은 제목·공연장·날짜 범위만
-  - 별도 브랜치에 구현됐으나 **아직 미병합(진행 중/브랜치 반영 대기)**: fix/session-time-step(회차 시각 10분 단위 입력),
+  - 별도 브랜치에서 구현해 PR #8~#11로 master에 **병합됨**(단, fix/session-time-step의 리뷰 반영 커밋 9ae3d3d는 병합 전, Flyway 운영 DB baseline 미적용): fix/session-time-step(회차 시각 10분 단위 입력),
     chore/flyway-migration(Flyway 도입, V1), feature/seatmap-service(Phase 0/1: safe_fetch SSRF 방어, 멜론 어댑터,
-    검출·OCR·열번호 파이프라인, API 5종, pytest 77건)
+    검출·OCR·열번호 파이프라인, API 5종, pytest 186건)
   - FR-02 정정 정책 문서: 관리자 정식 등록 + 수정 로그로 방향 결정, 상태는 '부분 결정'
   - 산출물 원본(04 xlsx/05 WBS/08 ERD) 반영 대기 항목은 2026-10-07.md 끝의 '원본 반영 대기' 목록 참고
+- **2026-10-07 결정 — 교환 범위는 공연 단위 (CLAUDE.md와 동일)**: 같은 공연의 다른 회차 티켓끼리도 교환 가능. 매칭 판정·후보 조회·신청 유효성 검증은 session이 아니라 performance 기준.
+  OFFICIAL 좌석표는 회차와 무관하게 공연장 단위로 공유. DRAFT 공연은 본인 좌석 정보 + 희망 좌석 범위로 매칭하고 희망 범위에 회차를 포함할 수 있음.
+  **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부 등 세부. 이 결정에 따른 04 요구사항정의서·08_ERD 원본 반영은 원본 확보 후 (07 작업일지 기록 위치는 사용자가 정함)
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
 - 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.
   현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 + 2026-10-06 섹션), `2026-10-07.md`
