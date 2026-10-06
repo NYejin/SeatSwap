@@ -155,10 +155,16 @@ class PerformanceServiceTest {
 
     @Test
     void createRejectsPastSessionsInvalidLinkTitleAndMissingVenue() {
-        assertThatThrownBy(() -> service.create(1L, request(List.of(NOW.plusDays(1), NOW.minusMinutes(1)))))
+        assertThatThrownBy(() -> service.create(1L, request(List.of(NOW.plusDays(1), NOW.minusMinutes(10)))))
                 .isInstanceOfSatisfying(FieldValidationException.class, e -> {
                     assertThat(e.getField()).isEqualTo("sessions");
                     assertThat(e.getMessage()).isEqualTo("지난 일시는 등록할 수 없습니다.");
+                });
+        // 과거이면서 10분 단위가 아니면 단위 오류가 먼저
+        assertThatThrownBy(() -> service.create(1L, request(List.of(NOW.minusMinutes(1)))))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                    assertThat(e.getField()).isEqualTo("sessions");
+                    assertThat(e.getMessage()).isEqualTo("회차 시각은 10분 단위로 입력해주세요.");
                 });
         assertThatThrownBy(() -> service.create(1L,
                 new PerformanceCreateRequest("ftp://x.com/a", "제목", 10L, List.of(NOW.plusDays(1)))))

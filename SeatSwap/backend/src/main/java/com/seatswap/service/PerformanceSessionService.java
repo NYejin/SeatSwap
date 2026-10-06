@@ -55,10 +55,10 @@ public class PerformanceSessionService {
      * 삭제가 먼저 커밋되면 잠금 대기 후 공연이 없어 404가 된다.
      */
     public SessionResponse add(Long performanceId, LocalDateTime requestedStartsAt) {
-        LocalDateTime startsAt = sessionTimePolicy.normalize(requestedStartsAt, "startsAt");
         try {
             return transactionTemplate.execute(status -> {
                 Performance performance = lockPerformance(performanceId);
+                LocalDateTime startsAt = sessionTimePolicy.normalize(requestedStartsAt, "startsAt");
                 if (sessionRepository.findByPerformance_IdAndStartsAt(performanceId, startsAt).isPresent()) {
                     throw new ConflictException(DUPLICATE_SESSION_MESSAGE);
                 }
@@ -70,13 +70,16 @@ public class PerformanceSessionService {
         }
     }
 
-    /** 회차 일시 변경 (등록자만, 티켓 0건일 때만). 응답은 {id, startsAt}. */
+    /**
+     * 회차 일시 변경 (등록자만, 티켓 0건일 때만). 응답은 {id, startsAt}.
+     * 조회·권한 확인(404/403/409) 뒤에 입력 검증(400)을 한다 - 비등록자에게 입력 규칙을 알려주지 않기 위해.
+     */
     public SessionResponse reschedule(Long performanceId, Long sessionId, Long userId,
                                       LocalDateTime requestedStartsAt) {
-        LocalDateTime startsAt = sessionTimePolicy.normalize(requestedStartsAt, "startsAt");
         try {
             return transactionTemplate.execute(status -> {
                 PerformanceSession session = loadEditableSession(performanceId, sessionId, userId);
+                LocalDateTime startsAt = sessionTimePolicy.normalize(requestedStartsAt, "startsAt");
                 if (!startsAt.equals(session.getStartsAt())) {
                     sessionRepository.findByPerformance_IdAndStartsAt(performanceId, startsAt).ifPresent(other -> {
                         throw new ConflictException(DUPLICATE_SESSION_MESSAGE);

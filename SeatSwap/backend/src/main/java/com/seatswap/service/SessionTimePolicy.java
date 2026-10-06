@@ -32,22 +32,22 @@ public class SessionTimePolicy {
         return LocalDateTime.now(clock);
     }
 
-    /** 단일 회차: 분 절삭(초 무시) + 과거 거부 + 10분 단위 검사. */
+    /** 단일 회차: 분 절삭(초 무시) + 10분 단위 검사 + 과거 거부. */
     public LocalDateTime normalize(LocalDateTime startsAt, String field) {
         if (startsAt == null) {
             throw new FieldValidationException(field, "회차 일시를 입력해주세요.");
         }
         LocalDateTime truncated = PerformanceSession.truncate(startsAt);
-        if (truncated.isBefore(PerformanceSession.truncate(now()))) {
-            throw new FieldValidationException(field, PAST_MESSAGE);
-        }
         if (truncated.getMinute() % MINUTE_STEP != 0) {
             throw new FieldValidationException(field, STEP_MESSAGE);
+        }
+        if (truncated.isBefore(PerformanceSession.truncate(now()))) {
+            throw new FieldValidationException(field, PAST_MESSAGE);
         }
         return truncated;
     }
 
-    /** 여러 회차: 각각 절삭 + 과거 거부 + 10분 단위 검사(하나라도 위반이면 400), 같은 시각(절삭 후)은 하나로 합치고 오름차순 정렬. */
+    /** 여러 회차: 각각 절삭 + 10분 단위 검사 + 과거 거부(하나라도 위반이면 400), 같은 시각(절삭 후)은 하나로 합치고 오름차순 정렬. */
     public List<LocalDateTime> normalizeAll(Collection<LocalDateTime> startsAts, String field) {
         if (startsAts == null || startsAts.isEmpty()) {
             throw new FieldValidationException(field, "회차를 1개 이상 입력해주세요.");
