@@ -1,8 +1,16 @@
-from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+AisleMode = Literal["continue", "skip"]
+
+
+class _Camel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SeatCoordinate(BaseModel):
+    """seatJson 한 칸. 좌표는 원본 이미지 픽셀 기준."""
     row: int
     col: int
     x: int
@@ -11,16 +19,79 @@ class SeatCoordinate(BaseModel):
     h: int
 
 
-class RecognizeRequest(BaseModel):
-    image_url: str
+class ImageInfo(BaseModel):
+    width: int
+    height: int
+
+
+class AisleInfo(_Camel):
+    after_col: int = Field(alias="afterCol")
+    gap_px: int = Field(alias="gapPx")
+    missing_slots: int = Field(alias="missingSlots")
+
+
+class RowInfo(_Camel):
+    row: int
+    row_source: Literal["ocr", "inferred", "sequence"] = Field(alias="rowSource")
+    label_confidence: float = Field(alias="labelConfidence")
+    seat_count: int = Field(alias="seatCount")
+    aisles: List[AisleInfo]
+
+
+class RecognizeStats(_Camel):
+    block_count: int = Field(alias="blockCount")
+    row_count: int = Field(alias="rowCount")
+    ocr_rows_read: int = Field(alias="ocrRowsRead")
+    discarded_components: int = Field(alias="discardedComponents")
+
+
+class WarningInfo(BaseModel):  # 내장 Warning을 가리지 않도록 이름 변경 (응답 JSON 필드는 그대로)
+    code: str
+    message: str
 
 
 class RecognizeResponse(BaseModel):
+    image: ImageInfo
     seats: List[SeatCoordinate]
+    rows: List[RowInfo]
+    stats: RecognizeStats
+    warnings: List[WarningInfo]
 
 
-class CorrectionRequest(BaseModel):
-    seatmap_id: int
-    original_label: str
-    corrected_label: str
-    reporter_id: int
+class DiscoverRequest(_Camel):
+    site: str
+    product_id: str = Field(alias="productId")
+
+
+class ImageCandidate(BaseModel):
+    url: str
+    source: str
+
+
+class DiscoverResponse(_Camel):
+    site: str
+    product_id: str = Field(alias="productId")
+    page_url: str = Field(alias="pageUrl")
+    images: List[ImageCandidate]
+
+
+class RecognizeUrlRequest(_Camel):
+    site: str
+    image_url: str = Field(alias="imageUrl")
+    aisle_mode: AisleMode = Field(default="continue", alias="aisleMode")
+
+
+class AnalyzeRequest(_Camel):
+    site: str
+    product_id: str = Field(alias="productId")
+    aisle_mode: AisleMode = Field(default="continue", alias="aisleMode")
+
+
+class AnalyzeResponse(RecognizeResponse):
+    source_image_url: str = Field(alias="sourceImageUrl")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ErrorResponse(BaseModel):
+    code: str
+    message: str

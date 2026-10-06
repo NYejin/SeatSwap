@@ -24,8 +24,14 @@ services:
   seatmap-service:
     build: ./seatmap-service
     container_name: seatswap-seatmap-service
+    environment:
+      # 설정하면 /api/* 요청에 X-Internal-Key 헤더가 같아야 한다 (백엔드가 같은 값을 보냄). 미설정이면 개발 모드(허용).
+      SEATMAP_INTERNAL_KEY: ${SEATMAP_INTERNAL_KEY:-}
+      # false로 두면 /docs, /redoc, /openapi.json을 끈다 (운영 권장)
+      SEATMAP_ENABLE_DOCS: ${SEATMAP_ENABLE_DOCS:-true}
     ports:
-      - "8001:8001"
+      # 백엔드는 compose 내부망(seatmap-service:8001)으로 호출하므로 호스트에는 로컬 접근용으로만 연다 (외부 노출 금지)
+      - "127.0.0.1:8001:8001"
 
   backend:
     build: ./backend
