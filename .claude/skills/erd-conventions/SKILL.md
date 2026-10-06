@@ -61,7 +61,15 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
   - `PerformanceSession`: Performance 1:N. `starts_at`(분 단위 절삭, KST 현지 시각),
     unique (`performance_id`, `starts_at`).
   - `Ticket`은 `PerformanceSession`을 참조한다 (`performance_session_id`). `performance_id`를 중복으로 두지 않는다.
-    좌석 교환은 **같은 회차의 티켓끼리만** 가능 (ExchangeMatch 생성 시 서비스에서 검사).
+    **교환 범위는 공연(Performance) 단위** (2026-10-07 결정, 이전의 "같은 회차끼리만" 규칙을 대체): 같은 공연의 다른 회차 티켓끼리도
+    교환할 수 있다. Ticket은 `performance_session_id`로 회차를 참조하므로 공연은 `session.performance`를 통해 얻고,
+    **매칭 판정은 session이 아니라 performance 기준**이다. 교환 후보 조회와 ExchangeRequest/ExchangeMatch 생성 시
+    두 티켓의 `performanceSession.performance`가 같은지 서비스에서 검사한다 (회차가 같을 필요는 없음).
+    회차마다 날짜가 다르므로 '좌석 위치' 외에 '회차 일시'(`starts_at`)가 교환 조건의 일부이며, 서로 다른 회차끼리 교환이
+    성사되면 교환 후 각 티켓의 `performance_session_id`가 바뀐다 (이 변경을 이력으로 남길지 등은 미정).
+    OFFICIAL 좌석표(SeatMapLayout)는 회차와 무관하게 공연장(Venue) 단위로 공유한다. DRAFT 공연은 좌표 대신 본인 좌석 정보 +
+    희망 좌석 범위로 매칭하며, 희망 범위에 회차를 포함할 수 있다.
+    **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부, 희망 범위·회차 조건의 컬럼 설계 (스키마 변경 시 db-schema-architect 경유).
   - `Ticket.seatMapLayout.venue`는 `Ticket.performanceSession.performance.venue`와 같아야 한다 (서비스에서 검사).
 - `ExchangeRequest`는 `Ticket`과 1:1 — 티켓 하나당 교환 요청은 하나만 유효.
 - `ExchangeMatch`는 두 개의 `ExchangeRequest`(A측/B측)를 참조하는 단순 1:1 매칭 레코드다.

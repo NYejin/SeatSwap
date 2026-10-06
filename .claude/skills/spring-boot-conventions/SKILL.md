@@ -33,6 +33,8 @@ com.seatswap
 - 인증 사용자 식별은 **principal의 userId 기준**(email 아님 — email은 변경될 수 있는 값).
   컨트롤러는 `@AuthenticationPrincipal AuthUserPrincipal principal`로 받고 `principal.userId()`를
   서비스에 넘겨 `findById`로 조회한다. JWT 필터도 토큰 sub(userId)로 사용자를 로딩한다.
+- 교환 후보 조회·교환 신청/매칭 검증은 **공연(Performance) 단위**다 (같은 공연의 다른 회차끼리도 교환 가능, 2026-10-07 결정).
+  두 티켓의 `performanceSession.performance`가 같은지 확인하고 회차 동일 여부는 요구하지 않는다. 세부(차액, 같은 회차 우선 노출)는 미정.
 - WebSocket(STOMP)은 채팅 전용 — `/topic/chat/{matchId}` 형태의 destination 규칙을 따른다.
 - 엔티티 연관관계는 기본 `FetchType.LAZY`, N+1 우려되는 조회는 fetch join 또는 `@EntityGraph` 사용.
 - 좌석 인식(OpenCV/OCR)은 이 서버의 책임이 아니다 — `SeatSwap/seatmap-service`(FastAPI)가
