@@ -324,4 +324,30 @@ class PerformanceServiceTest {
         assertThatThrownBy(() -> service.delete(404L, 1L)).isInstanceOf(NotFoundException.class);
         verify(performanceRepository, never()).findById(anyLong());
     }
+
+    // ---- 10분 단위 ----
+
+    @Test
+    void createAcceptsMinutesZeroTenAndFiftyAndTruncatesSeconds() {
+        stubInserts();
+        LocalDateTime base = NOW.plusDays(2).withHour(19).withMinute(0);
+        PerformanceDetailResponse detail = service.create(1L, request(List.of(
+                base.withMinute(50), base, base.withMinute(10).withSecond(59))));
+
+        assertThat(detail.sessions()).extracting("startsAt")
+                .containsExactly(base, base.withMinute(10), base.withMinute(50));
+    }
+
+    @Test
+    void createRejectsWholeRequestWhenAnySessionIsNotTenMinuteStep() {
+        LocalDateTime ok = NOW.plusDays(2).withHour(19).withMinute(0);
+        for (int minute : new int[]{1, 44, 59}) {
+            assertThatThrownBy(() -> service.create(1L, request(List.of(ok, ok.withMinute(minute)))))
+                    .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                        assertThat(e.getField()).isEqualTo("sessions");
+                        assertThat(e.getMessage()).isEqualTo("회차 시각은 10분 단위로 입력해주세요.");
+                    });
+        }
+        verify(performanceRepository, never()).saveAndFlush(any());
+    }
 }
