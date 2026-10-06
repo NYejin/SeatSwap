@@ -36,9 +36,17 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
     팩토리 메서드에서 시각을 직접 넣지 않는다 (저장 전에는 null)
   - 방어선: backend Dockerfile `ENV TZ=Asia/Seoul` + `-Duser.timezone=Asia/Seoul`, docker-compose backend `TZ: Asia/Seoul`
   - 테스트는 `Clock.fixed`로 고정 (`AuditingClockTest` 참고)
-- **ddl-auto: update 한계**: 기존 컬럼의 길이·NOT NULL·collation 변경, 컬럼 삭제는 반영되지 않는다.
-  이런 변경을 하면 수동 DDL(ALTER) 또는 해당 테이블 drop 후 재생성(로컬은 MySQL 볼륨 초기화도 가능)이 필요하다 —
-  변경 보고에 반드시 SQL을 함께 적는다
+- **스키마 변경은 Flyway 마이그레이션으로만 (2026-10-07 도입)**: `ddl-auto: validate` — Hibernate는 스키마를 만들거나
+  고치지 않고 엔티티와 일치하는지 검증만 한다(불일치 시 기동 실패).
+  - 변경은 `SeatSwap/backend/src/main/resources/db/migration/V{n}__{snake_description}.sql`을 **새로 추가**해서만 한다
+    (예: `V2__add_ticket_status.sql`). 번호는 마지막 번호 + 1.
+  - **이미 적용된 파일은 수정 금지**(체크섬 불일치로 기동 실패). 잘못됐으면 새 V 파일로 고친다.
+  - 새 엔티티·컬럼·인덱스·길이·NOT NULL·collation 변경은 엔티티 수정과 **같은 커밋에 마이그레이션 파일을 함께 작성**한다.
+    과거 ddl-auto update 시절의 "길이·NOT NULL·collation·컬럼 삭제 미반영 → 수동 DDL" 문제는 이제 마이그레이션 파일로 해결한다.
+  - 제약 이름은 명시한다(`uk_`/`idx_`/`fk_{테이블}_{컬럼}`). V1의 FK/일부 UNIQUE 이름은 Hibernate가 만든 임의 이름
+    (예: `FK6p310v5n1wwgdqry9ksyx39nf`)을 기존 DB와 일치시키려고 그대로 쓴 것이므로, 이를 DROP/변경할 때는 그 이름을 쓴다.
+  - 기존(Flyway 도입 전) DB는 `baseline-on-migrate` + `baseline-version: 1`로 V1을 적용된 것으로 간주한다.
+  - 이력 확인: `SELECT * FROM flyway_schema_history;` (자세한 절차는 `SeatSwap/backend/README.md` "DB 마이그레이션")
 - 상태값 컬럼은 `status`로 통일 (enum: PENDING/ACCEPTED/COMPLETED 등 문자열 저장)
 
 ## 관계 원칙

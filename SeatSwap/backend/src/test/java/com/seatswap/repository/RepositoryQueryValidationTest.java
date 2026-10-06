@@ -27,7 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.jpa.database-platform=org.hibernate.dialect.MySQLDialect",
         "spring.jpa.hibernate.ddl-auto=none",
         "spring.jpa.properties.hibernate.boot.allow_jdbc_metadata_access=false",
-        "spring.sql.init.mode=never"
+        "spring.sql.init.mode=never",
+        "spring.flyway.enabled=false"
 })
 class RepositoryQueryValidationTest {
 

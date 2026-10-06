@@ -38,8 +38,15 @@ com.seatswap
 - 좌석 인식(OpenCV/OCR)은 이 서버의 책임이 아니다 — `SeatSwap/seatmap-service`(FastAPI)가
   반환하는 좌표 JSON을 받아 저장하는 클라이언트 역할만 한다.
 
+## DB 스키마 변경 (Flyway)
+- `spring.jpa.hibernate.ddl-auto: validate` — 스키마는 Hibernate가 아니라 Flyway가 관리한다.
+- 스키마 변경은 `src/main/resources/db/migration/V{n}__{snake_description}.sql` **신규 파일로만** 한다.
+  이미 적용된 파일은 수정 금지. 새 엔티티·컬럼 변경 시 마이그레이션 파일을 함께 작성한다 (상세: erd-conventions).
+- 테스트 중 `@DataJpaTest`/슬라이스 테스트는 `ddl-auto=none`, Flyway 비활성 상태를 유지한다(DB 없이 도는 테스트).
+- 이력 조회와 적용 절차는 `SeatSwap/backend/README.md` 참고.
+
 ## 의존성
-Spring Web, Spring Security, Spring Data JPA, WebSocket, jjwt(JWT), MySQL Connector
+Spring Web, Spring Security, Spring Data JPA, WebSocket, jjwt(JWT), MySQL Connector, Flyway(flyway-core, flyway-mysql)
 (SeatSwap/backend/build.gradle 기준선 참고, 임의로 새 의존성 추가 시 사용자에게 먼저 확인)
 
 ## 실행 환경

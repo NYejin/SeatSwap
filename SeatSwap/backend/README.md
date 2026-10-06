@@ -32,6 +32,17 @@
 
 그 외 모든 API는 `Authorization: Bearer {accessToken}` 헤더가 필요하다 (SecurityConfig 기준).
 
+## DB 마이그레이션 (Flyway)
+
+- 마이그레이션 파일: `src/main/resources/db/migration/V{n}__{snake_description}.sql` (V1 = 12개 테이블 초기 스키마, 한국어 주석)
+- 적용 이력: `SELECT * FROM flyway_schema_history;` (docker: `docker exec seatswap-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" seatswap -e "SELECT * FROM flyway_schema_history"'`)
+- 규칙: 스키마 변경은 새 V 파일로만, 적용된 파일 수정 금지, `ddl-auto: validate`, 엔티티 변경과 마이그레이션을 함께 작성
+- 앱 기동 시 자동 적용된다. 빈 DB는 V1부터 실행, Flyway 도입 전 DB(테이블은 있고 이력 테이블 없음)는
+  `baseline-on-migrate`로 V1을 "적용된 것으로 간주"(BASELINE 행 기록)하고 V2부터 적용한다.
+- 기존 DB 편입 절차: ① 백업(`mysqldump seatswap`) ② backend 이미지 재빌드·재기동 ③ `flyway_schema_history`에
+  `1 | << Flyway Baseline >> | BASELINE` 행 확인. 롤백: 이전 이미지로 되돌리면 된다(스키마는 변경되지 않고 이력 테이블만 추가됨.
+  원하면 `DROP TABLE flyway_schema_history`). 이전 이미지는 이력 테이블을 무시하므로 문제없다. 단, 이 롤백은 V1(baseline)만 있는 상태에서만 유효하다. V2 이상이 적용된 DB에 이전 이미지(`ddl-auto: update`)를 올리면 스키마가 앞서 있어 위험하므로 백업 복원으로 되돌린다.
+
 ## 로컬 환경변수 (.env)
 
 `./gradlew bootRun`으로 로컬 실행 시, `backend/.env` 파일이 있으면 `build.gradle`의
