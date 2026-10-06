@@ -41,6 +41,8 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-changeme}
       JWT_SECRET: ${JWT_SECRET:-changeme-dev-secret}
       SEATMAP_SERVICE_URL: http://seatmap-service:8001
+      # 시간 기준 KST (Dockerfile ENV/JVM 옵션과 같은 값 — 이미지 밖에서도 보이게 명시)
+      TZ: Asia/Seoul
     ports:
       - "8080:8080"
 

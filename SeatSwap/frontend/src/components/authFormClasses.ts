@@ -1,15 +1,13 @@
-// 로그인/회원가입 공용 Tailwind 클래스 조합 (FR-01).
+// 로그인/회원가입 화면 전용 Tailwind 클래스 조합 (FR-01). 다른 화면 공용 조합은 ui.ts.
 // 두 화면이 같은 레이아웃·폼 스타일을 쓰므로 반복되는 조합을 여기 모은다 (react-conventions "CSS 전략").
 // 모바일 우선: 기본은 전체 폭, sm(640px) 이상에서만 카드 형태로 세로·가로 중앙 정렬.
 
-/** 키보드 포커스 표시 (헤더와 동일한 링) */
-export const FOCUS_RING =
-  "focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-primary-600/40";
+import { FOCUS_RING } from "./ui";
 
 export const authFormClasses = {
   /** AppLayout 콘텐츠 영역(헤더 아래 남은 높이)을 채운다. 100dvh를 쓰면 헤더 높이만큼 넘쳐 스크롤이 생긴다 */
   page:
-    "flex w-full flex-[1_0_auto] items-start justify-center bg-[#f5f6f8] px-4 pt-8 " +
+    "flex w-full flex-[1_0_auto] items-start justify-center bg-surface px-4 pt-8 " +
     "pb-[calc(24px+env(safe-area-inset-bottom))] sm:items-center",
   /** sm 이상 카드 상단 장식선은 보조색 (장식 용도 — 글자에는 쓰지 않음) */
   card:

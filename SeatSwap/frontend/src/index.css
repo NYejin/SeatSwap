@@ -42,6 +42,9 @@
   --color-accent-500: #e8a33d;
   --color-accent-700: #a2722b;
 
+  /* 화면 바탕(카드 바깥) 중립색 — 흰 카드와 구분되는 옅은 회색 */
+  --color-surface: #f5f6f8;
+
   /* ---- 중립·상태 색: 기존 CSS hex 값(Tailwind v3 팔레트)으로 고정.
      v4 기본 팔레트는 oklch라 같은 이름이어도 색이 미세하게 다르다. */
   --color-gray-100: #f3f4f6;

@@ -18,7 +18,7 @@ import {
   validatePasswordConfirm,
   validateSignupPassword,
 } from "../api/authValidation";
-import AuthTextField from "../components/AuthTextField";
+import TextField from "../components/TextField";
 import { authFormClasses as ui } from "../components/authFormClasses";
 
 // FR-01 회원가입/로그인 — 회원가입 화면
@@ -105,7 +105,7 @@ export default function SignupPage() {
         <p className={ui.subtitle}>가입하고 같은 공연 티켓 보유자와 좌석을 교환하세요.</p>
 
         <form className={ui.form} onSubmit={handleSubmit} noValidate>
-          <AuthTextField
+          <TextField
             id="signup-email"
             label="이메일"
             type="email"
@@ -120,7 +120,7 @@ export default function SignupPage() {
             placeholder="you@example.com"
           />
 
-          <AuthTextField
+          <TextField
             id="signup-password"
             label="비밀번호"
             type="password"
@@ -132,7 +132,7 @@ export default function SignupPage() {
             hint={`${PASSWORD_MIN_LENGTH}~${PASSWORD_MAX_LENGTH}자`}
           />
 
-          <AuthTextField
+          <TextField
             id="signup-password-confirm"
             label="비밀번호 확인"
             type="password"
@@ -143,7 +143,7 @@ export default function SignupPage() {
             error={fieldErrors.passwordConfirm}
           />
 
-          <AuthTextField
+          <TextField
             id="signup-nickname"
             label="닉네임"
             type="text"

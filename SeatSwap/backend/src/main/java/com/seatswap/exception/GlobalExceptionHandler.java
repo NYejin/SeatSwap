@@ -1,6 +1,7 @@
 package com.seatswap.exception;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +13,7 @@ import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,6 +24,7 @@ import java.util.Set;
 public class GlobalExceptionHandler {
 
     private static final String SERVER_ERROR_MESSAGE = "서버 오류가 발생했습니다.";
+    static final String DATA_CONFLICT_MESSAGE = "요청이 다른 변경과 충돌했습니다. 다시 시도해주세요.";
 
     // 한 필드에 제약이 여러 개 걸려 동시에 실패할 때(예: 빈 값 → NotBlank + Size) 어떤 메시지를
     // 보여줄지 결정적으로 고르기 위한 우선순위. 값이 작을수록 우선.
@@ -31,6 +34,31 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FieldValidationException.class)
     public ResponseEntity<Map<String, String>> handleFieldValidationException(FieldValidationException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(e.getField(), e.getMessage()));
+    }
+
+    // 409 — {"message": ..., ...details} (예: {"message":"이미 등록된 공연입니다.","performanceId":3})
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleConflictException(ConflictException e) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", e.getMessage());
+        e.getDetails().forEach(body::putIfAbsent);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
+     * 서비스에서 제약 이름으로 분류하지 못한 무결성 위반 (동시 변경 레이스 등) → 409 일반 문구.
+     * 이메일 중복(AuthService)·공연 중복·회차 중복은 각 서비스가 제약 이름으로 먼저 잡아 전용 응답으로 바꾸므로
+     * 여기까지 오지 않는다. 원인은 로그에만 남긴다.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
+        log.warn("Unclassified data integrity violation: {}", e.getMostSpecificCause().getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", DATA_CONFLICT_MESSAGE));
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNotFoundException(NotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
     }
 
     @ExceptionHandler(SeatSwapException.class)
@@ -49,6 +77,12 @@ public class GlobalExceptionHandler {
         Map<String, String> errors = new LinkedHashMap<>();
         picked.forEach((field, fieldError) -> errors.put(field, fieldError.getDefaultMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
+    }
+
+    // 경로/쿼리 파라미터 타입 불일치 (예: /api/performances/abc) — 처리하지 않으면 아래 Exception 핸들러에서 500이 된다
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, String>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "요청 형식이 올바르지 않습니다."));
     }
 
     // 깨진 JSON, 타입 불일치 등 요청 본문을 읽을 수 없는 경우

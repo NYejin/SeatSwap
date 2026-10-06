@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { getDisplayName, useAuth } from "../hooks/useAuth";
 import { useAuthRedirect, type AuthRouteState } from "../hooks/useAuthRedirect";
 import { useLogout } from "../hooks/useLogout";
-import { FOCUS_RING } from "./authFormClasses";
+import { FOCUS_RING } from "./ui";
 
 // 공통 상단 헤더 (FR-01 로그인 상태 표시 + 주요 화면 진입점)
 // TODO: 알림 아이콘 (교환 요청/채팅 알림) — 별도 작업

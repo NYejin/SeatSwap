@@ -10,7 +10,7 @@ import {
   validateEmail,
   validateLoginPassword,
 } from "../api/authValidation";
-import AuthTextField from "../components/AuthTextField";
+import TextField from "../components/TextField";
 import { authFormClasses as ui } from "../components/authFormClasses";
 
 // FR-01 회원가입/로그인 — 로그인 화면
@@ -90,7 +90,7 @@ export default function LoginPage() {
         )}
 
         <form className={ui.form} onSubmit={handleSubmit} noValidate>
-          <AuthTextField
+          <TextField
             id="login-email"
             label="이메일"
             type="email"
@@ -105,7 +105,7 @@ export default function LoginPage() {
             placeholder="you@example.com"
           />
 
-          <AuthTextField
+          <TextField
             id="login-password"
             label="비밀번호"
             type="password"

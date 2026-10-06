@@ -1,19 +1,19 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { getDisplayName, useAuth } from "../hooks/useAuth";
 import { useLogout } from "../hooks/useLogout";
-import { FOCUS_RING } from "../components/authFormClasses";
+import { FOCUS_RING } from "../components/ui";
 
 // FR-01 회원 — 마이페이지 (보호 라우트 /me). 내 정보(/api/users/me) 표시 + 로그아웃.
 // 내 티켓·거래 내역·받은 리뷰는 이후 기능(FR-08, FR-10~13) — 지금은 "준비 중" 자리만 둔다.
 
 const cls = {
   /** AppLayout 콘텐츠 영역을 채우는 배경 (로그인 화면과 같은 톤) */
-  page: "flex w-full flex-[1_0_auto] justify-center bg-[#f5f6f8] px-4 pt-6 pb-[calc(24px+env(safe-area-inset-bottom))]",
+  page: "flex w-full flex-[1_0_auto] justify-center bg-surface px-4 pt-6 pb-[calc(24px+env(safe-area-inset-bottom))]",
   container: "flex w-full max-w-[640px] flex-col gap-4",
   title: "text-2xl/[normal] font-bold text-gray-900",
   card: "rounded-2xl bg-white p-5 shadow-[0_4px_24px_rgba(0,0,0,0.06)] sm:p-6",
   /** 프로필 카드 상단 장식선은 보조색 (장식 용도 — 글자에는 쓰지 않음). 재시도 후 포커스 대상이라 외곽선 표시 */
-  profileCard: "border-t-4 border-secondary-500 outline-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-primary-600/40",
+  profileCard: "border-t-4 border-secondary-500 " + FOCUS_RING,
   nickname: "truncate text-xl/[normal] font-bold text-gray-900",
   email: "mt-1 truncate text-sm/[normal] text-gray-500",
   scoreRow: "mt-5 flex items-baseline justify-between gap-3 border-t border-gray-200 pt-4",
