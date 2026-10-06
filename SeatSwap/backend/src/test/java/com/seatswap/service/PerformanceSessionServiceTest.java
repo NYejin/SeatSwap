@@ -178,4 +178,47 @@ class PerformanceSessionServiceTest {
         verify(sessionRepository, never()).findWithPerformanceById(any());
         verify(performanceRepository, never()).findById(any());
     }
+
+    // ---- 10분 단위 ----
+
+    @Test
+    void addAndRescheduleRejectNonTenMinuteStepWith400OnStartsAt() {
+        PerformanceSession s = session(3L, performance, future);
+        when(sessionRepository.findWithPerformanceById(3L)).thenReturn(Optional.of(s));
+        when(sessionRepository.findByPerformance_IdAndStartsAt(any(), any())).thenReturn(Optional.empty());
+
+        for (int minute : new int[]{1, 44}) {
+            assertThatThrownBy(() -> service.add(100L, future.withMinute(minute)))
+                    .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                        assertThat(e.getField()).isEqualTo("startsAt");
+                        assertThat(e.getMessage()).isEqualTo("회차 시각은 10분 단위로 입력해주세요.");
+                    });
+            assertThatThrownBy(() -> service.reschedule(100L, 3L, 1L, future.withMinute(minute)))
+                    .isInstanceOf(FieldValidationException.class);
+        }
+        assertThat(s.getStartsAt()).isEqualTo(future);
+        verify(sessionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void addAcceptsZeroTenFiftyAndSecondsAreTruncatedBeforeStepCheck() {
+        when(sessionRepository.findByPerformance_IdAndStartsAt(any(), any())).thenReturn(Optional.empty());
+        when(sessionRepository.saveAndFlush(any(PerformanceSession.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        for (int minute : new int[]{0, 10, 50}) {
+            assertThat(service.add(100L, future.withMinute(minute).withSecond(59)).startsAt())
+                    .isEqualTo(future.withMinute(minute));
+        }
+    }
+
+    @Test
+    void existingOffStepSessionCanStillBeDeletedWithoutStepCheck() {
+        PerformanceSession legacy = session(9L, performance, future.withMinute(44));
+        when(sessionRepository.findWithPerformanceById(9L)).thenReturn(Optional.of(legacy));
+        when(ticketRepository.countByPerformanceSession_Id(9L)).thenReturn(0L);
+
+        service.delete(100L, 9L, 1L);
+
+        verify(sessionRepository).delete(legacy);
+    }
 }

@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getErrorStatus, performancesApi } from "../api/performances";
 import { parseApiError } from "../api/errors";
-import { compareLocalDateTime, formatKstDateTime, isPastKst, normalizeLocalDateTime } from "../api/dateTime";
+import {
+  // TODO: 지우기
+  // SESSION_TIME_STEP_HINT,
+  // SESSION_TIME_STEP_SECONDS,
+  compareLocalDateTime,
+  formatKstDateTime,
+  isPastKst,
+  normalizeLocalDateTime,
+  validateSessionTimeStep,
+} from "../api/dateTime";
 import type { PerformanceDetail, PerformanceSession, Venue } from "../types/performance";
 import TextField from "../components/TextField";
 import VenuePicker from "../components/VenuePicker";
@@ -309,8 +318,10 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
             <span className="break-all">{detail.sourceUrl}</span>
           )}
         </dd>
-        <dt className={cls.term}>등록자</dt>
-        <dd className={cls.desc}>{detail.registrant.nickname}</dd>
+        {/* TODO: 등록자 삭제하기 */}
+        {/* <dt className={cls.term}>등록자</dt> */}
+        {/* <dd className={cls.desc}>{detail.registrant.nickname}</dd> */}
+        {/* TODO: 공연 포스터 오른쪽에 추가하기 */}
       </dl>
 
       {editing === "venue" && (
@@ -347,6 +358,156 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
         </div>
       )}
     </section>
+  );
+}
+
+// ---- 날짜/시간 Picker ----
+type SessionDateTimePickerProps = {
+  value: string;
+  onChange: (value: string) => void;
+  idPrefix: string;
+  disabled?: boolean;
+  invalid?: boolean;
+  "aria-describedby"?: string;
+};
+
+function SessionDateTimePicker({
+  value,
+  onChange,
+  idPrefix,
+  disabled = false,
+  invalid = false,
+  "aria-describedby": ariaDescribedby,
+}: SessionDateTimePickerProps) {
+  const parseValue = (nextValue: string) => {
+    const normalized = normalizeLocalDateTime(nextValue);
+
+    if (!normalized) {
+      return {
+        date: "",
+        hour: "",
+        minute: "",
+      };
+    }
+
+    const [nextDate, nextTime = ""] = normalized.split("T");
+    const [nextHour = "", nextMinute = ""] = nextTime.split(":");
+
+    return {
+      date: nextDate,
+      hour: nextHour,
+      minute: Number(nextMinute) % 10 === 0 ? nextMinute : "",
+    };
+  };
+
+  const initial = parseValue(value);
+
+  const [date, setDate] = useState(initial.date);
+  const [hour, setHour] = useState(initial.hour);
+  const [minute, setMinute] = useState(initial.minute);
+
+  /**
+   * 부모에서 value가 외부적으로 변경됐을 때만
+   * 내부 선택값을 동기화한다.
+   */
+  const lastEmittedValue = useRef<string | null>(null);
+
+  useEffect(() => {
+    // 내가 방금 onChange로 보낸 값이면
+    // 사용자가 선택한 내부 state를 그대로 유지한다.
+    if (lastEmittedValue.current === value) {
+      lastEmittedValue.current = null;
+      return;
+    }
+
+    const parsed = parseValue(value);
+
+    setDate(parsed.date);
+    setHour(parsed.hour);
+    setMinute(parsed.minute);
+  }, [value]);
+
+  const emitValue = (
+    nextDate: string,
+    nextHour: string,
+    nextMinute: string,
+  ) => {
+    setDate(nextDate);
+    setHour(nextHour);
+    setMinute(nextMinute);
+
+    // 하나라도 비어 있으면 아직 완성되지 않은 상태
+    const nextValue =
+      nextDate && nextHour && nextMinute
+        ? `${nextDate}T${nextHour.padStart(2, "0")}:${nextMinute.padStart(2, "0")}`
+        : "";
+
+    lastEmittedValue.current = nextValue;
+    onChange(nextValue);
+  };
+
+  const hours = Array.from(
+    { length: 24 },
+    (_, i) => String(i).padStart(2, "0"),
+  );
+
+  const minutes = ["00", "10", "20", "30", "40", "50"];
+
+  return (
+    <div className="flex flex-1 gap-2">
+      <input
+        id={`${idPrefix}-date`}
+        type="date"
+        className={invalid ? input.invalid : input.normal}
+        value={date}
+        onChange={(e) =>
+          emitValue(e.target.value, hour, minute)
+        }
+        disabled={disabled}
+        aria-invalid={invalid}
+        aria-describedby={ariaDescribedby}
+      />
+
+      <select
+        id={`${idPrefix}-hour`}
+        className={invalid ? input.invalid : input.normal}
+        value={hour}
+        onChange={(e) =>
+          emitValue(date, e.target.value, minute)
+        }
+        disabled={disabled}
+        aria-invalid={invalid}
+        aria-describedby={ariaDescribedby}
+      >
+        <option value="">시</option>
+
+        {hours.map((h) => (
+          <option key={h} value={h}>
+            {h}시
+          </option>
+        ))}
+      </select>
+
+      <select
+        id={`${idPrefix}-minute`}
+        className={invalid ? input.invalid : input.normal}
+        value={minute}
+        onChange={(e) =>
+          emitValue(date, hour, e.target.value)
+        }
+        disabled={disabled}
+        aria-invalid={invalid}
+        aria-describedby={ariaDescribedby}
+      >
+        <option value="">분</option>
+
+        {minutes.map((m) => (
+          <option key={m} value={m}>
+            {m}분
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -397,8 +558,10 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
 
   /** 입력값 검사 — 통과하면 정규화된 시각, 아니면 오류 메시지 */
   const check = (value: string, exceptId?: number): { value: string } | { error: string } => {
-    const normalized = normalizeLocalDateTime(value);
-    if (!normalized) return { error: "날짜와 시간을 입력해주세요." };
+    // 형식 오류·10분 단위 아님(직접 입력·붙여넣기)
+    const stepError = validateSessionTimeStep(value);
+    if (stepError) return { error: stepError };
+    const normalized = normalizeLocalDateTime(value)!;
     if (isPastKst(normalized)) return { error: "이미 지난 시각이에요. 앞으로 있을 회차만 등록할 수 있어요." };
     const duplicate = sessions.some((s) => s.id !== exceptId && normalizeLocalDateTime(s.startsAt) === normalized);
     if (duplicate) return { error: "이미 있는 회차예요." };
@@ -505,10 +668,6 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
         회차 {sessions.length}개
       </h2>
 
-      <p className={liveRegionClass(notice, ui.notice)} role="status">
-        {notice ?? ""}
-      </p>
-
       {sessions.length === 0 ? (
         <p className={ui.body}>등록된 회차가 없어요. 아래에서 추가해 주세요.</p>
       ) : (
@@ -525,17 +684,19 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
                     <label htmlFor={`session-edit-${session.id}`} className={ui.label}>
                       {label} 회차의 새 날짜·시간 (한국 시간)
                     </label>
-                    <input
-                      id={`session-edit-${session.id}`}
-                      type="datetime-local"
-                      className={errorForRow ? input.invalid : input.normal}
+                    <SessionDateTimePicker
                       value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      step={60}
+                      onChange={setEditValue}
+                      idPrefix={`session-edit-${session.id}`}
                       disabled={busy}
-                      aria-invalid={!!errorForRow}
-                      autoFocus
+                      invalid={!!errorForRow}
+                      aria-describedby={`session-edit-${session.id}-hint${errorForRow ? ` session-edit-${session.id}-error` : ""
+                        }`}
                     />
+                    {/* TODO: 지우기 */}
+                    {/* <p id={`session-edit-${session.id}-hint`} className={ui.hint}>
+                      {SESSION_TIME_STEP_HINT}
+                    </p> */}
                     <div className="flex flex-wrap justify-end gap-2">
                       <button
                         type="button"
@@ -608,7 +769,7 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
                 )}
 
                 {errorForRow && (
-                  <p className={ui.errorBox} role="alert">
+                  <p id={`session-edit-${session.id}-error`} className={ui.errorBox} role="alert">
                     {errorForRow}
                   </p>
                 )}
@@ -619,21 +780,18 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
       )}
 
       {/* 회차 추가는 로그인 사용자 누구나 (빠진 회차를 다른 관객이 채울 수 있게) */}
-      <form className="flex flex-col gap-2 border-t border-gray-200 pt-4" onSubmit={add} noValidate>
+      <form className="flex flex-col gap-2 pt-6" onSubmit={add} noValidate>
         <label htmlFor="session-new" className={ui.label}>
           회차 추가 (한국 시간)
         </label>
         <div className="flex flex-wrap gap-2">
-          <input
-            id="session-new"
-            type="datetime-local"
-            className={`${addError ? input.invalid : input.normal} min-w-0 flex-1 basis-56`}
+          <SessionDateTimePicker
             value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            step={60}
+            onChange={setNewValue}
+            idPrefix="session-new"
             disabled={adding}
-            aria-invalid={!!addError}
-            aria-describedby={addError ? "session-new-error" : undefined}
+            invalid={!!addError}
+            aria-describedby={addError ? "session-new-hint session-new-error" : "session-new-hint"}
           />
           <button type="submit" className={button.solid} disabled={adding} aria-busy={adding}>
             {adding ? "추가 중..." : "회차 추가"}
@@ -644,7 +802,15 @@ function SessionsSection({ detail, onChanged }: { detail: PerformanceDetail; onC
             {addError}
           </p>
         )}
+        {/* TODO: 지우기 */}
+        {/* <p id="session-new-hint" className={ui.hint}>
+          {SESSION_TIME_STEP_HINT}
+        </p> */}
       </form>
+      
+      <p className={liveRegionClass(notice, ui.notice)} role="status">
+        {notice ?? ""}
+      </p>
     </section>
   );
 }

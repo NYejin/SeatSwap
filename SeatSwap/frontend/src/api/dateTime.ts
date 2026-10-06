@@ -73,3 +73,26 @@ export function formatKstDateTime(value: string): string {
 export function compareLocalDateTime(a: string, b: string): number {
   return (kstEpoch(a) ?? 0) - (kstEpoch(b) ?? 0);
 }
+
+// ---- 회차 시각 입력 규칙 (10분 단위) ----
+
+/** 회차 시각 입력 단위(분). 입력칸의 step(초) = SESSION_TIME_STEP_MINUTES * 60 */
+export const SESSION_TIME_STEP_MINUTES = 10;
+/** <input type="datetime-local">의 step 속성값 (초 단위) */
+export const SESSION_TIME_STEP_SECONDS = SESSION_TIME_STEP_MINUTES * 60;
+// TODO: 지우기
+// /** 입력칸 옆 안내 문구 (aria-describedby로 연결) */
+// export const SESSION_TIME_STEP_HINT = `${SESSION_TIME_STEP_MINUTES}분 단위로 선택해 주세요.`;
+/** 백엔드가 같은 규칙을 400 {"startsAt": "..."} 로 내려준다 — 같은 문구 */
+export const SESSION_TIME_STEP_ERROR = `회차 시각은 ${SESSION_TIME_STEP_MINUTES}분 단위로 입력해주세요.`;
+
+/**
+ * 회차 시각 입력값 검증(직접 타이핑·붙여넣기 대비). 형식 오류·10분 단위가 아니면 오류 문구, 통과하면 null.
+ * 새로 추가하거나 수정할 때만 적용한다 — 이미 저장된 회차의 표시·삭제에는 쓰지 않는다.
+ */
+export function validateSessionTimeStep(value: string): string | null {
+  const normalized = normalizeLocalDateTime(value);
+  if (!normalized) return "날짜와 시간을 입력해주세요.";
+  const minute = Number(normalized.slice(-2));
+  return minute % SESSION_TIME_STEP_MINUTES === 0 ? null : SESSION_TIME_STEP_ERROR;
+}
