@@ -32,8 +32,10 @@
 - [x] 기획/설계 문서화 (프로젝트계획서, 요구사항정의서, WBS, ERD)
 - [x] Spring Boot / React 구성 및 Docker Compose(mysql·backend·frontend) — 좌석표 인식 서버(FastAPI)는 삭제, 태그에 보관
 - [x] 회원가입 / 로그인 / JWT 인증 (access·refresh 토큰, 자동 재발급)
-- [x] 공연·회차 등록/조회 (공연장은 공연의 텍스트 속성 — venue 테이블은 V2로 삭제, 현재 DB는 users·performance·performance_session·ticket 4개 테이블)
+- [x] 공연·회차 등록/조회, 등록 후 수정·삭제 불가(수정은 추후 관리자 수정 제안) (공연장은 공연의 텍스트 속성 — venue 테이블은 V2로 삭제, 현재 DB는 users·performance·performance_session·ticket 4개 테이블)
 - [ ] 링크 기반 공연 정보 자동 입력 (등록 화면 2단계에 미리 채우기, 다음 작업)
+- [ ] 관리자 페이지 추가 (공연 수정 제안 처리 포함, 후속)
+- [ ] 로고 변경 (후속)
 - [ ] 좌석표 이미지 인식 (후순위 보류, 태그 `archive/seatmap-track-20261007`에 보관)
 - [ ] 티켓 등록 / 교환 요청 / 자동 매칭 (설계 예정)
 - [ ] 실시간 채팅 (설계 예정)
