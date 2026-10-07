@@ -139,7 +139,7 @@ function SeatMapView({
 
       {/* TODO: 임시 기능 */}
       {/* TEMP-DRAFT-DELETE: 테스트용 임시 기능 — DRAFT만 삭제 후 재업로드. 제거 시 이 줄과 아래 TempDraftDeleteSection 삭제 */}
-      {isDraft && <TempDraftDeleteSection seatMap={seatMap} />}
+      {isDraft && seatMap.canDelete === true && <TempDraftDeleteSection seatMap={seatMap} />}
     </>
   );
 }
@@ -179,7 +179,8 @@ function TempDraftDeleteSection({ seatMap }: { seatMap: SeatMap }) {
       navigate(`/venues/${seatMap.venueId}/seatmaps/new${zone}`);
     } catch (err) {
       const status = getErrorStatus(err);
-      if (status === 404) setError("삭제 기능을 쓸 수 없어요. 이미 삭제됐거나 테스트용 삭제 기능이 꺼져 있어요.");
+      if (status === 403) setError(parseApiError(err, "작성자 또는 관리자만 삭제할 수 있어요.").message);
+      else if (status === 404) setError("삭제할 좌석표를 찾을 수 없어요. 이미 삭제됐을 수 있어요.");
       else if (status === 409) setError(parseApiError(err, "삭제할 수 없는 좌석표예요.").message);
       else setError(parseApiError(err, "좌석표를 삭제하지 못했습니다.").message);
       setDeleting(false);
@@ -189,11 +190,11 @@ function TempDraftDeleteSection({ seatMap }: { seatMap: SeatMap }) {
   return (
     <section className={`${ui.card} flex flex-col gap-3`} aria-labelledby="temp-draft-delete-title">
       <h2 id="temp-draft-delete-title" className={ui.sectionTitle}>
-        임시(테스트용)
+        좌석표 삭제
       </h2>
       {!confirming ? (
         <>
-          <p className={ui.body}>임시 좌석표를 지우고 이미지를 다시 올려 볼 수 있어요. 테스트용 기능이에요.</p>
+          <p className={ui.body}>작성자 또는 관리자만 삭제할 수 있어요. 삭제하면 다시 올릴 수 있어요.</p>
           <div>
             <button ref={triggerRef} type="button" className={button.dangerOutline} onClick={() => setConfirm(true)}>
               삭제하고 다시 올리기

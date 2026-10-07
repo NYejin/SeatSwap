@@ -36,7 +36,7 @@ public class SeatMapController {
                                        @RequestPart("file") MultipartFile file,
                                        @RequestParam(required = false) String zoneName,
                                        @RequestParam(required = false) String aisleMode) {
-        return seatMapService.createDraft(venueId, principal.userId(), file, zoneName, aisleMode);
+        return seatMapService.createDraft(venueId, principal.userId(), principal.isAdmin(), file, zoneName, aisleMode);
     }
 
     @GetMapping("/venues/{venueId}/seatmaps")
@@ -45,17 +45,15 @@ public class SeatMapController {
     }
 
     @GetMapping("/seatmaps/{id}")
-    public SeatMapResponse get(@PathVariable Long id) {
-        return seatMapService.get(id);
+    public SeatMapResponse get(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
+        return seatMapService.get(id, principal.userId(), principal.isAdmin());
     }
 
-    // TODO: 임시 기능
-    // TEMP(테스트용): 추후 제거 또는 비활성화 — TEMP-DRAFT-DELETE
-    // seatmap-service.dev-draft-delete-enabled=false 이면 서비스가 404로 응답한다.
+    // 작성자 또는 ADMIN만 삭제 (아니면 403). TEMP-DRAFT-DELETE 플래그가 true인 동안은 로그인한 누구나 (테스트용, 추후 제거).
     @DeleteMapping("/seatmaps/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteDraft(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
-        seatMapService.deleteDraft(id, principal.userId());
+        seatMapService.deleteDraft(id, principal.userId(), principal.isAdmin());
     }
 
     // TODO: POST /seatmaps/{id}/corrections (오류 신고)

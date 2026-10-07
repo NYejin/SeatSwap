@@ -70,6 +70,12 @@ public class GlobalExceptionHandler {
                 .body(Map.of("code", "IMAGE_TOO_LARGE", "message", "이미지는 10MB 이하만 올릴 수 있습니다."));
     }
 
+    // 403 — {"message": ...} (Security의 AccessDeniedHandler는 문구를 바꿀 수 없어 업무 규칙 위반은 이 예외로 처리)
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<Map<String, String>> handleForbiddenException(ForbiddenException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+    }
+
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, String>> handleNotFoundException(NotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));

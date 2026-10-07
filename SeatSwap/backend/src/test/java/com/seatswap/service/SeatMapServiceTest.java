@@ -7,6 +7,7 @@ import com.seatswap.dto.response.SeatMapResponse;
 import com.seatswap.dto.response.SeatMapSeat;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
+import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.GlobalExceptionHandler;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.exception.SeatMapException;
@@ -16,6 +17,8 @@ import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
 import com.seatswap.repository.VenueRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
@@ -26,6 +29,10 @@ import org.springframework.transaction.support.AbstractPlatformTransactionManage
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,12 +59,13 @@ class SeatMapServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SeatCorrectionRepository correctionRepository = mock(SeatCorrectionRepository.class);
     private final TicketRepository ticketRepository = mock(TicketRepository.class);
+    private final Clock clock = Clock.fixed(Instant.parse("2026-10-07T03:00:00Z"), ZoneId.of("Asia/Seoul"));
     private final SeatMapService service = newService(3);
 
     private SeatMapService newService(int maxConcurrent) {
         SeatMapService created = new SeatMapService(layoutRepository, correctionRepository,
                 venueRepository, userRepository, client, objectMapper, new SyncTransactionManager(),
-                maxConcurrent, 20);
+                maxConcurrent, 20, clock, 20, 10);
         // TEMP-DRAFT-DELETE: 필드 주입된 의존성/플래그
         ReflectionTestUtils.setField(created, "ticketRepository", ticketRepository);
         ReflectionTestUtils.setField(created, "devDraftDeleteEnabled", true);
@@ -115,7 +123,7 @@ class SeatMapServiceTest {
     void createDraftSavesRecognizedSeatsAsDraft() throws Exception {
         stubHappyPath();
 
-        SeatMapResponse response = service.createDraft(10L, 1L, png(), "  A구역 ", null);
+        SeatMapResponse response = service.createDraft(10L, 1L, false, png(), "  A구역 ", null);
 
         assertThat(response.id()).isEqualTo(55L);
         assertThat(response.venueId()).isEqualTo(10L);
@@ -124,6 +132,7 @@ class SeatMapServiceTest {
         assertThat(response.zoneName()).isEqualTo("A구역");
         assertThat(response.imageWidth()).isEqualTo(700);
         assertThat(response.seats()).isEqualTo(SEATS);
+        assertThat(response.canDelete()).isTrue();
         // aisleMode 기본값 continue, 업로드 content-type 그대로 중계
         verify(client).recognize(eq(PNG_BYTES), eq("image/png"), eq("continue"));
 
@@ -139,7 +148,7 @@ class SeatMapServiceTest {
     @Test
     void createDraftWithoutZoneChecksNullZoneDraft() {
         stubHappyPath();
-        service.createDraft(10L, 1L, png(), "   ", "skip");
+        service.createDraft(10L, 1L, false, png(), "   ", "skip");
 
         verify(layoutRepository, atLeastOnce()).findDraftIdWithoutZone(10L);
         verify(layoutRepository, never()).findDraftIdByZone(any(), any());
@@ -151,7 +160,7 @@ class SeatMapServiceTest {
         when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
         when(layoutRepository.findDraftIdByZone(10L, "A구역")).thenReturn(Optional.of(77L));
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
                 .isInstanceOfSatisfying(ConflictException.class, e -> {
                     assertThat(e.getDetails()).containsEntry("seatMapId", 77L);
                     assertThat(e.getMessage()).isEqualTo(SeatMapService.DUPLICATE_DRAFT_MESSAGE);
@@ -170,7 +179,7 @@ class SeatMapServiceTest {
         when(layoutRepository.saveAndFlush(any(SeatMapLayout.class)))
                 .thenThrow(uniqueViolation("seat_map_layout", "uk_seat_map_layout_draft_key"));
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
                 .isInstanceOfSatisfying(ConflictException.class,
                         e -> assertThat(e.getDetails()).containsEntry("seatMapId", 88L));
     }
@@ -182,7 +191,7 @@ class SeatMapServiceTest {
         when(layoutRepository.saveAndFlush(any(SeatMapLayout.class)))
                 .thenThrow(uniqueViolation("seat_map_layout", "uk_seat_map_layout_draft_key"));
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
                 .isInstanceOfSatisfying(ConflictException.class, e -> {
                     assertThat(e.getMessage()).isEqualTo(GlobalExceptionHandler.DATA_CONFLICT_MESSAGE);
                     assertThat(e.getDetails()).isEmpty();
@@ -192,7 +201,7 @@ class SeatMapServiceTest {
     @Test
     void signatureMismatchIs415BeforeAnyCall() {
         MockMultipartFile fake = new MockMultipartFile("file", "a.png", "image/png", new byte[]{1, 2, 3, 4});
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, fake, null, null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, fake, null, null))
                 .isInstanceOfSatisfying(SeatMapException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
                     assertThat(e.getCode()).isEqualTo("UNSUPPORTED_IMAGE");
@@ -215,7 +224,7 @@ class SeatMapServiceTest {
         stubHappyPath();
         when(client.recognize(any(), anyString(), anyString())).thenAnswer(inv -> {
             // 인식 중에 같은 사용자가 다시 요청
-            assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "B구역", null))
+            assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "B구역", null))
                     .isInstanceOfSatisfying(SeatMapException.class, e -> {
                         assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
                         assertThat(e.getCode()).isEqualTo("RATE_LIMITED");
@@ -224,9 +233,9 @@ class SeatMapServiceTest {
                     new SeatMapRecognitionClient.Recognition.Image(700, 400), SEATS);
         });
 
-        assertThat(service.createDraft(10L, 1L, png(), "A구역", null).id()).isEqualTo(55L);
+        assertThat(service.createDraft(10L, 1L, false, png(), "A구역", null).id()).isEqualTo(55L);
         // 끝난 뒤에는 같은 사용자가 다시 할 수 있다
-        assertThat(service.createDraft(10L, 1L, png(), "C구역", null)).isNotNull();
+        assertThat(service.createDraft(10L, 1L, false, png(), "C구역", null)).isNotNull();
     }
 
     @Test
@@ -236,7 +245,7 @@ class SeatMapServiceTest {
         when(userRepository.findById(2L)).thenReturn(Optional.of(user(2L, "other")));
         when(client.recognize(any(), anyString(), anyString())).thenAnswer(inv -> {
             // 유일한 자리를 다른 사용자가 쓰는 중 -> 대기(20ms) 후 BUSY
-            assertThatThrownBy(() -> limited.createDraft(10L, 2L, png(), "B구역", null))
+            assertThatThrownBy(() -> limited.createDraft(10L, 2L, false, png(), "B구역", null))
                     .isInstanceOfSatisfying(SeatMapException.class, e -> {
                         assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                         assertThat(e.getCode()).isEqualTo("BUSY");
@@ -245,10 +254,10 @@ class SeatMapServiceTest {
         }).thenReturn(new SeatMapRecognitionClient.Recognition(
                 new SeatMapRecognitionClient.Recognition.Image(700, 400), SEATS));
 
-        assertThatThrownBy(() -> limited.createDraft(10L, 1L, png(), "A구역", null))
+        assertThatThrownBy(() -> limited.createDraft(10L, 1L, false, png(), "A구역", null))
                 .isInstanceOf(IllegalStateException.class);
         // 예외가 났어도 자리와 사용자 표시가 풀려 있어야 한다
-        assertThat(limited.createDraft(10L, 1L, png(), "A구역", null)).isNotNull();
+        assertThat(limited.createDraft(10L, 1L, false, png(), "A구역", null)).isNotNull();
     }
 
     @Test
@@ -257,14 +266,14 @@ class SeatMapServiceTest {
         var other = uniqueViolation("seat_map_layout", "something_else");
         when(layoutRepository.saveAndFlush(any(SeatMapLayout.class))).thenThrow(other);
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null)).isSameAs(other);
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), null, null)).isSameAs(other);
     }
 
     @Test
     void unknownVenueIs404() {
         when(venueRepository.findById(10L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), null, null))
                 .isInstanceOf(NotFoundException.class);
         verify(client, never()).recognize(any(), anyString(), anyString());
     }
@@ -274,22 +283,22 @@ class SeatMapServiceTest {
         stubHappyPath();
         when(userRepository.findById(1L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), null, null))
                 .isInstanceOf(InsufficientAuthenticationException.class);
     }
 
     @Test
     void fileValidation() {
-        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false,
                 new MockMultipartFile("file", "a.png", "image/png", new byte[0]), null, null))
                 .isInstanceOfSatisfying(SeatMapException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
-        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false,
                 new MockMultipartFile("file", "a.txt", "text/plain", new byte[]{1}), null, null))
                 .isInstanceOfSatisfying(SeatMapException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
                     assertThat(e.getCode()).isEqualTo("UNSUPPORTED_IMAGE");
                 });
-        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false,
                 new MockMultipartFile("file", "a.png", "image/png", new byte[(int) SeatMapService.MAX_IMAGE_BYTES + 1]),
                 null, null))
                 .isInstanceOfSatisfying(SeatMapException.class, e -> {
@@ -301,9 +310,9 @@ class SeatMapServiceTest {
 
     @Test
     void invalidAisleModeAndLongZoneNameAre400() {
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, "weird"))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), null, "weird"))
                 .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("aisleMode"));
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "가".repeat(101), null))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "가".repeat(101), null))
                 .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("zoneName"));
     }
 
@@ -313,7 +322,7 @@ class SeatMapServiceTest {
         SeatMapException upstream = new SeatMapException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_SEATS_DETECTED", "없음");
         when(client.recognize(any(), anyString(), anyString())).thenThrow(upstream);
 
-        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null)).isSameAs(upstream);
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), null, null)).isSameAs(upstream);
         verify(layoutRepository, never()).saveAndFlush(any());
     }
 
@@ -322,7 +331,7 @@ class SeatMapServiceTest {
         SeatMapLayout layout = layout("[{\"uid\":\"s0001\",\"row\":1,\"col\":2,\"x\":3,\"y\":4,\"w\":5,\"h\":6}]");
         when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
 
-        SeatMapResponse response = service.get(55L);
+        SeatMapResponse response = service.get(55L, 1L, false);
 
         assertThat(response.seats()).containsExactly(new SeatMapSeat("s0001", 1, 2, 3, 4, 5, 6));
         assertThat(response.venueName()).isEqualTo("KSPO DOME");
@@ -334,7 +343,7 @@ class SeatMapServiceTest {
                 + "{\"uid\":\"b\",\"row\":1,\"col\":1,\"x\":1,\"y\":9,\"w\":1,\"h\":1}]");
         when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
 
-        SeatMapResponse response = service.get(55L);
+        SeatMapResponse response = service.get(55L, 1L, false);
 
         // 같은 (row, col)이어도 section이 다르면 구분된다. 옛 데이터(section 없음)는 1
         assertThat(response.seats()).extracting(SeatMapSeat::section).containsExactly(2, 1);
@@ -343,7 +352,7 @@ class SeatMapServiceTest {
     @Test
     void getUnknownIs404() {
         when(layoutRepository.findDetailById(1L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.get(1L)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.get(1L, 1L, false)).isInstanceOf(NotFoundException.class);
     }
 
     @Test
@@ -351,7 +360,7 @@ class SeatMapServiceTest {
         SeatMapLayout layout = layout("{broken SECRET-CONTENT");
         when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
 
-        assertThatThrownBy(() -> service.get(55L))
+        assertThatThrownBy(() -> service.get(55L, 1L, false))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage(SeatMapService.STORED_DATA_ERROR_MESSAGE);
     }
@@ -373,59 +382,197 @@ class SeatMapServiceTest {
         return layout;
     }
 
-    // ---- TEMP-DRAFT-DELETE ----
+    // ---- 등록 제한 ----
 
     @Test
-    void tempDraftDeleteRemovesDraft() {
-        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
-        when(layoutRepository.deleteDraftById(55L)).thenReturn(1);
+    void zoneLimitIs422AndSkipsRecognition() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.countByVenue_Id(10L)).thenReturn(20L);
 
-        service.deleteDraft(55L, 1L);
-
-        verify(layoutRepository).deleteDraftById(55L);
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getCode()).isEqualTo("ZONE_LIMIT_REACHED");
+                    assertThat(e.getMessage()).isEqualTo("이 공연장에 등록할 수 있는 구역 수를 넘었어요.");
+                });
+        verify(client, never()).recognize(any(), anyString(), anyString());
+        // 상한 직전(19)이면 통과
+        when(layoutRepository.countByVenue_Id(10L)).thenReturn(19L);
+        stubHappyPath();
+        assertThat(service.createDraft(10L, 1L, false, png(), "A구역", null)).isNotNull();
     }
 
     @Test
-    void tempDraftDeleteRejectsOfficial() {
-        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.OFFICIAL));
+    void zoneLimitAlsoAppliesToAdmin() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.countByVenue_Id(10L)).thenReturn(20L);
 
-        assertThatThrownBy(() -> service.deleteDraft(55L, 1L))
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, true, png(), "A구역", null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> assertThat(e.getCode()).isEqualTo("ZONE_LIMIT_REACHED"));
+    }
+
+    @Test
+    void dailyLimitIs429ForUserButNotAdmin() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.countByCreatedBy_IdAndCreatedAtAfter(eq(1L), any())).thenReturn(10L);
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getCode()).isEqualTo("DAILY_LIMIT_REACHED");
+                    assertThat(e.getMessage()).isEqualTo("하루에 등록할 수 있는 좌석표 수를 넘었어요. 내일 다시 시도해주세요.");
+                });
+        verify(client, never()).recognize(any(), anyString(), anyString());
+
+        // ADMIN은 일일 제한을 세지도 않는다
+        stubHappyPath();
+        assertThat(service.createDraft(10L, 1L, true, png(), "A구역", null)).isNotNull();
+        verify(layoutRepository, org.mockito.Mockito.times(1)).countByCreatedBy_IdAndCreatedAtAfter(any(), any());
+    }
+
+    @Test
+    void dailyLimitWindowIsLast24HoursInKst() {
+        stubHappyPath();
+        when(layoutRepository.countByCreatedBy_IdAndCreatedAtAfter(eq(1L), any())).thenReturn(9L);
+
+        service.createDraft(10L, 1L, false, png(), "A구역", null);
+
+        // 고정 시각 2026-10-07 12:00 KST -> 기준은 24시간 전(초과)
+        verify(layoutRepository).countByCreatedBy_IdAndCreatedAtAfter(1L, LocalDateTime.of(2026, 10, 6, 12, 0));
+    }
+
+    @Test
+    void duplicateDraft409ComesBeforeLimits() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.findDraftIdByZone(10L, "A구역")).thenReturn(Optional.of(77L));
+        when(layoutRepository.countByVenue_Id(10L)).thenReturn(99L);
+        when(layoutRepository.countByCreatedBy_IdAndCreatedAtAfter(eq(1L), any())).thenReturn(99L);
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
+                .isInstanceOf(ConflictException.class);
+        verify(layoutRepository, never()).countByVenue_Id(any());
+    }
+
+    @Test
+    void zoneLimit422ComesBeforeDailyLimit429() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.countByVenue_Id(10L)).thenReturn(20L);
+        when(layoutRepository.countByCreatedBy_IdAndCreatedAtAfter(eq(1L), any())).thenReturn(99L);
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, false, png(), "A구역", null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> assertThat(e.getCode()).isEqualTo("ZONE_LIMIT_REACHED"));
+        verify(layoutRepository, never()).countByCreatedBy_IdAndCreatedAtAfter(any(), any());
+    }
+
+    // ---- 삭제 권한 / canDelete ----
+
+    private void stubOwner(SeatMapStatus status, Long creatorId) {
+        when(layoutRepository.findOwnerViewById(55L)).thenReturn(Optional.of(new SeatMapLayoutRepository.OwnerView() {
+            @Override
+            public SeatMapStatus getStatus() {
+                return status;
+            }
+
+            @Override
+            public Long getCreatorId() {
+                return creatorId;
+            }
+        }));
+    }
+
+    /** 요청자 1L. 작성자: SELF(1L) / OTHER(2L) / NULL, 역할: admin 여부, 플래그 on/off -> 허용 여부. */
+    @ParameterizedTest
+    @CsvSource({
+            // owner, admin, flag, allowed
+            "SELF,  false, false, true",
+            "OTHER, false, false, false",
+            "OTHER, true,  false, true",
+            "NULL,  false, false, false",
+            "NULL,  true,  false, true",
+            "SELF,  false, true,  true",
+            "OTHER, false, true,  true",
+            "NULL,  false, true,  true",
+    })
+    void deletePermissionMatrixAndCanDeleteAgree(String owner, boolean admin, boolean flag, boolean allowed) {
+        ReflectionTestUtils.setField(service, "devDraftDeleteEnabled", flag);
+        Long creatorId = switch (owner) {
+            case "SELF" -> 1L;
+            case "OTHER" -> 2L;
+            default -> null;
+        };
+        stubOwner(SeatMapStatus.DRAFT, creatorId);
+        when(layoutRepository.deleteDraftById(55L)).thenReturn(1);
+
+        if (allowed) {
+            service.deleteDraft(55L, 1L, admin);
+            verify(layoutRepository).deleteDraftById(55L);
+        } else {
+            assertThatThrownBy(() -> service.deleteDraft(55L, 1L, admin))
+                    .isInstanceOfSatisfying(ForbiddenException.class,
+                            e -> assertThat(e.getMessage()).isEqualTo("작성자 또는 관리자만 삭제할 수 있어요."));
+            verify(layoutRepository, never()).deleteDraftById(any());
+        }
+
+        // GET 응답의 canDelete는 같은 규칙
+        SeatMapLayout layout = layout("[]");
+        if (creatorId == null) {
+            ReflectionTestUtils.setField(layout, "createdBy", null);
+        } else {
+            ReflectionTestUtils.setField(layout, "createdBy", user(creatorId, "n"));
+        }
+        when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
+        assertThat(service.get(55L, 1L, admin).canDelete()).isEqualTo(allowed);
+    }
+
+    @Test
+    void canDeleteIsFalseForOfficialEvenForAdminOrFlag() {
+        SeatMapLayout layout = layout("[]");
+        ReflectionTestUtils.setField(layout, "status", SeatMapStatus.OFFICIAL);
+        when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
+
+        assertThat(service.get(55L, 1L, true).canDelete()).isFalse();
+    }
+
+    @Test
+    void deleteRejectsOfficialWith409EvenForAdmin() {
+        stubOwner(SeatMapStatus.OFFICIAL, 1L);
+
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, true))
                 .isInstanceOfSatisfying(ConflictException.class,
-                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.TEMP_DRAFT_DELETE_OFFICIAL_MESSAGE));
+                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.DELETE_OFFICIAL_MESSAGE));
         verify(layoutRepository, never()).deleteDraftById(any());
     }
 
     @Test
-    void tempDraftDeleteRejectsWhenTicketOrCorrectionReferences() {
-        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
+    void deleteRejectsWhenTicketOrCorrectionReferences() {
+        stubOwner(SeatMapStatus.DRAFT, 1L);
         when(ticketRepository.countBySeatMapLayout_Id(55L)).thenReturn(1L);
-        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, false)).isInstanceOf(ConflictException.class);
 
         when(ticketRepository.countBySeatMapLayout_Id(55L)).thenReturn(0L);
         when(correctionRepository.countBySeatMapLayout_Id(55L)).thenReturn(2L);
-        assertThatThrownBy(() -> service.deleteDraft(55L, 1L))
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, false))
                 .isInstanceOfSatisfying(ConflictException.class,
-                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.TEMP_DRAFT_DELETE_REFERENCED_MESSAGE));
+                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.DELETE_REFERENCED_MESSAGE));
         verify(layoutRepository, never()).deleteDraftById(any());
     }
 
     @Test
-    void tempDraftDeleteUnknownOrAlreadyDeletedIs404() {
-        when(layoutRepository.findStatusById(1L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.deleteDraft(1L, 1L)).isInstanceOf(NotFoundException.class);
+    void deleteUnknownOrAlreadyDeletedIs404() {
+        when(layoutRepository.findOwnerViewById(1L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.deleteDraft(1L, 1L, false)).isInstanceOf(NotFoundException.class);
 
         // 조회 직후 다른 요청이 먼저 지운 경우
-        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
+        stubOwner(SeatMapStatus.DRAFT, 1L);
         when(layoutRepository.deleteDraftById(55L)).thenReturn(0);
-        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, false)).isInstanceOf(NotFoundException.class);
     }
 
     @Test
-    void tempDraftDeleteFlagOffIs404WithoutTouchingDb() {
+    void flagOffNoLongerHides404ButAppliesOwnerRule() {
         ReflectionTestUtils.setField(service, "devDraftDeleteEnabled", false);
+        stubOwner(SeatMapStatus.DRAFT, 2L);
 
-        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(NotFoundException.class);
-        verify(layoutRepository, never()).findStatusById(any());
-        verify(layoutRepository, never()).deleteDraftById(any());
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, false)).isInstanceOf(ForbiddenException.class);
     }
 }

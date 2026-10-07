@@ -21,12 +21,14 @@ public record SeatMapResponse(
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
         LocalDateTime createdAt,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        /** 현재 사용자가 지울 수 있는지 (DRAFT이고 작성자/ADMIN, 또는 임시 플래그 on). */
+        boolean canDelete
 ) {
-    public static SeatMapResponse of(SeatMapLayout layout, List<SeatMapSeat> seats) {
+    public static SeatMapResponse of(SeatMapLayout layout, List<SeatMapSeat> seats, boolean canDelete) {
         return new SeatMapResponse(layout.getId(), layout.getVenue().getId(), layout.getVenue().getName(),
                 layout.getZoneName(), layout.getStatus(), layout.getVersion(),
                 layout.getImageWidth(), layout.getImageHeight(), seats,
-                layout.getCreatedAt(), layout.getUpdatedAt());
+                layout.getCreatedAt(), layout.getUpdatedAt(), canDelete);
     }
 }

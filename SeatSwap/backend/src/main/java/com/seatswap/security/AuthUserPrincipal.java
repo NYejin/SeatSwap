@@ -26,6 +26,11 @@ public record AuthUserPrincipal(Long userId, String email, Collection<? extends 
         return new AuthUserPrincipal(userId, email, List.of(new SimpleGrantedAuthority("ROLE_" + role.name())));
     }
 
+    /** DB의 role이 ADMIN인가 (필터가 요청마다 DB에서 읽어 만든 권한 기준 — JWT 클레임이 아니다). */
+    public boolean isAdmin() {
+        return authorities.stream().anyMatch(a -> ("ROLE_" + UserRole.ADMIN.name()).equals(a.getAuthority()));
+    }
+
     /** Authentication.getName()이 반환하는 값 — 식별자인 userId 문자열 */
     @Override
     public String getName() {
