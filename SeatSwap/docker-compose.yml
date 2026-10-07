@@ -49,7 +49,10 @@ services:
       SEATMAP_SERVICE_URL: http://seatmap-service:8001
       # seatmap-service와 같은 값 (미설정이면 X-Internal-Key 헤더를 보내지 않음)
       SEATMAP_INTERNAL_KEY: ${SEATMAP_INTERNAL_KEY:-}
-      # TEMP-DRAFT-DELETE (테스트용, 추후 제거): DRAFT 좌석표 삭제 API. false면 404
+      # DRAFT 선점·스팸 제한: 공연장당 구역 수 상한(422), 사용자당 24시간 등록 상한(429, ADMIN 제외)
+      SEATMAP_MAX_ZONES_PER_VENUE: ${SEATMAP_MAX_ZONES_PER_VENUE:-20}
+      SEATMAP_DAILY_LIMIT_PER_USER: ${SEATMAP_DAILY_LIMIT_PER_USER:-10}
+      # TEMP-DRAFT-DELETE (테스트용, 추후 제거): true면 로그인한 누구나 DRAFT 삭제 가능, false면 작성자·관리자만(403)
       SEATMAP_DEV_DRAFT_DELETE: ${SEATMAP_DEV_DRAFT_DELETE:-true}
       # 시간 기준 KST (Dockerfile ENV/JVM 옵션과 같은 값 — 이미지 밖에서도 보이게 명시)
       TZ: Asia/Seoul

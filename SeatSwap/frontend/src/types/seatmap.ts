@@ -33,6 +33,8 @@ export interface SeatMap {
   imageWidth: number;
   imageHeight: number;
   seats: SeatCoordinate[];
+  /** 삭제 가능 여부(DRAFT이고 작성자/관리자, 또는 서버의 임시 플래그 on). 없으면 false로 간주 */
+  canDelete?: boolean;
   createdAt: string;
   updatedAt: string;
 }

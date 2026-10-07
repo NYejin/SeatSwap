@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -42,12 +43,21 @@ public interface SeatMapLayoutRepository extends JpaRepository<SeatMapLayout, Lo
             """)
     List<SeatMapSummaryResponse> findSummariesByVenueId(@Param("venueId") Long venueId);
 
-    // TODO: 임시 기능
-    // ---- TEMP-DRAFT-DELETE: 테스트용 임시 삭제 (추후 제거 또는 비활성화) ----
+    /** 공연장의 좌석표(구역) 수 — 구역 수 상한 검사. */
+    long countByVenue_Id(Long venueId);
 
-    /** 상태만 읽는다 (seat_json LOB을 로딩하지 않기 위해). */
-    @Query("select l.status from SeatMapLayout l where l.id = :id")
-    Optional<SeatMapStatus> findStatusById(@Param("id") Long id);
+    /** 사용자가 since 이후(초과)에 등록한 좌석표 수 — 일일 등록 제한 검사. */
+    long countByCreatedBy_IdAndCreatedAtAfter(Long userId, LocalDateTime since);
+
+    /** 삭제 권한 판단용 최소 정보 (seat_json LOB을 로딩하지 않기 위해). creatorId는 created_by가 NULL이면 null. */
+    interface OwnerView {
+        SeatMapStatus getStatus();
+
+        Long getCreatorId();
+    }
+
+    @Query("select l.status as status, l.createdBy.id as creatorId from SeatMapLayout l where l.id = :id")
+    Optional<OwnerView> findOwnerViewById(@Param("id") Long id);
 
     /** DRAFT만 지운다. 지운 행 수(0이면 이미 없거나 DRAFT가 아님). */
     @Modifying

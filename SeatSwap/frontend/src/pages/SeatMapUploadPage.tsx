@@ -35,6 +35,8 @@ interface UploadError {
   message: string;
   /** 409: 이미 있는 임시 좌석표 */
   existingSeatMapId?: number;
+  /** 구역 수 한도 초과: 공연 상세(이전 화면)로 돌아가는 링크 노출 */
+  backToDetail?: boolean;
 }
 
 const MAYBE_SAVED = " 이미 등록됐을 수 있어요. 공연 상세의 좌석표 목록에서 확인해 주세요.";
@@ -55,11 +57,23 @@ function describeError(info: SeatMapErrorInfo): UploadError {
       // 기존 좌석표 id가 있을 때만 전용 안내, 없으면 서버 메시지
       if (info.seatMapId === null) return { message: info.message };
       return { message: "이 공연장에 이미 임시 좌석표가 있어요.", existingSeatMapId: info.seatMapId };
+    case 429:
+      // 같은 429라도 code로 구분: 하루 한도 / 짧은 시간 내 과다 요청(RATE_LIMITED)
+      if (info.code === "DAILY_LIMIT_REACHED") {
+        return { message: "하루에 등록할 수 있는 좌석표 수를 넘었어요. 내일 다시 시도해 주세요." };
+      }
+      return { message: info.message };
     case 413:
       return { message: "이미지 용량이 너무 커요. 10MB 이하의 이미지를 올려주세요." };
     case 415:
       return { message: "지원하지 않는 이미지 형식이에요. PNG, JPEG, WebP를 올려주세요." };
     case 422:
+      if (info.code === "ZONE_LIMIT_REACHED") {
+        return {
+          message: "이 공연장에 등록할 수 있는 구역 수를 넘었어요. 기존 구역을 확인해 주세요.",
+          backToDetail: true,
+        };
+      }
       if (info.code === "NO_SEATS_DETECTED") {
         return { message: "좌석을 찾지 못했어요. 좌석이 또렷한 캡처 이미지를 올려주세요." };
       }
@@ -278,6 +292,11 @@ export default function SeatMapUploadPage() {
                 <Link to={`/seatmaps/${error.existingSeatMapId}/select`} className={ui.link}>
                   임시 좌석표 보기
                 </Link>
+              )}
+              {error.backToDetail && (
+                <button type="button" className={`${ui.link} self-start`} onClick={() => navigate(-1)}>
+                  공연 상세로 돌아가기
+                </button>
               )}
             </div>
           )}

@@ -54,5 +54,10 @@ seatmap-service:
   permit-wait-ms: 5000
   # 인식 결과 좌석 수 상한 (seatmap-service 상한 6000과 동일). 넘으면 502
   max-seats: 6000
-  # TEMP-DRAFT-DELETE (테스트용, 추후 제거 또는 비활성화): DELETE /api/seatmaps/{id}로 DRAFT 삭제. false면 404
+  # DRAFT 선점·스팸 대응 (인식 호출 전에 검사). 공연장당 좌석표(구역) 수 상한 -> 초과 시 422 ZONE_LIMIT_REACHED
+  max-zones-per-venue: ${SEATMAP_MAX_ZONES_PER_VENUE:20}
+  # 사용자당 24시간 내 등록 상한 (ADMIN 제외) -> 초과 시 429 DAILY_LIMIT_REACHED. 삭제된 행은 세지 않는다
+  daily-limit-per-user: ${SEATMAP_DAILY_LIMIT_PER_USER:10}
+  # TEMP-DRAFT-DELETE (테스트용, 추후 제거 또는 비활성화): true면 로그인한 누구나 DRAFT 삭제 가능.
+  # false면 작성자·관리자만 삭제 (DELETE /api/seatmaps/{id}는 항상 존재, 권한 없으면 403)
   dev-draft-delete-enabled: ${SEATMAP_DEV_DRAFT_DELETE:true}
