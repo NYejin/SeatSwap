@@ -10,8 +10,13 @@ description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA
 User, Venue, Performance, **PerformanceSession**, Ticket, SeatMapLayout, SeatCorrection,
 ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
 
-- 2026-10-06 변경: `PerformanceSession`(공연 회차) 추가로 11개 → 12개. 산출물/08_ERD/ERD.png 원본은
-  아직 11개 기준이다 (아래 "08_ERD 원본 반영 대기" 참고).
+- 2026-10-06 변경: `PerformanceSession`(공연 회차) 추가로 11개 → 12개.
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (신규 작성 완료). 현재(V1) 12개 테이블(V2~V4 구현 후 16개 예정) + 예정(V2~V4) 변경을
+  함께 그리며, 예정 부분은 노란 배경/주황 헤더로 구분한다. **V2~V4는 구현 후 현재(V1)로 승격**한다 (V2는 구현 완료·master 병합 대기 — 병합 후 승격, 지금은 예정 표기 유지)
+  (승격 시 해당 표기를 흰색으로 되돌리고 이 문서의 기준선을 갱신). 예정 신규 테이블: `seat_map_revision`,
+  `seat_map_revision_item`(V3), `abuse_report`, `user_sanction`(V4) (컬럼은 확정 설계안 기준).
+- V1 SQL의 `performance_session` 주석("같은 회차의 티켓끼리만 교환")은 **공연 단위로 정정됨(V2 주석)**. V1 파일은 수정하지 않는다.
+- 기존 ERD.png(11개 기준)는 폐기 대상이며, graphviz `dot`이 있는 환경에서 `erd.dot`으로 재생성한다.
 
 ## 네이밍 규칙
 - 엔티티명: PascalCase 단수형 (`Ticket`, not `Tickets`)
@@ -52,6 +57,15 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
 ## 관계 원칙
 - `SeatMapLayout`은 **Venue(공연장) 단위**로 저장하고 재사용한다. Performance마다 새로 만들지 않는다
   (같은 공연장이면 좌석 배치가 동일 — NFR-03 재사용성).
+  - 좌석표 상태 (2026-10-07 사용자 결정, V2 구현 완료·master 병합 대기): **DRAFT는 공연장+구역(zone)당 1개**(구역별 여러 개 허용,
+    DB 유일성은 생성 컬럼 `draft_key`), **OFFICIAL은 지금은 여러 개 허용하고 추후 공연장당 1개로 제한**(변경 예정).
+    공연장 `status`(UNVERIFIED/VERIFIED)와 좌석표 OFFICIAL은 항상 함께 바뀐다(정식 등록은 좌석표 등록 시에만). 공연에는 정식 상태 없음.
+  - `seat_map_layout.image_url`은 삭제(원본 이미지 미보관). `ticket.seatmap_id`는 **NULL 허용** — 티켓은 좌석표 없이 먼저 등록하고
+    교환글 등록 시 DRAFT 좌석표를 업로드한다. 서비스의 "좌석표 venue = 공연 venue" 검사는 seatmap_id가 있을 때만 한다.
+  - 수정 로그(`seat_map_revision`, `seat_map_revision_item`)·정정 신고(`seat_correction`)는 좌석을 `seat_uid`(seatmap-service의 안정 식별자)로 가리킨다.
+    수정 로그는 **append-only**(수정·삭제하지 않음). 신고(`abuse_report`)는 항상 로그에 남기고 관리자가 확인한다.
+  - 제재(`user_sanction`)는 `SEATMAP_EDIT`(수정·신고 정지)/`ACCOUNT`(계정 정지) 두 종류, `imposed_by` NOT NULL(관리자만 부과, 자동 제재 없음).
+  - 회원탈퇴는 물리 삭제가 아니라 **익명화**(로그·제재 FK 유지). OFFICIAL 좌석표는 사용자 직접 수정 불가(정정 신고로만), 관리자는 직접 수정 가능.
 - 공연·회차·공연장 (2026-10-06 확정):
   - `Venue`: 공유 기준 데이터. 사용자는 검색 후 선택, 없으면 추가. 중복 키 `normalized_name` unique
     (NFKC → 공백·구두점(P*)·보이지 않는 문자 제거 → 소문자, `Venue.normalizeName`). 일반 사용자 수정·삭제 불가.
@@ -76,9 +90,11 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
   추천 점수, 랭킹 등 알고리즘 매칭용 컬럼을 추가하지 않는다 (매칭 모델은 신청/수락 기반으로 고정).
 - `Review`는 `ExchangeMatch` 완료 후에만 생성 가능하다.
 
-## 08_ERD 원본 반영 대기 (원본 .dot/png 확보 시 적용)
+## 08_ERD 반영 현황
 
-2026-10-06 기준 저장소에 `산출물/08_ERD` 원본이 없어 다이어그램을 갱신하지 못했다. 원본 확보 시 아래를 반영한다.
+`산출물/08_ERD/erd.dot` 신규 작성 완료 (아래 항목 전부 반영됨, 기록용으로 유지). ERD.png는 graphviz `dot` 미설치
+환경이라 생성하지 못했다 — `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다.
+V2~V4(예정) 변경은 구현 후 현재(V1)로 승격한다.
 - 노드 추가: `PerformanceSession` (id, performance_id FK, starts_at, created_at / UK(performance_id, starts_at))
 - 엣지 추가: Performance 1:N PerformanceSession, PerformanceSession 1:N Ticket
 - 엣지 삭제: Performance 1:N Ticket
