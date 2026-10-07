@@ -323,8 +323,8 @@ export default function PerformanceRegisterPage() {
           )}
           {/* 안내는 오류가 있어도 계속 보이고 aria-describedby로 연결된다 */}
           <p id="perf-session-hint" className={ui.hint}>
-            {/* TODO: Hint 지우기, 교환은 같은 공연의 다른 회차랑도 가능. */}
-            {/* {SESSION_TIME_STEP_HINT}  */}같은 공연의 여러 회차를 모두 추가해 주세요. 교환은 같은 회차끼리만 할 수 있어요.
+            {/* TODO: Hint 지우기 */}
+            {/* {SESSION_TIME_STEP_HINT}  */}같은 공연의 여러 회차를 모두 추가해 주세요.
           </p>
         </form>
 

@@ -1,18 +1,25 @@
 -- =====================================================================
--- V1: SeatSwap 초기 스키마 (12개 테이블)
+-- V1: SeatSwap 새 기준선 (5개 테이블: users, venue, performance, performance_session, ticket)
 --
--- 기준: ddl-auto=update 로 Hibernate가 만들어 운영 중이던 MySQL 8.0 스키마
---       (SHOW CREATE TABLE)와 JPA 엔티티 정의. 산출물/08_ERD 기준선(12개 엔티티).
+-- 2026-10-07 방향 전환으로 좌석표 트랙(seat_map_*·seat_correction 등)과 아직 구현하지 않은
+-- 교환·채팅·후기 테이블을 걷어내고 처음부터 다시 쌓는다. 이전 V1~V3(12개+좌석표 테이블)는 삭제했고,
+-- 좌석표 코드와 마이그레이션은 git 태그 archive/seatmap-track-20261007 에 보관되어 있다.
+--
+-- 기준: 직전 운영 스키마의 users/venue/performance/performance_session/ticket (SHOW CREATE TABLE)와
+--       JPA 엔티티. ticket 에서는 seatmap_id(좌석표 FK)만 뺐다. 컬럼·제약·인덱스·collation은 그대로다.
 --
 -- 규칙
---  - 이 파일은 이미 적용된 뒤에는 절대 수정하지 않는다. 변경은 새 V{n}__*.sql 로 추가한다.
---  - 이미 테이블이 있는 기존 DB는 baseline-on-migrate(baseline-version=1)로 이 V1을
---    "적용된 것으로 간주"하고 건너뛴다. 빈 DB에서만 실제로 실행된다.
---  - FK/UNIQUE 제약 이름은 기존 DB와 동일하게 Hibernate가 생성한 이름을 그대로 쓴다.
---    (기존 DB와 신규 DB의 제약 이름이 달라지면 이후 DROP FOREIGN KEY 같은
---     마이그레이션이 환경마다 실패하므로, 보기 좋은 이름 대신 일치를 택했다.)
+--  - 이 파일은 적용된 뒤에는 절대 수정하지 않는다. 변경은 새 V{n}__*.sql 로 추가한다.
+--  - 이 새 기준선은 빈 DB에서만 실행된다. 이전 스키마가 남은 로컬 DB는 docker compose down -v 로 비운 뒤 적용한다.
+--    (flyway_schema_history 에 옛 V1~V3 이력이 남아 있으면 체크섬 불일치로 기동하지 않는다.)
+--  - FK/UNIQUE 제약 이름 중 FK... 로 시작하는 것은 Hibernate가 생성하던 이름을 그대로 쓴 것이다.
 --  - 시각 컬럼(datetime)은 모두 KST(Asia/Seoul) 벽시계 시각으로 저장한다.
+--  - 상태·enum 컬럼은 utf8mb4_bin + CHECK (기본 collation ai_ci 면 소문자 값이 CHECK 를 통과해 enum 매핑이 500 이 된다).
 --  - 테이블 기본 collation: utf8mb4_0900_ai_ci (명시해서 서버 기본값에 의존하지 않는다)
+--  - 요구 버전: MySQL 8.0.16 이상 (CHECK 강제)
+--  - 교환 범위는 같은 공연이면 다른 회차끼리도 가능하다. ticket 은 performance_session 을 참조하고
+--    공연은 performance_session.performance 로 얻는다 (performance_id 를 중복으로 두지 않는다).
+--  - 관리자는 DB에서 직접 부여한다: UPDATE users SET role = 'ADMIN' WHERE email = '...';  (대문자만)
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -25,12 +32,14 @@ CREATE TABLE users (
     nickname    VARCHAR(255) NOT NULL,
     password    VARCHAR(255) NOT NULL,                    -- BCrypt 해시
     trust_score DOUBLE       DEFAULT NULL,                -- 신뢰도 점수
+    role        VARCHAR(20)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'USER',   -- USER/ADMIN. 가입은 항상 USER
     PRIMARY KEY (id),
-    CONSTRAINT UK6dotkott2kjsp8vw4d0m25fb7 UNIQUE (email)
+    CONSTRAINT UK6dotkott2kjsp8vw4d0m25fb7 UNIQUE (email),
+    CONSTRAINT ck_users_role CHECK (role IN ('USER', 'ADMIN'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ---------------------------------------------------------------------
--- 공연장 (공유 기준 데이터, 좌석맵 재사용 단위)
+-- 공연장 (공유 기준 데이터)
 -- ---------------------------------------------------------------------
 CREATE TABLE venue (
     id              BIGINT       NOT NULL AUTO_INCREMENT,
@@ -38,8 +47,14 @@ CREATE TABLE venue (
     created_at      DATETIME(6)  NOT NULL,
     name            VARCHAR(100) NOT NULL,
     normalized_name VARCHAR(100) NOT NULL,                -- 중복 판정용 정규화 이름 (기본 collation ai_ci 유지)
+    status          VARCHAR(20)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'UNVERIFIED',  -- UNVERIFIED/VERIFIED (정식 등록)
+    verified_by     BIGINT       DEFAULT NULL,            -- 정식 등록한 관리자 -> users
+    verified_at     DATETIME(6)  DEFAULT NULL,            -- 정식 등록 시각 (KST)
     PRIMARY KEY (id),
-    CONSTRAINT uk_venue_normalized_name UNIQUE (normalized_name)
+    CONSTRAINT uk_venue_normalized_name UNIQUE (normalized_name),
+    KEY fk_venue_verified_by (verified_by),
+    CONSTRAINT fk_venue_verified_by FOREIGN KEY (verified_by) REFERENCES users (id),
+    CONSTRAINT ck_venue_status CHECK (status IN ('UNVERIFIED', 'VERIFIED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ---------------------------------------------------------------------
@@ -64,12 +79,12 @@ CREATE TABLE performance (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ---------------------------------------------------------------------
--- 공연 회차 (Performance 1:N). 같은 회차의 티켓끼리만 교환 가능
+-- 공연 회차 (날짜·시간). 같은 공연이면 다른 회차끼리도 교환할 수 있다.
 -- ---------------------------------------------------------------------
 CREATE TABLE performance_session (
     id             BIGINT      NOT NULL AUTO_INCREMENT,
     created_at     DATETIME(6) NOT NULL,
-    starts_at      DATETIME(6) NOT NULL,                  -- 공연 시작 시각 (분 단위 절삭, KST)
+    starts_at      DATETIME(6) NOT NULL,                  -- 분 단위로 잘라 저장 (KST 벽시계 시각)
     performance_id BIGINT      NOT NULL,                  -- -> performance
     PRIMARY KEY (id),
     CONSTRAINT uk_performance_session_performance_starts_at UNIQUE (performance_id, starts_at),
@@ -78,130 +93,18 @@ CREATE TABLE performance_session (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ---------------------------------------------------------------------
--- 좌석맵 레이아웃 (공연장 단위로 저장·재사용)
--- ---------------------------------------------------------------------
-CREATE TABLE seat_map_layout (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    image_url   VARCHAR(255) DEFAULT NULL,
-    ocr_status  VARCHAR(255) DEFAULT NULL,                -- seatmap-service 인식 상태
-    seat_json   LONGTEXT,                                 -- seatmap-service가 반환한 좌표 JSON
-    zone_name   VARCHAR(255) DEFAULT NULL,
-    venue_id    BIGINT       NOT NULL,                    -- -> venue
-    PRIMARY KEY (id),
-    KEY FKfv7ims1exshvqpdo80ee82nf0 (venue_id),
-    CONSTRAINT FKfv7ims1exshvqpdo80ee82nf0 FOREIGN KEY (venue_id) REFERENCES venue (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 티켓 (회차 + 좌석)
+-- 티켓 (사용자가 보유한 좌석). 좌석은 텍스트로 입력한다.
+-- 구역·희망 범위 등 교환 매칭용 컬럼은 교환 도메인 설계 후 새 V 파일로 추가한다.
 -- ---------------------------------------------------------------------
 CREATE TABLE ticket (
     id                     BIGINT       NOT NULL AUTO_INCREMENT,
-    col_label              VARCHAR(255) DEFAULT NULL,     -- 열(번호)
-    row_label              VARCHAR(255) DEFAULT NULL,     -- 행
+    col_label              VARCHAR(255) DEFAULT NULL,     -- 번(좌석 번호)
+    row_label              VARCHAR(255) DEFAULT NULL,     -- 열
     performance_session_id BIGINT       NOT NULL,         -- -> performance_session
-    seatmap_id             BIGINT       NOT NULL,         -- -> seat_map_layout
     user_id                BIGINT       NOT NULL,         -- 보유자 -> users
     PRIMARY KEY (id),
     KEY FKr9sms242y9nbmnf5yjlqsb5xe (performance_session_id),
-    KEY FKf5kf0kvx9d06av8q6uvmwk0tc (seatmap_id),
     KEY FKmvugyjf7b45u0juyue7k3pct0 (user_id),
-    CONSTRAINT FKf5kf0kvx9d06av8q6uvmwk0tc FOREIGN KEY (seatmap_id) REFERENCES seat_map_layout (id),
     CONSTRAINT FKmvugyjf7b45u0juyue7k3pct0 FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT FKr9sms242y9nbmnf5yjlqsb5xe FOREIGN KEY (performance_session_id) REFERENCES performance_session (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 좌석 오류 정정 신고 (동일 정정 2건 이상이면 자동 반영)
--- ---------------------------------------------------------------------
-CREATE TABLE seat_correction (
-    id              BIGINT       NOT NULL AUTO_INCREMENT,
-    corrected_label VARCHAR(255) DEFAULT NULL,
-    original_label  VARCHAR(255) DEFAULT NULL,
-    status          VARCHAR(255) DEFAULT NULL,            -- enum 문자열
-    vote_count      INT          DEFAULT NULL,
-    reporter_id     BIGINT       NOT NULL,                -- 신고자 -> users
-    seatmap_id      BIGINT       NOT NULL,                -- -> seat_map_layout
-    PRIMARY KEY (id),
-    KEY FK19vbques1kh5k1gwmgg6c6rjl (reporter_id),
-    KEY FK4b4cmqjgoc2xw6ala4hxbpyog (seatmap_id),
-    CONSTRAINT FK19vbques1kh5k1gwmgg6c6rjl FOREIGN KEY (reporter_id) REFERENCES users (id),
-    CONSTRAINT FK4b4cmqjgoc2xw6ala4hxbpyog FOREIGN KEY (seatmap_id) REFERENCES seat_map_layout (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 교환 요청 (티켓과 1:1 — 티켓당 요청 1개)
--- ---------------------------------------------------------------------
-CREATE TABLE exchange_request (
-    id                BIGINT       NOT NULL AUTO_INCREMENT,
-    created_at        DATETIME(6)  DEFAULT NULL,
-    desired_condition VARCHAR(255) DEFAULT NULL,
-    extra_payment     INT          DEFAULT NULL,          -- 차액
-    status            VARCHAR(255) DEFAULT NULL,          -- enum 문자열
-    ticket_id         BIGINT       NOT NULL,              -- -> ticket
-    PRIMARY KEY (id),
-    CONSTRAINT UK8i0dgsjkd4rr1wwvatnf778ch UNIQUE (ticket_id),
-    CONSTRAINT FKoo8s9n45m1b7f0yvfrn7g3ed2 FOREIGN KEY (ticket_id) REFERENCES ticket (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 교환 매칭 (두 교환 요청 A/B 를 잇는 단순 1:1 매칭 레코드)
--- ---------------------------------------------------------------------
-CREATE TABLE exchange_match (
-    id           BIGINT       NOT NULL AUTO_INCREMENT,
-    matched_at   DATETIME(6)  DEFAULT NULL,
-    status       VARCHAR(255) DEFAULT NULL,               -- enum 문자열
-    request_a_id BIGINT       NOT NULL,                   -- -> exchange_request (A측)
-    request_b_id BIGINT       NOT NULL,                   -- -> exchange_request (B측)
-    PRIMARY KEY (id),
-    KEY FKnvwjdejjwu0pf0qbsrvr62t7l (request_a_id),
-    KEY FKednge034djni5injyt7agdoms (request_b_id),
-    CONSTRAINT FKednge034djni5injyt7agdoms FOREIGN KEY (request_b_id) REFERENCES exchange_request (id),
-    CONSTRAINT FKnvwjdejjwu0pf0qbsrvr62t7l FOREIGN KEY (request_a_id) REFERENCES exchange_request (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 채팅방 (매칭당 1개)
--- ---------------------------------------------------------------------
-CREATE TABLE chat_room (
-    id       BIGINT NOT NULL AUTO_INCREMENT,
-    match_id BIGINT NOT NULL,                             -- -> exchange_match
-    PRIMARY KEY (id),
-    CONSTRAINT UKldkcrcykqgmmafcfe1i82f9r UNIQUE (match_id),
-    CONSTRAINT FK4wqogk36c381xx2sxgcx7evi2 FOREIGN KEY (match_id) REFERENCES exchange_match (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 채팅 메시지
--- ---------------------------------------------------------------------
-CREATE TABLE message (
-    id          BIGINT      NOT NULL AUTO_INCREMENT,
-    content     LONGTEXT,
-    sent_at     DATETIME(6) DEFAULT NULL,
-    chatroom_id BIGINT      NOT NULL,                     -- -> chat_room
-    sender_id   BIGINT      NOT NULL,                     -- 발신자 -> users
-    PRIMARY KEY (id),
-    KEY FK3dp0e0jr98c8rye4whnei24j (chatroom_id),
-    KEY FKbi5avhe69aol2mb1lnm6r4o2p (sender_id),
-    CONSTRAINT FK3dp0e0jr98c8rye4whnei24j FOREIGN KEY (chatroom_id) REFERENCES chat_room (id),
-    CONSTRAINT FKbi5avhe69aol2mb1lnm6r4o2p FOREIGN KEY (sender_id) REFERENCES users (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ---------------------------------------------------------------------
--- 후기 (매칭 완료 후에만 생성 — 서비스에서 검사)
--- ---------------------------------------------------------------------
-CREATE TABLE review (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    `comment`   VARCHAR(255) DEFAULT NULL,
-    rating      INT          DEFAULT NULL,
-    match_id    BIGINT       NOT NULL,                    -- -> exchange_match
-    reviewer_id BIGINT       NOT NULL,                    -- 작성자 -> users
-    target_id   BIGINT       NOT NULL,                    -- 평가 대상 -> users
-    PRIMARY KEY (id),
-    KEY FK12qj620tqdmq8w8fcsuoiw04v (match_id),
-    KEY FK29sgaw0fsbkrgfd8gv15j9vvk (reviewer_id),
-    KEY FKgl80drgmr1ssg0rrt3sn9v1mm (target_id),
-    CONSTRAINT FK12qj620tqdmq8w8fcsuoiw04v FOREIGN KEY (match_id) REFERENCES exchange_match (id),
-    CONSTRAINT FK29sgaw0fsbkrgfd8gv15j9vvk FOREIGN KEY (reviewer_id) REFERENCES users (id),
-    CONSTRAINT FKgl80drgmr1ssg0rrt3sn9v1mm FOREIGN KEY (target_id) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

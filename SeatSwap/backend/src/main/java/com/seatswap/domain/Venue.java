@@ -14,17 +14,15 @@ import java.util.Locale;
 
 /**
  * 공연장. 사용자가 기존 목록에서 검색해 고르고, 없으면 새로 추가한다.
- * SeatMapLayout이 Venue 단위로 재사용되므로(NFR-03) 같은 공연장이 두 번 만들어지지 않도록
- * 정규화한 이름(normalizedName)에 unique 제약을 둔다.
+ * 같은 공연장이 두 번 만들어지지 않도록 정규화한 이름(normalizedName)에 unique 제약을 둔다.
  *
- * 관계: Venue 1:N SeatMapLayout, Venue 1:N Performance (08_ERD). 역방향 컬렉션은 두지 않고
+ * 관계: Venue 1:N Performance (08_ERD). 역방향 컬렉션은 두지 않고
  * 리포지토리 조회로 처리한다.
  *
- * 수정/삭제: 여러 공연·좌석맵이 공유하는 기준 데이터라 일반 사용자 수정·삭제는 허용하지 않는다.
+ * 수정/삭제: 여러 공연이 공유하는 기준 데이터라 일반 사용자 수정·삭제는 허용하지 않는다.
  *
  * 정식 등록(status): 공연 자체에는 상태가 없고 Venue만 UNVERIFIED/VERIFIED를 가진다.
- * 정식 등록은 좌석표 등록 시에만 가능하므로 VERIFIED와 SeatMapLayout OFFICIAL은 항상 같이 바뀐다
- * ({@link SeatMapLayout#promote}가 {@link #verify}를 호출한다).
+ * 정식 등록은 관리자 기능으로, 아직 호출하는 서비스가 없다.
  */
 @Entity
 @Table(
@@ -100,9 +98,8 @@ public class Venue {
     }
 
     /**
-     * 정식 등록 처리. 좌석표 승격({@link SeatMapLayout#promote})에서만 호출한다 (package-private) —
-     * "정식 등록은 좌석표 등록 시에만 가능"이라는 불변식을 지키기 위해 외부에 열지 않는다.
-     * 이미 VERIFIED면 최초 등록자·시각을 유지한다 (OFFICIAL 좌석표는 여러 개 허용).
+     * 정식 등록 처리 (관리자 기능용, 아직 호출하는 곳이 없다 — package-private).
+     * 이미 VERIFIED면 최초 등록자·시각을 유지한다.
      * 시각은 호출자가 Clock(Asia/Seoul) 기준으로 넘긴다.
      */
     void verify(User admin, LocalDateTime now) {

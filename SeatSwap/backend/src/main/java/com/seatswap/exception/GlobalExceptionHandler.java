@@ -66,12 +66,6 @@ public class GlobalExceptionHandler {
                 .body(Map.of("code", "BUSY", "message", "요청이 몰려 처리하지 못했어요. 잠시 후 다시 시도해주세요."));
     }
 
-    // 좌석표 등록/인식 오류 — {"code": ..., "message": ...} (seatmap-service 오류 형식과 동일)
-    @ExceptionHandler(SeatMapException.class)
-    public ResponseEntity<Map<String, String>> handleSeatMapException(SeatMapException e) {
-        return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getCode(), "message", e.getMessage()));
-    }
-
     // multipart 업로드 크기 초과 (spring.servlet.multipart.max-file-size) — 컨트롤러에 들어오기 전에 던져진다
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, String>> handleMaxUploadSize(MaxUploadSizeExceededException e) {

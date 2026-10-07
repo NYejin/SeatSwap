@@ -83,10 +83,8 @@ const solidButton = `${cls.button} ${cls.buttonSolid}`;
 
 const AUTH_PATHS = ["/login", "/signup"];
 
-const MENU = [
-  { to: "/exchange", label: "교환 목록" },
-  { to: "/tickets/new", label: "티켓 등록" },
-] as const;
+// 교환 목록·티켓 등록 메뉴는 해당 화면을 다시 만들 때 추가한다 (2026-10-07 스켈레톤 삭제)
+const MENU: readonly { to: string; label: string }[] = [];
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `${cls.navLink} ${isActive ? cls.navLinkActive : cls.navLinkIdle}`;
