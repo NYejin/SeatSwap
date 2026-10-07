@@ -1,0 +1,431 @@
+package com.seatswap.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.seatswap.domain.SeatMapLayout;
+import com.seatswap.domain.SeatMapStatus;
+import com.seatswap.dto.response.SeatMapResponse;
+import com.seatswap.dto.response.SeatMapSeat;
+import com.seatswap.exception.ConflictException;
+import com.seatswap.exception.FieldValidationException;
+import com.seatswap.exception.GlobalExceptionHandler;
+import com.seatswap.exception.NotFoundException;
+import com.seatswap.exception.SeatMapException;
+import com.seatswap.repository.SeatCorrectionRepository;
+import com.seatswap.repository.SeatMapLayoutRepository;
+import com.seatswap.repository.TicketRepository;
+import com.seatswap.repository.UserRepository;
+import com.seatswap.repository.VenueRepository;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.List;
+import java.util.Optional;
+
+import static com.seatswap.service.PerformanceFixtures.uniqueViolation;
+import static com.seatswap.service.PerformanceFixtures.user;
+import static com.seatswap.service.PerformanceFixtures.venue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class SeatMapServiceTest {
+
+    private final SeatMapLayoutRepository layoutRepository = mock(SeatMapLayoutRepository.class);
+    private final VenueRepository venueRepository = mock(VenueRepository.class);
+    private final UserRepository userRepository = mock(UserRepository.class);
+    private final SeatMapRecognitionClient client = mock(SeatMapRecognitionClient.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final SeatCorrectionRepository correctionRepository = mock(SeatCorrectionRepository.class);
+    private final TicketRepository ticketRepository = mock(TicketRepository.class);
+    private final SeatMapService service = newService(3);
+
+    private SeatMapService newService(int maxConcurrent) {
+        SeatMapService created = new SeatMapService(layoutRepository, correctionRepository,
+                venueRepository, userRepository, client, objectMapper, new SyncTransactionManager(),
+                maxConcurrent, 20);
+        // TEMP-DRAFT-DELETE: 필드 주입된 의존성/플래그
+        ReflectionTestUtils.setField(created, "ticketRepository", ticketRepository);
+        ReflectionTestUtils.setField(created, "devDraftDeleteEnabled", true);
+        return created;
+    }
+
+    /** 실제로 트랜잭션 동기화(isActualTransactionActive)를 켜는 최소 트랜잭션 매니저 (DB 없음). */
+    static class SyncTransactionManager extends AbstractPlatformTransactionManager {
+        @Override
+        protected Object doGetTransaction() {
+            return new Object();
+        }
+
+        @Override
+        protected void doBegin(Object transaction, TransactionDefinition definition) {
+        }
+
+        @Override
+        protected void doCommit(DefaultTransactionStatus status) {
+        }
+
+        @Override
+        protected void doRollback(DefaultTransactionStatus status) {
+        }
+    }
+
+    private static final byte[] PNG_BYTES = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3};
+
+    private static final List<SeatMapSeat> SEATS = List.of(
+            new SeatMapSeat("s0001", 1, 1, 70, 40, 18, 18), new SeatMapSeat("s0002", 1, 2, 90, 40, 18, 18));
+
+    private static MockMultipartFile png() {
+        return new MockMultipartFile("file", "a.png", "image/png", PNG_BYTES);
+    }
+
+    private void stubHappyPath() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user(1L, "nick")));
+        when(client.recognize(any(), anyString(), anyString())).thenAnswer(inv -> {
+            // 인식 호출(최대 60초)은 DB 트랜잭션 밖에서 해야 한다
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return new SeatMapRecognitionClient.Recognition(
+                    new SeatMapRecognitionClient.Recognition.Image(700, 400), SEATS);
+        });
+        when(layoutRepository.saveAndFlush(any(SeatMapLayout.class))).thenAnswer(inv -> {
+            // 저장은 트랜잭션 안 (위 단언이 의미 있도록 매니저가 실제로 동기화를 켠다는 증거)
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            SeatMapLayout l = inv.getArgument(0);
+            ReflectionTestUtils.setField(l, "id", 55L);
+            return l;
+        });
+    }
+
+    @Test
+    void createDraftSavesRecognizedSeatsAsDraft() throws Exception {
+        stubHappyPath();
+
+        SeatMapResponse response = service.createDraft(10L, 1L, png(), "  A구역 ", null);
+
+        assertThat(response.id()).isEqualTo(55L);
+        assertThat(response.venueId()).isEqualTo(10L);
+        assertThat(response.status()).isEqualTo(SeatMapStatus.DRAFT);
+        assertThat(response.version()).isEqualTo(1);
+        assertThat(response.zoneName()).isEqualTo("A구역");
+        assertThat(response.imageWidth()).isEqualTo(700);
+        assertThat(response.seats()).isEqualTo(SEATS);
+        // aisleMode 기본값 continue, 업로드 content-type 그대로 중계
+        verify(client).recognize(eq(PNG_BYTES), eq("image/png"), eq("continue"));
+
+        ArgumentCaptor<SeatMapLayout> captor = ArgumentCaptor.forClass(SeatMapLayout.class);
+        verify(layoutRepository).saveAndFlush(captor.capture());
+        SeatMapLayout saved = captor.getValue();
+        assertThat(saved.getCreatedBy().getId()).isEqualTo(1L);
+        assertThat(saved.getImageHeight()).isEqualTo(400);
+        assertThat(objectMapper.readTree(saved.getSeatJson()).get(0).fieldNames())
+                .toIterable().containsExactlyInAnyOrder("uid", "row", "col", "x", "y", "w", "h", "section");
+    }
+
+    @Test
+    void createDraftWithoutZoneChecksNullZoneDraft() {
+        stubHappyPath();
+        service.createDraft(10L, 1L, png(), "   ", "skip");
+
+        verify(layoutRepository, atLeastOnce()).findDraftIdWithoutZone(10L);
+        verify(layoutRepository, never()).findDraftIdByZone(any(), any());
+        verify(client).recognize(any(), anyString(), eq("skip"));
+    }
+
+    @Test
+    void duplicateDraftIs409WithExistingIdAndSkipsRecognition() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.findDraftIdByZone(10L, "A구역")).thenReturn(Optional.of(77L));
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getDetails()).containsEntry("seatMapId", 77L);
+                    assertThat(e.getMessage()).isEqualTo(SeatMapService.DUPLICATE_DRAFT_MESSAGE);
+                });
+        verify(client, never()).recognize(any(), anyString(), anyString());
+        verify(layoutRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void draftRaceIs409WithWinnerId() {
+        stubHappyPath();
+        when(layoutRepository.findDraftIdByZone(10L, "A구역"))
+                .thenReturn(Optional.empty())    // 사전 확인
+                .thenReturn(Optional.empty())    // insert 트랜잭션 안 확인
+                .thenReturn(Optional.of(88L));   // 레이스 후 재조회
+        when(layoutRepository.saveAndFlush(any(SeatMapLayout.class)))
+                .thenThrow(uniqueViolation("seat_map_layout", "uk_seat_map_layout_draft_key"));
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.getDetails()).containsEntry("seatMapId", 88L));
+    }
+
+    @Test
+    void draftRaceWithVanishedWinnerIs409WithoutSeatMapId() {
+        stubHappyPath();
+        when(layoutRepository.findDraftIdByZone(10L, "A구역")).thenReturn(Optional.empty());
+        when(layoutRepository.saveAndFlush(any(SeatMapLayout.class)))
+                .thenThrow(uniqueViolation("seat_map_layout", "uk_seat_map_layout_draft_key"));
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "A구역", null))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getMessage()).isEqualTo(GlobalExceptionHandler.DATA_CONFLICT_MESSAGE);
+                    assertThat(e.getDetails()).isEmpty();
+                });
+    }
+
+    @Test
+    void signatureMismatchIs415BeforeAnyCall() {
+        MockMultipartFile fake = new MockMultipartFile("file", "a.png", "image/png", new byte[]{1, 2, 3, 4});
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, fake, null, null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+                    assertThat(e.getCode()).isEqualTo("UNSUPPORTED_IMAGE");
+                });
+        verify(client, never()).recognize(any(), anyString(), anyString());
+        verify(venueRepository, never()).findById(any());
+    }
+
+    @Test
+    void imageSignaturesAreDetected() {
+        assertThat(SeatMapService.detectImageType(new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0})).isEqualTo("image/jpeg");
+        byte[] webp = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'};
+        assertThat(SeatMapService.detectImageType(webp)).isEqualTo("image/webp");
+        assertThat(SeatMapService.detectImageType(new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'})).isNull();
+        assertThat(SeatMapService.detectImageType(new byte[0])).isNull();
+    }
+
+    @Test
+    void sameUserCannotRecognizeTwiceConcurrently() {
+        stubHappyPath();
+        when(client.recognize(any(), anyString(), anyString())).thenAnswer(inv -> {
+            // 인식 중에 같은 사용자가 다시 요청
+            assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "B구역", null))
+                    .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                        assertThat(e.getCode()).isEqualTo("RATE_LIMITED");
+                    });
+            return new SeatMapRecognitionClient.Recognition(
+                    new SeatMapRecognitionClient.Recognition.Image(700, 400), SEATS);
+        });
+
+        assertThat(service.createDraft(10L, 1L, png(), "A구역", null).id()).isEqualTo(55L);
+        // 끝난 뒤에는 같은 사용자가 다시 할 수 있다
+        assertThat(service.createDraft(10L, 1L, png(), "C구역", null)).isNotNull();
+    }
+
+    @Test
+    void globalLimitReturns503BusyAndReleasesPermitsEvenOnFailure() {
+        SeatMapService limited = newService(1);
+        stubHappyPath();
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user(2L, "other")));
+        when(client.recognize(any(), anyString(), anyString())).thenAnswer(inv -> {
+            // 유일한 자리를 다른 사용자가 쓰는 중 -> 대기(20ms) 후 BUSY
+            assertThatThrownBy(() -> limited.createDraft(10L, 2L, png(), "B구역", null))
+                    .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(e.getCode()).isEqualTo("BUSY");
+                    });
+            throw new IllegalStateException("boom");
+        }).thenReturn(new SeatMapRecognitionClient.Recognition(
+                new SeatMapRecognitionClient.Recognition.Image(700, 400), SEATS));
+
+        assertThatThrownBy(() -> limited.createDraft(10L, 1L, png(), "A구역", null))
+                .isInstanceOf(IllegalStateException.class);
+        // 예외가 났어도 자리와 사용자 표시가 풀려 있어야 한다
+        assertThat(limited.createDraft(10L, 1L, png(), "A구역", null)).isNotNull();
+    }
+
+    @Test
+    void unrelatedIntegrityViolationIsRethrown() {
+        stubHappyPath();
+        var other = uniqueViolation("seat_map_layout", "something_else");
+        when(layoutRepository.saveAndFlush(any(SeatMapLayout.class))).thenThrow(other);
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null)).isSameAs(other);
+    }
+
+    @Test
+    void unknownVenueIs404() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null))
+                .isInstanceOf(NotFoundException.class);
+        verify(client, never()).recognize(any(), anyString(), anyString());
+    }
+
+    @Test
+    void missingUserIs401() {
+        stubHappyPath();
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null))
+                .isInstanceOf(InsufficientAuthenticationException.class);
+    }
+
+    @Test
+    void fileValidation() {
+        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+                new MockMultipartFile("file", "a.png", "image/png", new byte[0]), null, null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+                new MockMultipartFile("file", "a.txt", "text/plain", new byte[]{1}), null, null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+                    assertThat(e.getCode()).isEqualTo("UNSUPPORTED_IMAGE");
+                });
+        assertThatThrownBy(() -> service.createDraft(10L, 1L,
+                new MockMultipartFile("file", "a.png", "image/png", new byte[(int) SeatMapService.MAX_IMAGE_BYTES + 1]),
+                null, null))
+                .isInstanceOfSatisfying(SeatMapException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+                    assertThat(e.getCode()).isEqualTo("IMAGE_TOO_LARGE");
+                });
+        verify(client, never()).recognize(any(), anyString(), anyString());
+    }
+
+    @Test
+    void invalidAisleModeAndLongZoneNameAre400() {
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, "weird"))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("aisleMode"));
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), "가".repeat(101), null))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("zoneName"));
+    }
+
+    @Test
+    void recognitionErrorsPropagateUnchanged() {
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        SeatMapException upstream = new SeatMapException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_SEATS_DETECTED", "없음");
+        when(client.recognize(any(), anyString(), anyString())).thenThrow(upstream);
+
+        assertThatThrownBy(() -> service.createDraft(10L, 1L, png(), null, null)).isSameAs(upstream);
+        verify(layoutRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void getParsesSeatJson() {
+        SeatMapLayout layout = layout("[{\"uid\":\"s0001\",\"row\":1,\"col\":2,\"x\":3,\"y\":4,\"w\":5,\"h\":6}]");
+        when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
+
+        SeatMapResponse response = service.get(55L);
+
+        assertThat(response.seats()).containsExactly(new SeatMapSeat("s0001", 1, 2, 3, 4, 5, 6));
+        assertThat(response.venueName()).isEqualTo("KSPO DOME");
+    }
+
+    @Test
+    void getKeepsSectionAndFillsOneForLegacySeatJson() {
+        SeatMapLayout layout = layout("[{\"uid\":\"a\",\"row\":1,\"col\":1,\"x\":1,\"y\":1,\"w\":1,\"h\":1,\"section\":2},"
+                + "{\"uid\":\"b\",\"row\":1,\"col\":1,\"x\":1,\"y\":9,\"w\":1,\"h\":1}]");
+        when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
+
+        SeatMapResponse response = service.get(55L);
+
+        // 같은 (row, col)이어도 section이 다르면 구분된다. 옛 데이터(section 없음)는 1
+        assertThat(response.seats()).extracting(SeatMapSeat::section).containsExactly(2, 1);
+    }
+
+    @Test
+    void getUnknownIs404() {
+        when(layoutRepository.findDetailById(1L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.get(1L)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void getCorruptedJsonIsGenericErrorWithoutLeakingContent() {
+        SeatMapLayout layout = layout("{broken SECRET-CONTENT");
+        when(layoutRepository.findDetailById(55L)).thenReturn(Optional.of(layout));
+
+        assertThatThrownBy(() -> service.get(55L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(SeatMapService.STORED_DATA_ERROR_MESSAGE);
+    }
+
+    @Test
+    void listUnknownVenueIs404AndEmptyIsEmptyList() {
+        when(venueRepository.findById(9L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.listByVenue(9L)).isInstanceOf(NotFoundException.class);
+
+        when(venueRepository.findById(10L)).thenReturn(Optional.of(venue(10L, "KSPO DOME")));
+        when(layoutRepository.findSummariesByVenueId(10L)).thenReturn(List.of());
+        assertThat(service.listByVenue(10L)).isEmpty();
+    }
+
+    private static SeatMapLayout layout(String seatJson) {
+        SeatMapLayout layout = SeatMapLayout.createDraft(venue(10L, "KSPO DOME"), null, seatJson, "OCR_DONE",
+                700, 400, user(1L, "nick"));
+        ReflectionTestUtils.setField(layout, "id", 55L);
+        return layout;
+    }
+
+    // ---- TEMP-DRAFT-DELETE ----
+
+    @Test
+    void tempDraftDeleteRemovesDraft() {
+        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
+        when(layoutRepository.deleteDraftById(55L)).thenReturn(1);
+
+        service.deleteDraft(55L, 1L);
+
+        verify(layoutRepository).deleteDraftById(55L);
+    }
+
+    @Test
+    void tempDraftDeleteRejectsOfficial() {
+        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.OFFICIAL));
+
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L))
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.TEMP_DRAFT_DELETE_OFFICIAL_MESSAGE));
+        verify(layoutRepository, never()).deleteDraftById(any());
+    }
+
+    @Test
+    void tempDraftDeleteRejectsWhenTicketOrCorrectionReferences() {
+        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
+        when(ticketRepository.countBySeatMapLayout_Id(55L)).thenReturn(1L);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(ConflictException.class);
+
+        when(ticketRepository.countBySeatMapLayout_Id(55L)).thenReturn(0L);
+        when(correctionRepository.countBySeatMapLayout_Id(55L)).thenReturn(2L);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L))
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.TEMP_DRAFT_DELETE_REFERENCED_MESSAGE));
+        verify(layoutRepository, never()).deleteDraftById(any());
+    }
+
+    @Test
+    void tempDraftDeleteUnknownOrAlreadyDeletedIs404() {
+        when(layoutRepository.findStatusById(1L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.deleteDraft(1L, 1L)).isInstanceOf(NotFoundException.class);
+
+        // 조회 직후 다른 요청이 먼저 지운 경우
+        when(layoutRepository.findStatusById(55L)).thenReturn(Optional.of(SeatMapStatus.DRAFT));
+        when(layoutRepository.deleteDraftById(55L)).thenReturn(0);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void tempDraftDeleteFlagOffIs404WithoutTouchingDb() {
+        ReflectionTestUtils.setField(service, "devDraftDeleteEnabled", false);
+
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L)).isInstanceOf(NotFoundException.class);
+        verify(layoutRepository, never()).findStatusById(any());
+        verify(layoutRepository, never()).deleteDraftById(any());
+    }
+}
