@@ -25,8 +25,10 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 - **확정(사용자 결정)**: 위 핵심 흐름, 범위 자동 펼침 저장, 상호 일치 매칭, 다른 회차 허용, 좌석표 후순위
 - **기본안(확정 전, 구현 전 사용자 확인)**: 좌석 키 (공연, 구역, 열, 번), 구역 자동완성, 범위 원본 저장 + 펼침 300석 상한, 회차 조건(같은 회차만 기본),
   추가금 부호 있는 금액·합 ≥ 0 판정(희망 범위 행 단위), 후보 제시 + 양쪽 수락 + 요청당 활성 제안 1개, 지정석·1매 단위
-- **현재 코드 상태**: 인증·공연/공연장/회차 등록은 구현됨. `Ticket`·`ExchangeRequest`·`ExchangeMatch`와 채팅·리뷰는 초기 스켈레톤(서비스·컨트롤러·프론트 페이지 TODO)이라
-  티켓·교환은 재설계 대상. `Ticket`에 구역 없음, `exchange_request.desired_condition`은 문자열 하나
+- **현재 코드 상태 (chore/remove-seatmap-track 기준)**: 인증·공연/공연장/회차 등록·조회와 /api/users/me는 구현됨. 좌석표 코드·seatmap-service·빈 스켈레톤(교환·채팅·후기·티켓 컨트롤러/서비스/저장소 등)은 삭제됐고
+  좌석표 코드는 git 태그 `archive/seatmap-track-20261007`(master d199b36)에 보관. DB는 새 V1 하나(users·venue·performance·performance_session·ticket 5개 테이블, ticket에 seatmap_id 없음),
+  엔티티는 User·Venue·Performance·PerformanceSession·Ticket과 enum UserRole·VenueStatus, 백엔드 테스트 182건, docker-compose는 mysql·backend·frontend 3개.
+  교환 도메인(티켓 등록·매칭·채팅·후기)은 구현 전이고 설계 예정(`Ticket`에 구역 없음)
 
 ---
 
@@ -45,7 +47,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 | 구분 | 기술 | 선정 이유 요약 |
 |---|---|---|
 | Frontend | React, TypeScript, Vite | 기존 숙련도, 인터랙티브 UI(좌석맵/채팅) 적합, 타입 안전성, 채용시장 범용성 |
-| Backend | Spring Boot, Security(JWT), JPA, WebSocket(STOMP) | 기존 Java/Spring 경험, 11개 엔티티 관계형 데이터 적합, Security/JWT 생태계 성숙, WebSocket 내장 |
+| Backend | Spring Boot, Security(JWT), JPA, WebSocket(STOMP) | 기존 Java/Spring 경험, 관계형 데이터 적합(현재 5개 테이블, 교환 도메인은 설계 후 추가), Security/JWT 생태계 성숙, WebSocket 내장 |
 | DB | MySQL | FK 관계 많은 구조라 RDBMS 적합, JPA 호환성, 기존 사용 경험 |
 | 이미지 인식 서버 | FastAPI, OpenCV, Tesseract | Python이 이미지/OCR 생태계 중심, 메인 서버와 책임 분리, 비동기 처리에 강함 |
 
@@ -87,6 +89,8 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 
 ## 4. 좌석맵 인식 파이프라인 (산출물/03, seatmap-recognition-pattern 스킬과 동일 내용) — 동결(2026-10-07), 재개 시 참고
 
+> **좌석표 트랙 동결(2026-10-07), 코드는 git 태그 `archive/seatmap-track-20261007`에 보관, 아래는 보존용 기록이다.** 이 절과 7절에 나오는 `feature/*` 브랜치는 모두 master에 병합된 뒤 삭제됐고(PR #14~#20), 이후 chore/remove-seatmap-track에서 좌석표 코드·seatmap-service를 삭제했다. 아래 '구현 완료'·'미병합' 같은 표현은 당시 시점의 기록이다.
+
 1. 이미지 확보 — (2026-10-07 변경) 사용자가 올린 이미지(/recognize) 또는 입력한 이미지 주소(/recognize-url). 원본은 저장하지 않고 좌표만 저장
 2. 좌석 블록 검출 — 배경(흰색 계열) 제외 + connectedComponentsWithStats. 색상/판매상태 매핑 안 함
 3. 행 번호 인식 — y좌표 클러스터링 + Tesseract OCR
@@ -104,7 +108,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 - DRAFT 선점·스팸 제한(2026-10-07): 공연장당 좌석표(구역) 상한 기본 20(422 `ZONE_LIMIT_REACHED`, ADMIN도 적용), 사용자당 24시간 내 등록 기본 10건(429 `DAILY_LIMIT_REACHED`, ADMIN 제외), 설정 `SEATMAP_MAX_ZONES_PER_VENUE`·`SEATMAP_DAILY_LIMIT_PER_USER`. 삭제 권한은 작성자·ADMIN(OFFICIAL 불가, 참조 시 409, 작성자 NULL 행은 ADMIN만), 응답에 `canDelete`. 한계: 삭제 후 재업로드로 일일 제한 우회 가능(V3 수정 로그에서 보완)
 - DRAFT는 확인용으로만 표시. 교환 매칭은 본인 좌석 정보 + 희망 좌석 범위로 하고, 좌표 기반 선택·매칭은 OFFICIAL에서만
 - 모든 수정은 로그(누가·언제·전후). 악의적 수정은 신고나 관리자 확인이 있을 때만 제재(자동 제재 없음). 관리자는 DB에서 ADMIN 직접 부여로 시작
-- 좌석표 수정·정정 신고 구현(2026-10-07, Flyway V3, `feature/seatmap-edit-log` **미병합**): `PATCH /api/seatmaps/{id}/seats`(expectedVersion·reason 필수, changes는 ROW_LABEL/COL_LABEL) — DRAFT는 로그인 누구나 즉시 반영(USER_EDIT), OFFICIAL은 ADMIN만(ADMIN_EDIT, 일반 사용자 403). 버전 충돌 409 `VERSION_CONFLICT`, 422 `UNKNOWN_SEAT`/`DUPLICATE_SEAT_NUMBER`/`NO_CHANGE`/`DUPLICATE_CHANGE`(중복 번호는 변경 좌석의 최종 (구역,열,번)만 검사). `POST /api/seatmaps/{id}/corrections`는 OFFICIAL만(DRAFT 409): 서로 다른 신고자 2명(threshold 설정, 최소 2) 이상이면 자동 반영(CORRECTION_APPLIED, actor NULL, 같은 좌석·필드의 다른 PENDING은 SUPERSEDED), 1건이면 PENDING, 반영하면 번호가 중복되면 보류+review_note. 관리자 직접 수정도 같은 좌석·필드의 PENDING을 SUPERSEDED로 바꿈. note는 저장하지 않음. `GET /api/seatmaps/{id}/revisions`·`/{revisionId}`는 ADMIN만. 최초 인식 시 RECOGNIZED 로그 1건
+- 좌석표 수정·정정 신고 구현(2026-10-07, Flyway V3, `feature/seatmap-edit-log`, 당시 미병합 → PR #20으로 병합·이후 코드 삭제): `PATCH /api/seatmaps/{id}/seats`(expectedVersion·reason 필수, changes는 ROW_LABEL/COL_LABEL) — DRAFT는 로그인 누구나 즉시 반영(USER_EDIT), OFFICIAL은 ADMIN만(ADMIN_EDIT, 일반 사용자 403). 버전 충돌 409 `VERSION_CONFLICT`, 422 `UNKNOWN_SEAT`/`DUPLICATE_SEAT_NUMBER`/`NO_CHANGE`/`DUPLICATE_CHANGE`(중복 번호는 변경 좌석의 최종 (구역,열,번)만 검사). `POST /api/seatmaps/{id}/corrections`는 OFFICIAL만(DRAFT 409): 서로 다른 신고자 2명(threshold 설정, 최소 2) 이상이면 자동 반영(CORRECTION_APPLIED, actor NULL, 같은 좌석·필드의 다른 PENDING은 SUPERSEDED), 1건이면 PENDING, 반영하면 번호가 중복되면 보류+review_note. 관리자 직접 수정도 같은 좌석·필드의 PENDING을 SUPERSEDED로 바꿈. note는 저장하지 않음. `GET /api/seatmaps/{id}/revisions`·`/{revisionId}`는 ADMIN만. 최초 인식 시 RECOGNIZED 로그 1건
 - 수정·신고 남용 방지: 사용자당 24시간 신고 30건(429 `CORRECTION_LIMIT_REACHED`, ADMIN 제외), 사용자당 PENDING 50건(429 `PENDING_LIMIT_REACHED`), 수정 요청 24시간 200건(429 `EDIT_LIMIT_REACHED`, ADMIN 제외), 락 대기 실패 503 `BUSY`. 수정·반영은 좌석표 행 FOR UPDATE + @Version
 - 프론트: 번호 수정 모드(직접 입력, 같은 열 번호 일괄 이동, 열 번호 변경, 변경 대기 목록·미리보기·사유 입력 후 한 번에 저장, 변경 좌석은 점선+사선 빗금), 오류 신고(OFFICIAL, 열·번 순차 POST·409 건너뜀, note 없음), 이탈 경고는 beforeunload+confirm(BrowserRouter라 useBlocker 불가), role은 /users/me로 UI 분기(서버가 최종 판정), 목록에 N석 표시
 - V3 한계·미결정: 수정 로그가 있는 DRAFT 삭제 정책(현재 RECOGNIZED 로그만 있으면 native delete로 로그째 삭제, 수정·정정 로그가 있으면 409 — 로그 보존 원칙과 충돌, soft delete는 V4 설계 후보, 임시 플래그 기본 true는 운영 전 false로), 삭제 후 재등록으로 일일 한도 우회, 관리자의 PENDING 검토·반려 API 없음(REJECTED 미사용), PROMOTED/REVERTED 로그 기록 코드 없음(관리자 정식 등록 서비스에서 남겨야 함), 수정 로그 조회 화면 없음, 정정 신고는 사실상 OFFICIAL이 아직 없어 단위 테스트·임시 DB로만 검증
@@ -130,12 +134,13 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 
 ## 6. 데이터 모델 (산출물/08_ERD 요약)
 
-엔티티 수: V1 12개 → V2는 컬럼 변경만(테이블 수 그대로) → V3(구현 완료·병합 대기)에서 `seat_map_revision`, `seat_map_revision_item` 2개 추가로 14개 → V4(예정)에서 `abuse_report`, `user_sanction` 2개 추가로 16개. 아래는 V1 기준 12개: User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection,
-ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
-(2026-10-06 공연 회차 `PerformanceSession` 추가로 11 → 12. 08_ERD 원본 png는 아직 11개 기준 —
-반영할 변경 목록은 erd-conventions 스킬 "08_ERD 원본 반영 대기" 절)
+**현재 기준선(2026-10-07 방향 전환 후): 새 V1 하나, 5개 테이블** — User(users, role USER/ADMIN), Venue(status UNVERIFIED/VERIFIED, verified_by→users), Performance, PerformanceSession, Ticket.
+Ticket은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 있고 `seatmap_id`는 없다. 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
+아래는 방향 전환 전(V1 12개 → V3 14개 → V4 예정 16개)의 보존용 기록이며 이전 V1~V3와 좌석표 테이블은 삭제되어 태그 `archive/seatmap-track-20261007`에 보관된다:
+V1 12개 = User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection, ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review (V3에서 `seat_map_revision`·`seat_map_revision_item` 추가, V4 `abuse_report`·`user_sanction`은 예정만 있었음).
+(2026-10-06 공연 회차 `PerformanceSession` 추가로 11 → 12였음.)
 
-주요 관계:
+주요 관계 (현재 5개 테이블에 있는 것: Venue 1:N Performance, Performance 1:N PerformanceSession, User 1:N Performance, User 1:N Ticket, PerformanceSession 1:N Ticket, User 1:N Venue(verified_by). 나머지는 방향 전환 전 설계의 보존용 기록):
 - Venue 1:N SeatMapLayout / 1:N Performance
 - Performance 1:N PerformanceSession (회차: 날짜·시간), User 1:N Performance (등록자)
 - SeatMapLayout 1:N SeatMapRevision(수정 로그 헤더, append-only) 1:N SeatMapRevisionItem(좌석·필드별 전후, `seat_uid` 기준) (V3)
@@ -163,8 +168,8 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - **2026-10-07 방향 전환**: 좌석표 트랙을 동결하고 텍스트 좌석 입력 기반 자동 매칭을 핵심 흐름으로 삼는다(0절). 다음 작업 순서: 하네스·작업일지 반영 →
   스키마 설계(db-schema-architect, 사용자 확인) → 티켓 등록(구역·열·번, 좌석표 없이) → 희망 조건 등록(범위 펼침) → 후보 조회 → 제안·수락 → 프론트 화면
 - 기획/문서화 완료: 산출물/03, 04, 05, 08
-- `SeatSwap/backend`, `SeatSwap/frontend`, `SeatSwap/seatmap-service` 코드 스켈레톤 생성 완료
-  (도메인 엔티티 11종, Repository/Service/Controller 틀, 라우팅, Docker Compose 포함)
+- `SeatSwap/backend`, `SeatSwap/frontend`, `SeatSwap/seatmap-service` 코드 스켈레톤 생성 완료 (생성 당시 기록, seatmap-service는 이후 삭제·태그 보관)
+  (생성 당시 기록. 현재는 엔티티 5종, 좌석표·seatmap-service·빈 스켈레톤은 삭제됨 — 0절 참고)
 - **회원가입/로그인/JWT 인증(FR-01) 실제 구현 완료**: JwtTokenProvider, JwtAuthenticationFilter,
   CustomUserDetailsService, SecurityConfig(CORS 포함), AuthService/AuthController,
   POST /api/auth/signup·login·refresh
@@ -276,7 +281,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   - 브라우저에서 헤더·마이페이지 확인 (햄버거 메뉴 이메일·마이페이지 버튼, 회원탈퇴 비활성)
   - [docs] 04 요구사항정의서 FR-01 하위에 "내 정보 조회" 추가 필요 (원본 확보 후)
 - **공연·공연장·회차 등록/조회(FR-02) 구현 + 7차 리뷰 반영 완료 (2026-10-06, feature/performance 브랜치, 커밋·푸시 예정)**
-  - 스키마 12개 엔티티, 규칙은 6절 참고. 시각은 KST 일원화(JpaAuditingConfig + Clock(Asia/Seoul), Dockerfile·compose TZ=Asia/Seoul)
+  - 스키마는 당시 12개 엔티티(현재는 5개 테이블 새 V1), 규칙은 6절 참고. 시각은 KST 일원화(JpaAuditingConfig + Clock(Asia/Seoul), Dockerfile·compose TZ=Asia/Seoul)
   - [backend] 공연장 검색·추가(같은 이름 재추가는 200으로 기존 반환), 공연 목록(asOf로 기준 시각 고정)·상세·lookup·등록·수정·삭제,
     회차 추가·수정·삭제. 공연 중복(링크) 409 + performanceId, 회차 중복 409, 과거 회차 400, 수정·삭제는 등록자만(403),
     티켓이 있으면 공연장 변경·삭제·회차 변경 불가(409). 오류 포맷 400/401/403/404/409 통일
@@ -307,6 +312,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - 후속 과제 (2026-10-06 결정): 공연 정보 정정 정책(등록자 외 수정 수단, 리뷰 M3) — 보류, 상세는 `산출물/04_요구사항정의서/FR-02_공연정보_정정정책_후속과제.md`
 - 완료 (2026-10-06): 시간대 수정 전에 저장된 `created_at`/`updated_at`을 KST로 +9시간 보정 (users 2, venue 1, performance 1, performance_session 1행, `starts_at`은 제외)
 - 보류 (참고용): 메인 페이지 Phase 1 명세 — react-conventions 스킬 "계획된 화면 명세" 참고, 당장 구현하지 않음
+- **[보존용 기록] 아래 2026-10-07 좌석표 관련 항목의 '미병합·병합 대기·구현 완료·커밋 예정' 표기는 당시 시점이다. 실제로는 모두 master에 병합(PR #14~#20)된 뒤 브랜치가 삭제됐고, 좌석표 트랙 동결로 코드는 삭제되어 태그 `archive/seatmap-track-20261007`에 보관되어 있다.**
 - **2026-10-07 결정·진행 (docs/seatmap-decisions, 상세는 위 4절 및 산출물/07_작업일지/2026-10-07.md)**
   - 좌석맵은 사용자 이미지 업로드/주소 입력이 정식 경로, DRAFT/OFFICIAL 좌석표 흐름, 열 번호 continue 기본, 링크 자동 입력은 제목·공연장·날짜 범위만
   - 별도 브랜치에서 구현해 PR #8~#11로 master에 **병합됨**(단, fix/session-time-step의 리뷰 반영 커밋 9ae3d3d는 병합 전, Flyway 운영 DB baseline 미적용): fix/session-time-step(회차 시각 10분 단위 입력),
@@ -319,21 +325,21 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
   **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부 등 세부. 이 결정에 따른 04 요구사항정의서·08_ERD 원본 반영은 원본 확보 후 (07 작업일지 기록 위치는 사용자가 정함)
 - **2026-10-07 이어서 진행(스키마 설계 ~ V2 구현, 상세는 산출물/07_작업일지/2026-10-07.md '이어서 진행한 작업')**
   - 결정: DRAFT 구역별 하나·OFFICIAL 복수 허용 후 1개 제한 예정, 티켓 먼저 등록·교환글에서 DRAFT 업로드, 제재 2종, 회원 익명화, 신고 항상 로그, 좌석 uid (4절 참고)
-  - 구현 완료·**병합 대기**: `feature/admin-seatmap-schema`(Flyway V2: users.role, venue.status, seat_map_layout 상태·version·이미지 크기·승격,
+  - 구현 완료·병합됨(PR #16·#15, 이후 코드 삭제·태그 보관): `feature/admin-seatmap-schema`(Flyway V2: users.role, venue.status, seat_map_layout 상태·version·이미지 크기·승격,
     image_url 삭제, ticket.seatmap_id nullable, draft_key; role은 매 요청 DB 로드, /api/admin/** ADMIN, /me에 role; 테스트 195건),
-    `feature/seatmap-seat-uid`(좌석 uid, pytest 187건). erd.dot의 V2는 병합 후 현재로 승격 예정
+    `feature/seatmap-seat-uid`(좌석 uid, pytest 187건). (erd.dot은 방향 전환 후 5개 테이블 기준으로 새로 작성됨)
   - 없는 것: 관리자 API/서비스, V4(제재·신고), 관리자 페이지 (V3는 아래 `feature/seatmap-edit-log`에서 구현). 정책 미정: 이미 OFFICIAL이 있는 공연장의 DRAFT 허용 여부. Testcontainers 미도입
   - 이슈: Docker Desktop 꺼진 채 재빌드 시 mysql이 Exited(137) → 백엔드 `UnknownHostException: mysql`, mysql 먼저 기동으로 해결
 - **2026-10-07 좌석표 등록·조회 구현과 실제 좌석표 시험 (상세는 산출물/07_작업일지/2026-10-07.md '좌석표 등록·조회 구현과 실제 좌석표 시험')**
-  - `feature/seatmap-register`(**미병합**, 코드 변경 미커밋): `POST /api/venues/{venueId}/seatmaps`(multipart file, zoneName, aisleMode) → seatmap-service `/recognize` 중계(X-Internal-Key 선택, 연결 5초·읽기 60초) → DRAFT 저장(좌표만, 이미지 미저장). `GET /api/seatmaps/{id}`, `GET /api/venues/{venueId}/seatmaps`.
+  - `feature/seatmap-register`(당시 미병합 → PR #17로 병합, 코드는 이후 삭제·태그 보관): `POST /api/venues/{venueId}/seatmaps`(multipart file, zoneName, aisleMode) → seatmap-service `/recognize` 중계(X-Internal-Key 선택, 연결 5초·읽기 60초) → DRAFT 저장(좌표만, 이미지 미저장). `GET /api/seatmaps/{id}`, `GET /api/venues/{venueId}/seatmaps`.
     같은 공연장+구역 DRAFT 중복 시 409(seatMapId), 동시 인식 제한(전역 3·사용자당 1 → 429 RATE_LIMITED / 503 BUSY), 인식 결과 검증(좌석 6000 상한 등), 이미지 시그니처 검사, 업스트림 오류는 고정 한국어 문구.
     프론트: SeatMapOverlay(SVG·줌·키보드), 좌석표 조회 화면(DRAFT '확인용' 안내, 오류 신고 버튼 비활성 '준비 중'), 업로드 화면. 백엔드 테스트 254건, 프론트 tsc·build 통과. 임시 기능 TEMP-DRAFT-DELETE 포함(4절 참고)
-  - `feature/seatmap-real-image`(워크트리 dev-seatmap, 커밋 eb8104a, **미병합**): 실제 좌석표 대응 인식 개선. 사용자가 올린 3개 층 449x549 이미지 시험 — 개선 전 좌석 1619·구역 구분 없음·열 OCR 0 → 개선 후 좌석 1674·구역 3(1F 23열 974석, 2F 10열 430석, 3F 6열 270석)·열 라벨 OCR 33/39. pytest 199건, 합성 48종 100% 유지.
+  - `feature/seatmap-real-image`(워크트리 dev-seatmap, 커밋 eb8104a, 당시 미병합 → PR #18로 병합): 실제 좌석표 대응 인식 개선. 사용자가 올린 3개 층 449x549 이미지 시험 — 개선 전 좌석 1619·구역 구분 없음·열 OCR 0 → 개선 후 좌석 1674·구역 3(1F 23열 974석, 2F 10열 430석, 3F 6열 270석)·열 라벨 OCR 33/39. pytest 199건, 합성 48종 100% 유지.
     **한계**: 정답 없이 눈·격자 규칙으로 추정, 임계값은 이미지 1장 기준, 열 라벨 6/39 미판독(보간), 층 이름 미인식, 같은 색 좌석 위주 이미지·회색 좌석 8개 미만이면 실패, 이미지 안 글자(무대 표시)가 좌석으로 잡힐 수 있음
-  - `feature/draft-limits`(**미병합**, 코드 변경 미커밋, 2026-10-07): DRAFT 선점·스팸 대응 1차. 구역 상한 20(422)·사용자 일일 10건(429, ADMIN 제외), 검사 순서 공연장 확인 → 같은 구역 DRAFT 409 → 구역 상한 → 일일 제한 → 동시성 제한(RATE_LIMITED 429/BUSY 503) → 인식. 삭제는 작성자·ADMIN(403, 임시 플래그 true면 누구나), 응답 `canDelete`. 한계: 삭제 후 재업로드로 일일 제한 우회, count~insert 사이 락 없어 상한 소폭 초과 가능, 인덱스 없는 count(`seat_map_layout(created_by, created_at)` 인덱스는 V3 후보). 백엔드 테스트 270건, 프론트 tsc·build 통과. 미구현: DRAFT 수정+수정 로그(V3), 신고·제재(V4)
+  - `feature/draft-limits`(2026-10-07, 당시 미병합 → PR #19로 병합): DRAFT 선점·스팸 대응 1차. 구역 상한 20(422)·사용자 일일 10건(429, ADMIN 제외), 검사 순서 공연장 확인 → 같은 구역 DRAFT 409 → 구역 상한 → 일일 제한 → 동시성 제한(RATE_LIMITED 429/BUSY 503) → 인식. 삭제는 작성자·ADMIN(403, 임시 플래그 true면 누구나), 응답 `canDelete`. 한계: 삭제 후 재업로드로 일일 제한 우회, count~insert 사이 락 없어 상한 소폭 초과 가능, 인덱스 없는 count(`seat_map_layout(created_by, created_at)` 인덱스는 V3 후보). 백엔드 테스트 270건, 프론트 tsc·build 통과. 미구현: DRAFT 수정+수정 로그(V3), 신고·제재(V4)
   - 이슈/후속: DRAFT 선점·스팸 정책 중 제한·삭제 권한은 위 브랜치에서 1차 구현, 수정 로그·신고/제재는 미정(V3·V4). 목록 seatCount 미제공(seat_count는 Flyway V3 필요 → V3 브랜치에서 해결), 업로드 화면에 공연장 이름 없음, 좌석표 수정·오류 신고 API/UI 없음(V3 브랜치에서 구현), 관리자 API·정식 등록·관리자 페이지 없음, 요청 본문 이중 버퍼링(요청당 최대 약 30MB), Testcontainers 미도입, OFFICIAL 있는 공연장의 DRAFT 허용 여부 미정. 백엔드 ↔ seatmap-service 연동은 이번에 완료. 링크 기반 공연정보 미리 채우기·티켓 등록(좌석표 없이)·교환글+DRAFT 업로드는 다음 단계
 - **2026-10-07 좌석표 수정·정정 신고(Flyway V3) (상세는 산출물/07_작업일지/2026-10-07.md '좌석표 수정·정정 신고(V3)')**
-  - `feature/seatmap-edit-log`(**미병합**, 코드 변경 미커밋): V3 = `seat_map_layout.seat_count`·idx(created_by, created_at), `seat_map_revision`(수정 로그 헤더, append-only, UK(seatmap_id, revision_no)), `seat_map_revision_item`(좌석·필드별 전후), `seat_correction` 개편(1신고=1행, `vote_count` 삭제, target_seat_uid·target_field·normalized_value·layout_version·검토/적용 필드, status PENDING/APPLIED/REJECTED/SUPERSEDED, 중복 방지는 PENDING 한정 생성 컬럼 `pending_key` UNIQUE). 파일 맨 앞에서 `seat_correction`에 행이 있으면 SIGNAL로 즉시 실패(실패 시 `flyway repair` 필요, backend README 참고)
+  - `feature/seatmap-edit-log`(당시 미병합 → PR #20으로 병합): V3 = `seat_map_layout.seat_count`·idx(created_by, created_at), `seat_map_revision`(수정 로그 헤더, append-only, UK(seatmap_id, revision_no)), `seat_map_revision_item`(좌석·필드별 전후), `seat_correction` 개편(1신고=1행, `vote_count` 삭제, target_seat_uid·target_field·normalized_value·layout_version·검토/적용 필드, status PENDING/APPLIED/REJECTED/SUPERSEDED, 중복 방지는 PENDING 한정 생성 컬럼 `pending_key` UNIQUE). 파일 맨 앞에서 `seat_correction`에 행이 있으면 SIGNAL로 즉시 실패(실패 시 `flyway repair` 필요, backend README 참고)
   - API·남용 방지·프론트 동작은 4절 참고. 테스트: 백엔드 320건 통과, 임시 DB(빈 DB·덤프 복사본·seat_correction 행 있는 복사본)에서 V3 적용·validate 통과, 프론트 tsc·build 통과
   - 한계·후속: 4절 'V3 한계·미결정' 참고. Testcontainers 통합 테스트 미도입(동시성·제약은 임시 DB 수동 확인만). 산출물 원본(04·05) 반영 대기, erd.dot은 V3 구현 완료로 반영(병합 후 현재로 승격)
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
