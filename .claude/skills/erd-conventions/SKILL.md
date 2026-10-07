@@ -1,22 +1,22 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 새 V1 기준선(users·venue·performance·performance_session·ticket 5개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 기준선 V1+V2(users·performance·performance_session·ticket 4개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
 ---
 
 # ERD 컨벤션
 
-## 기준선 (5개 테이블, 새 V1)
+## 기준선 (4개 테이블, V1+V2)
 
 User(users), Venue(venue), Performance(performance), **PerformanceSession**(performance_session), Ticket(ticket)
 
 - 2026-10-07 방향 전환으로 좌석표 트랙과 아직 구현하지 않은 교환·채팅·후기 테이블을 걷어내고 **새 V1 하나**(`V1__init_schema.sql`)로 기준선을 다시 만들었다. 이전 V1~V3(12개+좌석표·수정 로그 테이블)는 삭제됐고, 좌석표 코드와 이전 마이그레이션·erd.dot은 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
-- users에 `role`(USER/ADMIN), venue에 `status`(UNVERIFIED/VERIFIED)·`verified_by`·`verified_at`이 있다. `ticket`은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 가지며 `seatmap_id`는 없다. 구역·희망 범위·추가금 등 매칭용 컬럼과 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
-- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성, 5개 테이블 + 교환 도메인 '설계 예정' 주석 노드 하나). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
+- users에 `role`(USER/ADMIN)이 있다. 공연장은 별도 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다(V2에서 venue 테이블 삭제, 등록 후 수정 불가, 중복 판정 없음). `ticket`은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 가지며 `seatmap_id`는 없다. 구역·희망 범위·추가금 등 매칭용 컬럼과 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성·V2 반영, 4개 테이블 + 교환 도메인 '설계 예정' 주석 노드 하나). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
 - 새 V1은 빈 DB에서만 실행된다. 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운 뒤 적용한다.
 
 ## 네이밍 규칙
 - 엔티티명: PascalCase 단수형 (`Ticket`, not `Tickets`)
-- FK 컬럼: `{참조엔티티_snake}_id` (예: `venue_id`, `seatmap_id`, `performance_session_id`).
+- FK 컬럼: `{참조엔티티_snake}_id` (예: `performance_session_id`, `registrant_id`; 과거 `venue_id`·`seatmap_id`는 삭제됨).
   같은 엔티티를 역할로 참조하면 역할명 사용 (`registrant_id`, `reporter_id`, `sender_id`)
 - unique 제약·인덱스는 이름을 명시한다: `uk_{테이블}_{컬럼...}`, `idx_{테이블}_{컬럼...}`
   (서비스에서 DataIntegrityViolation을 제약 이름으로 구분할 수 있게)
@@ -26,9 +26,7 @@ User(users), Venue(venue), Performance(performance), **PerformanceSession**(perf
     대소문자를 구분하므로 ai_ci면 대소문자만 다른 링크가 같은 공연으로 합쳐진다. 키에 비ASCII(인코딩 안 된
     경로, 디코딩된 상품 ID)가 들어올 수 있어 `ascii_bin`은 쓰지 않는다(저장 오류 위험). 500자 × 4바이트 = 2000바이트로
     인덱스 한도 3072바이트 이내
-  - `venue.normalized_name` = 기본 `utf8mb4_0900_ai_ci` **의도적으로 유지**. 이름은 대소문자·악센트 차이를
-    같은 공연장으로 보는 게 맞다(Java 정규화보다 DB가 더 넓게 합치지만, 중복 조회도 DB에서 같은 collation으로
-    하므로 판정이 어긋나지 않는다)
+  - (과거 기록) `venue.normalized_name`은 ai_ci로 유지했으나 V2에서 venue 테이블과 함께 삭제됐다. 공연장 이름은 중복 판정을 하지 않으므로 collation 규칙이 없다
 - **시간 기준 KST**: 모든 `LocalDateTime` 컬럼은 Asia/Seoul 벽시계 시각으로 저장한다
   - 현재 시각은 `ClockConfig`의 `Clock`(Asia/Seoul)에서만 얻는다. 엔티티·서비스에서 `LocalDateTime.now()`(JVM TZ 의존)
     직접 호출 금지
@@ -67,12 +65,11 @@ User(users), Venue(venue), Performance(performance), **PerformanceSession**(perf
   - **SIGNAL 가드 패턴**: 데이터를 이관할 수 없는 변경(예: V3의 `seat_correction` 구 스키마 행)은 파일 맨 앞에서 임시 프로시저+`SIGNAL SQLSTATE '45000'`으로 즉시 실패시킨다(MySQL은 DDL이 트랜잭션에 묶이지 않아 중간 실패 시 앞선 변경이 남기 때문). 실패 후에는 `flyway repair` 후 재시도.
   - 제재(`user_sanction`)는 `SEATMAP_EDIT`(수정·신고 정지)/`ACCOUNT`(계정 정지) 두 종류, `imposed_by` NOT NULL(관리자만 부과, 자동 제재 없음).
   - 회원탈퇴는 물리 삭제가 아니라 **익명화**(로그·제재 FK 유지). OFFICIAL 좌석표는 사용자 직접 수정 불가(정정 신고로만), 관리자는 직접 수정 가능.
-- 공연·회차·공연장 (2026-10-06 확정):
-  - `Venue`: 공유 기준 데이터. 사용자는 검색 후 선택, 없으면 추가. 중복 키 `normalized_name` unique
-    (NFKC → 공백·구두점(P*)·보이지 않는 문자 제거 → 소문자, `Venue.normalizeName`). 일반 사용자 수정·삭제 불가.
+- 공연·회차 (2026-10-06 확정, 공연장 부분은 2026-10-08 정정):
+  - (과거 기록, 삭제됨) `Venue`: 공유 기준 데이터였으나 V2에서 테이블 삭제. 현재 **공연장은 `performance.venue_name` 텍스트**이고 검색·추가·정식 등록(VERIFIED)이 없으며 등록 후 수정할 수 없다(링크 자동 입력 예정, 변경은 관리자 수정 제안 — 관리자 기능은 후속).
   - `Performance`: 로그인 사용자 누구나 티켓팅 링크로 등록. 날짜 컬럼 없음(회차로 분리).
     중복 키 `source_key` unique (링크 정규화 값 — 사이트별 `{site}:{productId}`, 미지원 사이트는 일반 URL 정규화.
-    계산은 서비스 책임). `registrant_id` → users. 공연장+제목은 unique 아님(같은 공연장 재공연 존재).
+    계산은 서비스 책임). `registrant_id` → users. 공연장 이름+제목은 unique 아님(같은 공연장 재공연 존재).
   - `PerformanceSession`: Performance 1:N. `starts_at`(분 단위 절삭, KST 현지 시각),
     unique (`performance_id`, `starts_at`).
   - `Ticket`은 `PerformanceSession`을 참조한다 (`performance_session_id`). `performance_id`를 중복으로 두지 않는다.
@@ -100,7 +97,7 @@ CLAUDE.md '확인 필요' 목록을 사용자에게 확인한 뒤 진행한다. 
 (이전 V4 예정이던 제재·신고(`abuse_report`·`user_sanction`)는 동결·삭제 — 번호를 선점하지 않는다).
 
 - 좌석 키는 **공연(회차) 단위의 (구역, 열, 번) 텍스트**. **공연장 단위 구역 테이블(`venue_zone` 등)은 두지 않고 구역 자동완성도 전제하지 않는다**(2026-10-08 확정, 구역 등록·자동완성은 좌석표 기능과 함께 후속).
-  좌표·seat `uid`·좌석표 `section` 번호는 키가 아니며 새 테이블은 `seat_map_layout`에 FK를 두지 않는다. **`venue` 테이블은 삭제 확정**(2026-10-08 2·3차 답변: 공연장은 공연 정보의 필수 텍스트 한 칸, 검색·추가·목록 필터·VERIFIED 삭제. `performance`에 공연장 이름 텍스트 컬럼 추가, `venue_id` 제거. V2 마이그레이션은 별도 작업으로 곧 시작)
+  좌표·seat `uid`·좌석표 `section` 번호는 키가 아니며 새 테이블은 `seat_map_layout`에 FK를 두지 않는다. **`venue` 테이블은 삭제 완료**(2026-10-08 2~4차 답변: 공연장은 공연 정보의 필수 텍스트 한 칸, 검색·추가·목록 필터·VERIFIED 삭제. V2가 `performance.venue_name`을 추가·백필하고 `venue_id`·FK·venue 테이블을 삭제, 구현 완료·미커밋)
 - `ticket`: 구역·열·번(텍스트, 열 표기는 사용자가 입력하는 숫자/문자) 추가, 기존 `row_label`/`col_label` 문자열의 처리는 설계 시 결정.
   **같은 회차·구역·열·번의 활성 티켓은 1개만** 허용(활성 상태 조건이 있는 유일 제약 필요)하고 사용자당 활성 티켓 수 상한(예 20)은 서비스에서 검사한다. 지정석·1매 제한은 두지 않는다
 - `exchange_request`(가칭): 새 V1에는 아직 없는 테이블이다(이전 설계의 `desired_condition` 문자열·`extra_payment`는 삭제됨). 희망 범위·희망 회차는 자식 테이블로 둔다. Ticket 1:1 유지
@@ -115,7 +112,7 @@ CLAUDE.md '확인 필요' 목록을 사용자에게 확인한 뒤 진행한다. 
 
 ## 08_ERD 반영 현황
 
-`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **현재 5개 테이블 새 V1 기준으로 새로 작성**했다 (users·venue·performance·performance_session·ticket, V1 SQL의 컬럼·UK·CHECK 반영).
+`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **새 V1 기준으로 새로 작성**했고, 2026-10-08 V2 반영으로 **현재 4개 테이블**(users·performance·performance_session·ticket)이다 (venue 노드·엣지 삭제, performance에 `venue_name VARCHAR(100) NN`).
 교환 도메인은 '설계 예정' 주석 노드 하나뿐이며, 삭제된 좌석표·수정 로그·제재 테이블은 그리지 않는다(설계는 태그 `archive/seatmap-track-20261007`의 이전 erd.dot과 마이그레이션에 보관).
 ERD.png는 graphviz `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다. 새 V 파일(교환 도메인 등)이 추가되면 erd.dot에 반영하고 이 절을 갱신한다.
 시각 컬럼(created_at/updated_at/starts_at)은 KST 기준이라는 주석을 유지한다.

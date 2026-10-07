@@ -32,13 +32,18 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
   - 지정석·1매 제한 없음(스탠딩 등도 텍스트 입력), 연석·3자 이상 순환 교환은 구현하지 않되 모델이 막지 않게 함
   - 후기 기능 없음, 신뢰도 점수는 매칭에 쓰지 않음(우선순위는 사용자 설정), 사용자 신고는 필수(교환 핵심 흐름 이후)
 - **확정(사용자 2차 답변, 2026-10-08)**:
-  - **`venue` 테이블 삭제**(공연장은 공연 정보에 텍스트로 둔다고 이해, 공연장 검색·추가·정식 등록 폐지 방향). 범위는 3차 답변으로 확정(아래). 코드·DB 반영은 아직 시작 안 함
+  - **`venue` 테이블 삭제**(공연장은 공연 정보에 텍스트로 둔다고 이해, 공연장 검색·추가·정식 등록 폐지). 범위는 3차 답변으로 확정(아래), **4차 답변(2026-10-08)으로 구현 완료(미커밋, `feature/remove-venue`)**: 아래 '4차' 항목
   - 추가금 부호: **+는 내가 받을 금액, −는 내가 낼 수 있는 금액**(이전 기본안의 반대 의미 정정; 3차 답변으로 매칭에는 금액을 쓰지 않고 표시용 유지 여부는 확인 필요)
   - 매칭: 시스템이 후보 목록을 띄우면 **사용자가 골라 채팅 시작**(자동 선택 아님). 한 티켓에 채팅 여러 개 동시 가능, **동시 '예약'은 불가**. **사용자 차단 기능**(차단 시 후보 제외·채팅 불가) 신규 요구. 취소 후 같은 상대와 재매칭 불가
   - 교환 완료: 티켓팅 사이트에서 양도를 끝낸 뒤 각자 '교환 완료'. 마이페이지 '교환 이력'에 `(기존 자리) -> (바꾼 자리)`(자리 정보 스냅샷 저장)
   - 제안 상태 흐름 가안: 후보 선택 → 채팅(다중) → 예약(티켓당 1개, 3차 답변 확정) → 양도 → 각자 완료 → 완료, 또는 취소(재매칭 불가)
 - **확정(사용자 3차 답변, 2026-10-08)**:
-  - **venue 삭제 범위 확정**: 공연 등록 화면의 공연장은 **텍스트 입력 한 칸(필수)**, 공연장 검색·추가, 공연 목록의 공연장 필터, 공연장 정식 등록(VERIFIED) 개념 모두 삭제. 코드·DB 반영(V2 마이그레이션, Venue 엔티티·컨트롤러·서비스·VenuePicker 삭제, `performance`에 공연장 이름 텍스트 컬럼)은 별도 작업으로 곧 시작(아직 안 함)
+  - **venue 삭제 범위 확정**: 공연 등록 화면의 공연장은 **텍스트 입력 한 칸(필수)**, 공연장 검색·추가, 공연 목록의 공연장 필터, 공연장 정식 등록(VERIFIED) 개념 모두 삭제. 코드·DB 반영(V2 마이그레이션, Venue 엔티티·컨트롤러·서비스·VenuePicker 삭제, `performance`에 공연장 이름 텍스트 컬럼)은 별도 작업으로 곧 시작 → 4차 답변 후 구현 완료(아래)
+  - **venue 삭제 구현 완료(4차 답변, 2026-10-08, 미커밋)**: V2(`V2__drop_venue_use_venue_name.sql`, 프로시저 가드·재실행 가능)가 `performance.venue_name VARCHAR(100) NOT NULL`을 추가해 venue 이름을 백필하고 `venue_id`·FK·`venue` 테이블을 삭제. 버려진 정보는 venue.address·정식 등록 정보뿐(로컬 데이터). 공연장 이름은 공백 정리 후 1~100자(전각 통일·중복 판정 없음)
+  - 공연 목록 검색은 **제목만**. `GET/POST /api/venues` 삭제. 응답은 `venueName`(문자열), 400 필드 오류 키 `venueName`. 공연 수정(PATCH)은 title만 받고 venueName/venueId는 무시
+  - **공연장 이름은 등록 후 수정 불가**: 티켓팅 링크 등록 시 공연 정보를 자동으로 읽어올 예정이라 수정이 필요 없고, 공연 진행 측 사정으로 공연장·회차·날짜가 바뀌면 사용자가 **관리자에게 수정 제안**(관리자 기능은 후속)
+  - 등록 화면은 **3단계**: ①티켓팅 링크(중복 확인) ②공연 정보(제목·공연장 이름·회차, 지금은 직접 입력) ③확인·등록. 링크 입력 시 공연 이름·공연장·회차 등을 한꺼번에 미리 채워 '이 정보가 맞나요?'를 묻고 아니면 직접 수정 후 등록하는 **자동 입력은 다음 작업(미구현)**. seatmap-service 삭제로 요청·어댑터(SSRF 방어)는 Spring Boot 백엔드에 새로 만들고 이전 safe_fetch는 태그 `archive/seatmap-track-20261007` 참고
+  - **확인 필요(새, 4차)**: ①회차까지 자동으로 읽을지(공개 페이지에서는 회차 시각을 읽을 수 없음: 멜론은 Ajax 내부 API이고 조사하지 않기로 함, 인터파크는 robots.txt 금지 — 기본값은 제목·공연장·날짜 범위만 채우고 회차는 직접 입력) ②등록 후 제목·회차 수정(현재 등록자가 가능)을 어디까지 없애고 관리자 수정 제안으로 바꿀지
   - **추가금 매칭 규칙 교체**: 금액을 계산하지 않고 **추가금 유무만 확인**, 선택지 [추가금 X] / [상관없음]. 이전 '두 값의 합이 0 이하(이상)면 성립' 규칙은 **폐기 — 2026-10-08**
   - '예약' 확정: 채팅 합의 후 양쪽이 '이 사람과 교환할게요'를 눌러 예약하면 두 티켓이 잠겨 다른 채팅에서 같은 티켓을 또 예약 불가. 이후 양도 → 각자 완료. 취소하면 같은 상대와 재매칭 불가
   - 교환 완료 시 **내 Ticket의 좌석·회차를 새 자리로 갱신**하고 교환 이력에 (기존 자리) -> (바꾼 자리) 스냅샷 저장
@@ -47,9 +52,9 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 - **확인 필요(사용자 확인 중, 구현 전 확인)**: 추가금 금액 입력을 후보 목록 표시용으로 유지할지와 [추가금 X]-상대 금액 제시 충돌 판정(기본값: 금액은 표시용 유지, [추가금 X]가 금액이 있는 요청과 만나면 불성립, 그 외 성립),
   취소 후 재매칭 불가 범위(기본값: 자동으로 서로 불가, 이의 없으면 확정), 한쪽만 완료 방치 시 알림/만료(7일 알림 제안, 공연 시작 후 마감 없음), 티켓 등록·매칭 허용 기간(지난 회차 처리, 새 항목), 신고용 최소 관리자 기능 범위(신고 착수 시)
 - **폐기된 기본안(2026-10-08)**: 구역 자동완성, 펼침 300석 상한, 지정석·1매만, 후기·신뢰도 우선, 같은 회차만이 기본인 회차 조건
-- **현재 코드 상태 (chore/remove-seatmap-track 기준)**: 인증·공연/공연장/회차 등록·조회와 /api/users/me는 구현됨. 좌석표 코드·seatmap-service·빈 스켈레톤(교환·채팅·후기·티켓 컨트롤러/서비스/저장소 등)은 삭제됐고
-  좌석표 코드는 git 태그 `archive/seatmap-track-20261007`(master d199b36)에 보관. DB는 새 V1 하나(users·venue·performance·performance_session·ticket 5개 테이블, ticket에 seatmap_id 없음),
-  엔티티는 User·Venue·Performance·PerformanceSession·Ticket과 enum UserRole·VenueStatus, 백엔드 테스트 182건, docker-compose는 mysql·backend·frontend 3개.
+- **현재 코드 상태 (chore/remove-seatmap-track 기준)**: 인증·공연/회차 등록·조회(공연장은 텍스트)와 /api/users/me는 구현됨. 좌석표 코드·seatmap-service·빈 스켈레톤(교환·채팅·후기·티켓 컨트롤러/서비스/저장소 등)은 삭제됐고
+  좌석표 코드는 git 태그 `archive/seatmap-track-20261007`(master d199b36)에 보관. DB는 V1+V2(2026-10-08 venue 삭제, 미커밋): users·performance·performance_session·ticket 4개 테이블(ticket에 seatmap_id 없음, performance.venue_name 텍스트),
+  엔티티는 User·Performance·PerformanceSession·Ticket과 enum UserRole(Venue·VenueStatus 삭제), 백엔드 테스트 169건(venue 삭제 후), docker-compose는 mysql·backend·frontend 3개.
   교환 도메인(티켓 등록·매칭·채팅, 후기는 만들지 않기로 함)은 구현 전이고 설계 예정(`Ticket`에 구역 없음)
 
 ---
@@ -69,7 +74,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 | 구분 | 기술 | 선정 이유 요약 |
 |---|---|---|
 | Frontend | React, TypeScript, Vite | 기존 숙련도, 인터랙티브 UI(좌석맵/채팅) 적합, 타입 안전성, 채용시장 범용성 |
-| Backend | Spring Boot, Security(JWT), JPA, WebSocket(STOMP) | 기존 Java/Spring 경험, 관계형 데이터 적합(현재 5개 테이블, 교환 도메인은 설계 후 추가), Security/JWT 생태계 성숙, WebSocket 내장 |
+| Backend | Spring Boot, Security(JWT), JPA, WebSocket(STOMP) | 기존 Java/Spring 경험, 관계형 데이터 적합(현재 4개 테이블, 교환 도메인은 설계 후 추가), Security/JWT 생태계 성숙, WebSocket 내장 |
 | DB | MySQL | FK 관계 많은 구조라 RDBMS 적합, JPA 호환성, 기존 사용 경험 |
 | 이미지 인식 서버 | FastAPI, OpenCV, Tesseract | Python이 이미지/OCR 생태계 중심, 메인 서버와 책임 분리, 비동기 처리에 강함 |
 
@@ -156,13 +161,13 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 
 ## 6. 데이터 모델 (산출물/08_ERD 요약)
 
-**현재 기준선(2026-10-07 방향 전환 후): 새 V1 하나, 5개 테이블** — User(users, role USER/ADMIN), Venue(status UNVERIFIED/VERIFIED, verified_by→users), Performance, PerformanceSession, Ticket.
+**현재 기준선: V1+V2, 4개 테이블** — User(users, role USER/ADMIN), Performance(`venue_name` 텍스트 NOT NULL 100자, V2), PerformanceSession, Ticket. (V1의 Venue는 2026-10-08 V2로 삭제됨)
 Ticket은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 있고 `seatmap_id`는 없다. 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
 아래는 방향 전환 전(V1 12개 → V3 14개 → V4 예정 16개)의 보존용 기록이며 이전 V1~V3와 좌석표 테이블은 삭제되어 태그 `archive/seatmap-track-20261007`에 보관된다:
 V1 12개 = User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection, ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review (V3에서 `seat_map_revision`·`seat_map_revision_item` 추가, V4 `abuse_report`·`user_sanction`은 예정만 있었음).
 (2026-10-06 공연 회차 `PerformanceSession` 추가로 11 → 12였음.)
 
-주요 관계 (현재 5개 테이블에 있는 것: Venue 1:N Performance, Performance 1:N PerformanceSession, User 1:N Performance, User 1:N Ticket, PerformanceSession 1:N Ticket, User 1:N Venue(verified_by). 나머지는 방향 전환 전 설계의 보존용 기록):
+주요 관계 (현재 4개 테이블에 있는 것: Performance 1:N PerformanceSession, User 1:N Performance, User 1:N Ticket, PerformanceSession 1:N Ticket. 아래 Venue 관련 항목은 V2로 삭제된 과거 설계. 나머지는 방향 전환 전 설계의 보존용 기록):
 - Venue 1:N SeatMapLayout / 1:N Performance
 - Performance 1:N PerformanceSession (회차: 날짜·시간), User 1:N Performance (등록자)
 - SeatMapLayout 1:N SeatMapRevision(수정 로그 헤더, append-only) 1:N SeatMapRevisionItem(좌석·필드별 전후, `seat_uid` 기준) (V3)
@@ -174,14 +179,13 @@ V1 12개 = User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, 
 - ExchangeMatch 1:1 ChatRoom, ChatRoom 1:N Message
 - ExchangeMatch 1:N Review
 
-공연·회차·공연장 규칙 (2026-10-06 결정):
+공연·회차·공연장 규칙 (2026-10-06 결정, 공연장·수정 부분은 2026-10-08 V2로 정정 — 아래 '과거' 표기 항목은 삭제된 설계):
 - 공연 등록: 로그인 사용자 누구나, 티켓팅 링크(sourceUrl) 입력. 중복 판정은 링크 정규화 값 `source_key` unique
   (사이트별 상품 ID `{site}:{productId}`, 미지원 사이트는 일반 URL 정규화)
 - 회차: 공연 1:N, `starts_at` 분 단위, (공연, 일시) unique. **좌석 교환은 같은 공연 안이면 회차가 달라도 가능**(2026-10-07 변경, 이전에는 같은 회차끼리만으로 기록됨). 교환 조건은 좌석 위치 + 회차 일시이고, 다른 회차끼리 교환하면 교환 후 티켓의 회차가 바뀐다
-- 공연장: 검색 후 선택, 없으면 추가. 중복 판정은 이름 정규화 값 `normalized_name` unique
-  (공백·구두점·대소문자·전각 차이 흡수). SeatMapLayout은 Venue 단위 재사용(NFR-03)
-- 수정/삭제: 공연은 등록자만(공연장 변경·삭제는 티켓 0건일 때만, 링크 수정 불가), 회차 추가는 누구나,
-  회차 수정·삭제는 공연 등록자만 + 티켓 0건일 때만, 공연장은 일반 사용자 수정·삭제 불가
+- 공연장: **현재는 `performance.venue_name` 텍스트(필수 1~100자, 등록 후 수정 불가, 중복 판정 없음)**. (과거, 삭제됨: 검색 후 선택·없으면 추가, `normalized_name` unique. SeatMapLayout은 Venue 단위 재사용(NFR-03)은 좌석표 동결로 보존용)
+- 수정/삭제: 공연은 등록자만(현재 PATCH는 제목만, 공연장 이름·링크 수정 불가. 과거: 공연장 변경은 티켓 0건일 때만), 회차 추가는 누구나,
+  회차 수정·삭제는 공연 등록자만 + 티켓 0건일 때만(등록 후 수정 범위를 관리자 수정 제안으로 바꿀지는 확인 필요)
 
 상세 다이어그램은 `산출물/08_ERD/ERD.png` (및 `erd.dot` 소스) 참고.
 
@@ -190,6 +194,7 @@ V1 12개 = User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, 
 - **2026-10-08 2차 답변 반영**: venue 테이블 삭제 확정(코드·DB 반영 대기, 범위 확인 필요), 추가금 부호 정정, 후보 목록 선택·사용자 차단·재매칭 불가·동시 채팅/예약 금지, 교환 완료 방식·교환 이력을 0절에 반영하고 '확인 필요'를 새로 정리했다.
   산출물 04·05·08 원본 반영은 대기(docx/xlsx 미수정). 다음: venue 삭제 범위 확인 → V2 마이그레이션·코드 정리 → 교환 스키마 설계(차단·이력 포함)
 - **2026-10-08 3차 답변 반영**: venue 삭제 범위 확정, 추가금 매칭을 유무([추가금 X]/[상관없음])로 교체('합 ≤ 0' 폐기), 예약·완료 시 Ticket 갱신·열/번 입력(구역 필수)·공연 시작 후에도 교환 가능을 0절에 반영하고 '확인 필요'를 재정리했다. 산출물 04·05·08 원본 반영은 대기(docx/xlsx 미수정). 다음: venue 삭제 코드·V2 마이그레이션 → 교환 스키마 설계 → 티켓 등록 → 매칭·채팅 → 신고·차단
+- **2026-10-08 4차 답변 반영(venue 삭제 구현 완료, 미커밋)**: V2·`performance.venue_name`·/api/venues 삭제·검색 제목만·공연장 이름 수정 불가(관리자 수정 제안은 후속)·등록 화면 3단계·링크 자동 입력은 다음 작업을 0절에 반영하고 '확인 필요' 2건(회차 자동 입력 범위, 등록 후 제목·회차 수정 범위)을 추가했다. 검증: 백엔드 169건, 임시 DB 3곳에서 V2·백필·SIGNAL 가드 확인, 프론트 tsc·build. 산출물 04·05 원본·docx/xlsx 미수정(반영 대기), 08 erd.dot은 4개 테이블로 갱신(렌더링 불가, DOT 문법만 점검). 다음: 링크 기반 공연 정보 자동 입력(백엔드 어댑터·SSRF·3단계 화면 연결) → 교환 스키마 설계
 - **2026-10-08 확정 답변 반영**: CLAUDE.md '확정 전 기본안'의 사용자 답변 11건을 확정 결정으로 옮기고(0절), 해석이 필요한 항목은 '확인 필요' 목록으로 남겼다.
   산출물 04(매칭 FR)·05(교환 도메인 단계)·08(erd.dot) 원본 반영은 대기. 다음 순서: 확인 필요 답변 → 교환 도메인 설계 → 티켓 등록 → 자동 매칭 → 채팅 → 신고
 - **2026-10-07 방향 전환**: 좌석표 트랙을 동결하고 텍스트 좌석 입력 기반 자동 매칭을 핵심 흐름으로 삼는다(0절). 다음 작업 순서: 하네스·작업일지 반영 →
@@ -308,7 +313,7 @@ V1 12개 = User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, 
   - 브라우저에서 헤더·마이페이지 확인 (햄버거 메뉴 이메일·마이페이지 버튼, 회원탈퇴 비활성)
   - [docs] 04 요구사항정의서 FR-01 하위에 "내 정보 조회" 추가 필요 (원본 확보 후)
 - **공연·공연장·회차 등록/조회(FR-02) 구현 + 7차 리뷰 반영 완료 (2026-10-06, feature/performance 브랜치, 커밋·푸시 예정)**
-  - 스키마는 당시 12개 엔티티(현재는 5개 테이블 새 V1), 규칙은 6절 참고. 시각은 KST 일원화(JpaAuditingConfig + Clock(Asia/Seoul), Dockerfile·compose TZ=Asia/Seoul)
+  - 스키마는 당시 12개 엔티티(현재는 V1+V2 4개 테이블), 규칙은 6절 참고. 시각은 KST 일원화(JpaAuditingConfig + Clock(Asia/Seoul), Dockerfile·compose TZ=Asia/Seoul)
   - [backend] 공연장 검색·추가(같은 이름 재추가는 200으로 기존 반환), 공연 목록(asOf로 기준 시각 고정)·상세·lookup·등록·수정·삭제,
     회차 추가·수정·삭제. 공연 중복(링크) 409 + performanceId, 회차 중복 409, 과거 회차 400, 수정·삭제는 등록자만(403),
     티켓이 있으면 공연장 변경·삭제·회차 변경 불가(409). 오류 포맷 400/401/403/404/409 통일

@@ -21,7 +21,7 @@
 | 구분 | 기술 | 선정 이유 |
 |---|---|---|
 | Frontend | React, TypeScript, Vite | 인터랙티브 UI(좌석맵 오버레이, 채팅)에 적합, 타입 안전성 |
-| Backend | Spring Boot, Spring Security(JWT), JPA, WebSocket(STOMP) | 관계형 데이터(현재 5개 테이블, 교환 도메인은 설계 후 추가) 처리, 성숙한 인증 생태계 |
+| Backend | Spring Boot, Spring Security(JWT), JPA, WebSocket(STOMP) | 관계형 데이터(현재 4개 테이블, 교환 도메인은 설계 후 추가) 처리, 성숙한 인증 생태계 |
 | DB | MySQL | FK 관계가 많은 구조에 적합 |
 | 이미지 인식 서버 | FastAPI, OpenCV, Tesseract OCR | Python이 이미지/OCR 생태계의 중심, 메인 서버와 책임 분리 (후순위 보류, 태그 보관) |
 
@@ -32,7 +32,8 @@
 - [x] 기획/설계 문서화 (프로젝트계획서, 요구사항정의서, WBS, ERD)
 - [x] Spring Boot / React 구성 및 Docker Compose(mysql·backend·frontend) — 좌석표 인식 서버(FastAPI)는 삭제, 태그에 보관
 - [x] 회원가입 / 로그인 / JWT 인증 (access·refresh 토큰, 자동 재발급)
-- [x] 공연·공연장·회차 등록/조회
+- [x] 공연·회차 등록/조회 (공연장은 공연의 텍스트 속성 — venue 테이블은 V2로 삭제, 현재 DB는 users·performance·performance_session·ticket 4개 테이블)
+- [ ] 링크 기반 공연 정보 자동 입력 (등록 화면 2단계에 미리 채우기, 다음 작업)
 - [ ] 좌석표 이미지 인식 (후순위 보류, 태그 `archive/seatmap-track-20261007`에 보관)
 - [ ] 티켓 등록 / 교환 요청 / 자동 매칭 (설계 예정)
 - [ ] 실시간 채팅 (설계 예정)
@@ -93,5 +94,5 @@ docker compose up --build
 | [03 프로젝트계획서](./산출물/03_프로젝트계획서) | 개요, 범위, 기술스택 선정 이유, 일정, 리스크 |
 | [04 요구사항정의서](./산출물/04_요구사항정의서) | 기능/비기능 요구사항, 유스케이스 |
 | [05 WBS](./산출물/05_WBS) | 단계별 일정 |
-| [08 ERD](./산출물/08_ERD) | 현재 5개 테이블 관계도 (교환 도메인은 설계 예정) |
+| [08 ERD](./산출물/08_ERD) | 현재 4개 테이블 관계도 (교환 도메인은 설계 예정) |
 | [07 작업일지](./산출물/07_작업일지) | 개발 진행 기록 |

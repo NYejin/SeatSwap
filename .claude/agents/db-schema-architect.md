@@ -8,12 +8,12 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ERD 산출물 위치: `산출물/08_ERD/` (저장소 루트 기준). 엔티티 구현 위치: `SeatSwap/backend/.../domain/`.
 
 ## 현재 확정된 스키마 (새 V1 기준선, 산출물/08_ERD/erd.dot)
-User, Venue, Performance, PerformanceSession, Ticket — 5개 테이블(`users`·`venue`·`performance`·`performance_session`·`ticket`). 나머지 엔티티는 enum `UserRole`·`VenueStatus`.
+User, Performance, PerformanceSession, Ticket — 4개 테이블(`users`·`performance`·`performance_session`·`ticket`, V1+V2). 나머지 엔티티는 enum `UserRole`. 공연장은 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다.
 
 주요 관계:
-- Venue 1:N Performance, Performance 1:N PerformanceSession
+- Performance 1:N PerformanceSession
 - PerformanceSession 1:N Ticket (공연은 `performance_session.performance`로 얻는다. Ticket에 performance_id를 중복으로 두지 않는다)
-- User 1:N Ticket(보유자), User 1:N Performance(등록자), Venue.verified_by → User(정식 등록 관리자)
+- User 1:N Ticket(보유자), User 1:N Performance(등록자)
 
 이전 설계(좌석표·수정 로그·정정 신고와 교환·채팅·후기 테이블, 11~16개 엔티티)는 2026-10-07 방향 전환으로 삭제되었고
 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다. 지금 코드·DB에는 없다.
@@ -21,7 +21,7 @@ git 태그 `archive/seatmap-track-20261007`에 보관되어 있다. 지금 코�
 ## 방향 전환 (2026-10-07) — 교환 스키마는 새로 설계한다
 교환 도메인(희망 범위·펼친 개별 좌석·희망 회차 우선순위·매칭·채팅)과 Ticket의 구역 컬럼 등은 아직 없다. 텍스트 좌석 입력 기반 매칭(CLAUDE.md '텍스트 좌석 입력 기반 매칭'·'확정 결정 세부'(2026-10-08),
 erd-conventions 스킬 '텍스트 좌석 입력 기반 매칭 스키마 방향')에 맞춰 설계한다. **CLAUDE.md '확인 필요' 목록은 설계 전에 사용자에게 확인**한다.
-- 새 스키마는 좌석표(`seat_map_layout`·`uid`·`section`)에 의존하지 않는다. 좌석 키는 **공연(회차) 단위의 (구역, 열, 번) 텍스트**이며 **공연장 단위 구역 테이블(`venue_zone` 등)은 두지 않는다**(2026-10-08 확정). **`venue` 테이블은 삭제하기로 확정**(2026-10-08 2차 답변; 공연장은 공연 정보의 텍스트로 둠). 범위는 3차 답변으로 확정: 공연 등록 화면의 공연장은 텍스트 한 칸(필수), 공연장 검색·추가·목록 필터·정식 등록(VERIFIED) 삭제. V2 마이그레이션(`venue` 삭제, `performance`에 공연장 이름 텍스트 컬럼 추가, `venue_id` 제거)은 별도 작업으로 곧 시작한다. 구역은 필수 입력(범위 펼침 대상 아님)이고 열·번만 숫자 범위를 펼친다.
+- 새 스키마는 좌석표(`seat_map_layout`·`uid`·`section`)에 의존하지 않는다. 좌석 키는 **공연(회차) 단위의 (구역, 열, 번) 텍스트**이며 **공연장 단위 구역 테이블(`venue_zone` 등)은 두지 않는다**(2026-10-08 확정). **`venue` 테이블은 삭제 완료**(2026-10-08 2~4차 답변; 공연장은 공연 정보의 텍스트). 공연 등록 화면의 공연장은 텍스트 한 칸(필수), 공연장 검색·추가·목록 필터·정식 등록(VERIFIED) 삭제. V2(`V2__drop_venue_use_venue_name.sql`)가 `performance.venue_name` 추가·백필 후 `venue_id`·FK·venue 테이블을 삭제했다(구현 완료·미커밋, 이름 정규화·중복 판정 없음, 등록 후 수정 불가). 구역은 필수 입력(범위 펼침 대상 아님)이고 열·번만 숫자 범위를 펼친다.
 - 후기·신뢰도 테이블은 만들지 않는다(신고는 교환 핵심 흐름 이후 추가). 희망 회차와 **사용자 설정 회차 우선순위**를 담을 수 있어야 한다. 추가금은 매칭에서 **유무만 확인**한다: 선택지 [추가금 X]/[상관없음](2026-10-08 3차 답변; 이전 [추가금 없음]/[제시] 체크와 '합 ≤ 0 성립' 규칙은 폐기). 금액 컬럼을 표시용으로 남길지는 확인 필요.
 - 같은 회차·구역·열·번의 **활성 티켓은 1개만**(유일 제약, 활성 상태 조건 필요) + 사용자당 활성 티켓 수 상한(예 20, 서비스에서 검사). 연석·3자 이상 순환 교환을 데이터 모델이 막지 않게 한다.
 - 교환 성사 후 마이페이지 '교환 이력'(`(기존 자리) -> (바꾼 자리)`)을 **자리 정보 스냅샷**으로 저장한다. 완료 시 내 Ticket의 좌석·회차를 새 자리로 갱신하고 이력 스냅샷도 남긴다(3차 답변 확정).
