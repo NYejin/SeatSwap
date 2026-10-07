@@ -136,16 +136,4 @@ class SourceKeyResolverTest {
         assertThatThrownBy(() -> resolver.resolve("https://example.com/" + "a".repeat(2048)))
                 .isInstanceOf(FieldValidationException.class);
     }
-
-    @Test
-    void seatMapFetchAllowListIsExactHostMatch() {
-        assertThat(TicketingSite.isSeatMapFetchAllowed("tickets.interpark.com")).isTrue();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("TICKET.MELON.COM")).isTrue();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("interpark.com")).isFalse();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("evil.tickets.interpark.com")).isFalse();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("evil-interpark.com")).isFalse();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("interpark.com.evil.io")).isFalse();
-        assertThat(TicketingSite.isSeatMapFetchAllowed("169.254.169.254")).isFalse();
-        assertThat(TicketingSite.isSeatMapFetchAllowed(null)).isFalse();
-    }
 }

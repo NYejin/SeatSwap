@@ -39,8 +39,7 @@ import java.util.Set;
  * 파싱: java.net.URL로 관대하게 파싱한 뒤 각 구성요소를 재인코딩한다 — 브라우저 주소창에서 복사한
  * 한글·공백 포함 링크도 받아들인다(프론트는 통과·서버는 400인 불일치 감소). 국제화 도메인은 IDN.toASCII.
  *
- * 이 단계에서 서버는 URL을 요청하지 않는다 (형식 검증만). 실제 요청(좌석맵 수집)의 SSRF 방어 규칙은
- * {@link TicketingSite#SEATMAP_FETCH_ALLOWED_HOSTS} 주석 참고.
+ * 이 단계에서 서버는 URL을 요청하지 않는다 (형식 검증만).
  */
 @Component
 public class SourceKeyResolver {

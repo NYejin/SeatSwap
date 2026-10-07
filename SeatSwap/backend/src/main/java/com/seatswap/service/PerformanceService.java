@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 /**
  * 공연 등록·조회·수정·삭제 (FR-02).
  * 권한: 조회·등록은 로그인 사용자 누구나, 수정·삭제는 등록자만(아니면 AccessDeniedException → 403).
- * 좌석맵 수집(외부 URL 요청)은 이 서비스의 책임이 아니다 — 이후 SeatMapService/seatmap-service로 위임.
+ * 링크에서 공연정보를 읽는 외부 URL 요청은 이 서비스의 책임이 아니다 (후속 작업에서 별도로 둔다)..
  */
 @Slf4j
 @Service

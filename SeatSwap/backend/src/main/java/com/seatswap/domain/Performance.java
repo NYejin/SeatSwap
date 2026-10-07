@@ -48,7 +48,7 @@ public class Performance {
     @Column(nullable = false, length = TITLE_MAX_LENGTH)
     private String title;
 
-    /** 사용자가 입력한 티켓팅 사이트 링크 원문 (좌석맵 이미지 스크래핑 출처). */
+    /** 사용자가 입력한 티켓팅 사이트 링크 원문 (공연 중복 판정의 기준). */
     @Column(name = "source_url", nullable = false, length = SOURCE_URL_MAX_LENGTH)
     private String sourceUrl;
 
@@ -102,7 +102,7 @@ public class Performance {
     }
 
     /**
-     * 공연장 수정. 회차에 등록된 티켓이 있으면 티켓의 좌석맵(Venue 단위)과 어긋나므로
+     * 공연장 수정. 회차에 등록된 티켓이 있으면 티켓의 좌석 기준(공연장)과 어긋나므로
      * 서비스에서 "티켓 0건"을 확인한 뒤에만 호출한다.
      */
     public void changeVenue(Venue venue) {

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getErrorStatus, performancesApi } from "../api/performances";
 import { parseApiError } from "../api/errors";
-import { seatMapApi } from "../api/seatmap";
 import {
   // TODO: 지우기
   // SESSION_TIME_STEP_HINT,
@@ -14,7 +13,6 @@ import {
   validateSessionTimeStep,
 } from "../api/dateTime";
 import type { PerformanceDetail, PerformanceSession, Venue } from "../types/performance";
-import type { SeatMapSummary } from "../types/seatmap";
 import TextField from "../components/TextField";
 import SessionDateTimePicker from "../components/SessionDateTimePicker";
 import VenuePicker from "../components/VenuePicker";
@@ -22,7 +20,7 @@ import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 상세 (보호 라우트 /performances/:id).
 // 로그인 사용자 누구나 회차 추가. 등록자(canEdit)만 제목·공연장 수정, 회차 수정·삭제, 공연 삭제.
-// 좌석맵·티켓(교환) 영역은 이후 기능 — "준비 중" 자리만.
+// 티켓(교환) 영역은 이후 기능 — "준비 중" 자리만.
 // 포커스: 편집·확인 상자가 열리면 입력칸/"취소"로, 닫히면 트리거 버튼(없어졌으면 섹션 제목)으로 돌려준다.
 
 const TITLE_MAX = 200;
@@ -143,7 +141,6 @@ export default function PerformanceDetailPage() {
       <>
         <InfoSection key={`info-${detail.id}`} detail={detail} onUpdated={replaceDetail} />
         <SessionsSection key={`sessions-${detail.id}`} detail={detail} onChanged={refresh} />
-        <SeatMapsSection key={`seatmaps-${detail.venue.id}`} venueId={detail.venue.id} />
         <section className={ui.card} aria-labelledby="perf-coming-title">
           <h2 id="perf-coming-title" className={ui.sectionTitle}>
             티켓
@@ -361,83 +358,6 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
           </button>
         </div>
       )}
-    </section>
-  );
-}
-
-// ---- 좌석표 (공연장 단위, UC-03/04) ----
-
-type SeatMapsState =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "success"; items: SeatMapSummary[] };
-
-function SeatMapsSection({ venueId }: { venueId: number }) {
-  const [state, setState] = useState<SeatMapsState>({ status: "loading" });
-  const [retryKey, setRetryKey] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setState({ status: "loading" });
-    seatMapApi
-      .listByVenue(venueId, controller.signal)
-      .then((items) => setState({ status: "success", items }))
-      .catch(() => {
-        if (!controller.signal.aborted) setState({ status: "error" });
-      });
-    return () => controller.abort();
-  }, [venueId, retryKey]);
-
-  return (
-    <section className={`${ui.card} flex flex-col gap-3`} aria-labelledby="perf-seatmaps-title">
-      <h2 id="perf-seatmaps-title" className={ui.sectionTitle}>
-        좌석표
-      </h2>
-      {state.status === "loading" && (
-        <p className={ui.status} role="status">
-          좌석표를 불러오는 중...
-        </p>
-      )}
-      {state.status === "error" && (
-        <div className="flex flex-col items-start gap-2">
-          <p className={ui.errorBox} role="alert">
-            좌석표를 불러오지 못했어요.
-          </p>
-          <button type="button" className={button.outline} onClick={() => setRetryKey((k) => k + 1)}>
-            다시 시도
-          </button>
-        </div>
-      )}
-      {state.status === "success" &&
-        (state.items.length === 0 ? (
-          <>
-            <p className={ui.body}>이 공연장의 좌석표가 아직 없어요. 캡처한 이미지로 등록할 수 있어요.</p>
-            <div>
-              <Link to={`/venues/${venueId}/seatmaps/new`} className={linkButton.solid}>
-                좌석표 등록하기
-              </Link>
-            </div>
-          </>
-        ) : (
-          <ul className={cls.comingList}>
-            {state.items.map((item) => (
-              <li key={item.id} className={cls.comingItem}>
-                <span className="flex flex-wrap items-center gap-2">
-                  <span>{item.zoneName ?? "전체"}</span>
-                  <span className={ui.badge}>{item.status === "DRAFT" ? "임시(확인용)" : "정식"}</span>
-                  {typeof item.seatCount === "number" && <span className={ui.muted}>{item.seatCount}석</span>}
-                </span>
-                <Link
-                  to={`/seatmaps/${item.id}/select`}
-                  className={`${ui.link} inline-flex min-h-11 items-center`}
-                  aria-label={`${item.zoneName ?? "전체"} 좌석표 보기`}
-                >
-                  보기
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ))}
     </section>
   );
 }

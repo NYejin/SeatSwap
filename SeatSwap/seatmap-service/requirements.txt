@@ -1,9 +1,0 @@
-# 2026-10-07 컨테이너(python:3.11-slim)에서 테스트 통과한 버전으로 고정. 올릴 때는 테스트를 다시 돌릴 것.
-fastapi==0.142.2
-uvicorn==0.54.0
-python-multipart==0.0.32
-opencv-python-headless==5.0.0.93
-pytesseract==0.3.13
-pydantic==2.13.5
-numpy==2.4.6
-pillow==12.3.0

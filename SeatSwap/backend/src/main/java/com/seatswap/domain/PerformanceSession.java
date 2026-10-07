@@ -11,7 +11,7 @@ import java.time.temporal.ChronoUnit;
 
 /**
  * 공연 회차 (날짜·시간). Performance 1:N PerformanceSession, PerformanceSession 1:N Ticket.
- * 좌석 교환은 같은 회차의 티켓끼리만 가능하다 (ExchangeMatch 생성 시 서비스에서 검사).
+ * 교환은 같은 공연이면 다른 회차끼리도 가능하다 (같은 회차로 제한하지 않는다, 2026-10-07 결정).
  *
  * 중복 방지: (performance_id, starts_at) unique. startsAt은 분 단위로 잘라 저장한다
  * (19:00과 19:00:30이 다른 회차로 등록되는 것 방지).

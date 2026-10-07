@@ -101,27 +101,6 @@ enum TicketingSite {
         }
     };
 
-    /**
-     * 좌석맵 이미지 수집 단계(서버가 외부 URL을 실제로 요청하는 단계)에서 요청을 허용할 호스트 (정확히 일치).
-     * 현재(공연 등록 단계)는 서버가 URL을 요청하지 않으므로 형식 검증만 한다.
-     *
-     * SSRF 방어 규칙 — 수집 단계(2단계) 구현 시 반드시 지킬 것:
-     * 1. 사용자가 입력한 sourceUrl을 그대로 요청하지 않는다. sourceKey의 {site, productId}로
-     *    서버가 URL을 새로 조립하거나, 최소한 아래 검증을 모두 통과한 URL만 요청한다.
-     * 2. https 스킴 + 443 포트만 허용.
-     * 3. 호스트는 이 목록과 정확히 일치해야 한다 (좌석맵 이미지 CDN 호스트는 실제 확인 후 여기에 추가).
-     * 4. DNS 해석 결과 IP가 사설(10/8, 172.16/12, 192.168/16, fc00::/7)·루프백(127/8, ::1)·
-     *    링크로컬(169.254/16, fe80::/10, 클라우드 메타데이터 169.254.169.254 포함)·0.0.0.0이면 차단.
-     *    검증한 IP로 접속해 DNS 재바인딩을 막는다.
-     * 5. 리다이렉트는 자동 추종하지 않고, 매 홉마다 1~4를 재검증 (최대 홉 수 제한).
-     * 6. 응답 크기 상한(예: 이미지 10MB)·연결/읽기 타임아웃·Content-Type(image/*) 검사.
-     */
-    static final Set<String> SEATMAP_FETCH_ALLOWED_HOSTS = Set.of(
-            "tickets.interpark.com", "ticket.interpark.com", "mobileticket.interpark.com", "nol.interpark.com",
-            "ticket.melon.com",
-            "ticket.yes24.com", "m.ticket.yes24.com",
-            "ticketlink.co.kr", "www.ticketlink.co.kr", "m.ticketlink.co.kr");
-
     private final String key;
     private final Set<String> hosts;
 
@@ -153,11 +132,6 @@ enum TicketingSite {
             }
         }
         return Optional.empty();
-    }
-
-    /** 수집 단계용 허용 호스트 판정 (정확히 일치). 스킴·포트·IP·리다이렉트 검증은 별도로 해야 한다. */
-    static boolean isSeatMapFetchAllowed(String host) {
-        return host != null && SEATMAP_FETCH_ALLOWED_HOSTS.contains(host.toLowerCase(Locale.ROOT));
     }
 
     private static Optional<String> group(Pattern pattern, String path) {
