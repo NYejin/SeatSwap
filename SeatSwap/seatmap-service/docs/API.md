@@ -28,8 +28,12 @@
 ## seatJson 형식 (seats 배열의 원소)
 
 ```json
-{ "uid": "s0123", "row": 3, "col": 5, "x": 187, "y": 210, "w": 18, "h": 18 }
+{ "uid": "s0123", "row": 3, "col": 5, "x": 187, "y": 210, "w": 18, "h": 18, "section": 1 }
 ```
+
+- `section`: 구역(층) 번호, 위에서부터 1, 2, 3... 한 이미지에 구역이 하나뿐이면 1. **행 번호(`row`)는 구역 안에서 1부터(또는 라벨대로) 다시 시작하므로
+  좌석의 식별은 `(section, row, col)`이다.** (`section` 추가는 필드 추가만이라 기존 소비자는 무시해도 동작하지만,
+  여러 층 이미지에서는 `(row, col)`만으로는 층 사이에 중복되므로 저장 쪽에서 `section`을 함께 보관해야 한다.)
 
 - `uid`: 좌석 안정 식별자(문자열, 최대 32자). 수정 로그·정정 신고가 "어느 좌석"인지 가리키는 데 쓴다.
   검출된 블록을 공간 순서(y, x, w, h)로 정렬한 일련번호(`s0001`부터)이며, 한 인식 결과 안에서 유일하다.
@@ -62,14 +66,25 @@
 ```json
 {
   "image": {"width": 700, "height": 400},
-  "seats": [{"uid": "s0001", "row": 1, "col": 1, "x": 70, "y": 40, "w": 18, "h": 18}],
-  "rows": [{"row": 1, "rowSource": "ocr", "labelConfidence": 91.0, "seatCount": 16,
+  "seats": [{"uid": "s0001", "row": 1, "col": 1, "x": 70, "y": 40, "w": 18, "h": 18, "section": 1}],
+  "rows": [{"row": 1, "rowSource": "ocr", "labelConfidence": 91.0, "seatCount": 16, "section": 1,
             "aisles": [{"afterCol": 8, "gapPx": 44, "missingSlots": 2}]}],
-  "stats": {"blockCount": 208, "rowCount": 13, "ocrRowsRead": 13, "discardedComponents": 13},
+  "sections": [{"section": 1, "rowCount": 13, "seatCount": 208, "ocrRowsRead": 13,
+                "bbox": {"x": 70, "y": 40, "w": 388, "h": 332}}],
+  "stats": {"blockCount": 208, "rowCount": 13, "ocrRowsRead": 13, "discardedComponents": 13,
+            "splitSeats": 0, "sectionCount": 1},
   "warnings": [{"code": "AISLE_DETECTED", "message": "..."}]
 }
 ```
 - `rowSource`: `ocr`(라벨을 읽음) / `inferred`(못 읽어서 이웃 행의 증가·감소 규칙으로 보간) / `sequence`(순번 대체, 확인 필요).
+- `sections`(응답 최상위, 위에서 아래 순): 구역(층) 요약. `rowCount`/`seatCount`/`ocrRowsRead`와 구역을 감싸는 `bbox`(원본 픽셀).
+  구역은 **행 중심 간격이 정상 행 피치의 4배 이상 벌어지는 지점**(층 사이 공백·배지)에서 나눈다. 2.5~4배의 애매한 간격은
+  한 층 안의 가로 통로일 수 있어 나누지 않되, 그 아래 행의 라벨이 1로 다시 시작하면 층 경계로 인정한다. 애매해서 나누지 않았거나
+  나눈 뒤에도 아래 구역 번호가 위에서 이어지면 경고 `SECTION_SPLIT_UNCERTAIN`.
+- `stats.splitSeats`: 색이 칠려 서로 붙어 있던 좌석 덩어리에서 개별 좌석으로 분리해 복원한 수. `stats.sectionCount`: 구역 수.
+- 행 번호(`rowSource`)는 구역별로 정한다: 라벨을 읽은 행은 `ocr`, 못 읽은 행은 구역 안의 증가/감소 규칙으로 `inferred`, 라벨이 하나도 없으면 구역마다 1부터 `sequence`.
+  라벨은 행 양끝뿐 아니라 **블록 사이 통로**에서도 찾고(좌석 밖의 작은 글자 덩어리), 구역의 1,2,3... 규칙과 어긋나는 오판독은 표결로 바로잡는다.
+- 열 번호는 한 행 안에서 왼쪽->오른쪽 1,2,3... (블록·통로를 건너 이어서, `aisleMode=continue`).
 - `aisleMode`: `continue`는 통로를 건너도 열 번호를 이어서 부여, `skip`은 통로의 빈 좌석 수(`missingSlots`)만큼 번호를 건너뜀(결번).
   어느 쪽이 맞는지는 공연장마다 달라 사용자 보정 대상이므로 `aisles`는 항상 내려준다.
 - `warnings` 항목의 JSON 필드는 `{code, message}`로 변하지 않는다. 내부 스키마 클래스 이름만 내장 `Warning`을 가리지 않도록
@@ -77,8 +92,11 @@
 - `stats.discardedComponents`: 좌석 후보 크기였지만 모양·크기가 달라 제외한 요소 수(글자, 범례, 크기가 다른 블록 포함).
 - `warnings.code`: `OCR_UNAVAILABLE`, `OCR_TIME_BUDGET`(OCR 시간 예산 30초 초과), `ROW_LABEL_UNREAD`(신뢰도 60 미만 포함),
   `ROW_LABEL_OUTLIER`(읽힌 행 번호가 나머지 행의 증가/감소 규칙과 어긋남, 값은 바꾸지 않고 알리기만 함),
-  `ROW_NUMBER_DUPLICATED`, `AISLE_DETECTED`, `BLOCKS_DISCARDED`(제외한 비슷한 요소가 좌석 수의 20%/3개 초과).
+  `ROW_NUMBER_DUPLICATED`(같은 구역 안에서 중복), `SECTION_SPLIT_UNCERTAIN`, `AISLE_DETECTED`, `BLOCKS_DISCARDED`(제외한 비슷한 요소가 좌석 수의 20%/3개 초과).
   `ROW_*`와 `BLOCKS_DISCARDED`가 있으면 프론트에서 "확인 필요" 표시를 권장.
+- 붙은 좌석 덩어리: 색이 칠려 있는 좌석은 가장자리 반투명 픽셀 때문에 이웃과 한 요소로 붙는다(회색 좌석은 틈이 배경색에 가까워 떨어진다).
+  좌석보다 큰 요소는 농도가 평평한 "몸통"으로 다시 나눠 보고, 그래도 붙어 있으면 이웃 좌석의 피치로 격자 분할한다.
+  분할 결과가 좌석 크기와 맞지 않으면(무대 글자, 층 배지, 범례) 통째로 제외한다. 색 값은 매핑하지 않는다(농도 대비만 사용).
 - 좌석 크기는 절대값이 아니라 "가장 흔한 블록 크기"(같은 크기 8개 이상)를 기준으로 ±(0.75~1.35배)만 인정한다. 배경색은 이미지
   가장자리에서 추정한다(흰색 계열이 기본, 어두운 배경도 가능).
 - 처리 상한: 해상도 12MP(변 8000px), 연결요소 20만 개, 좌석 블록 6000개, 행 300개 -> 넘으면 413/422 `IMAGE_TOO_LARGE`/`IMAGE_TOO_COMPLEX`.
