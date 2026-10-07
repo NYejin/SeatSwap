@@ -5,6 +5,11 @@
 
 배경색은 이미지 가장자리 픽셀에서 추정한다(대부분 흰색 계열이라 기본 동작은 기존 240~255 제외와 같음).
 좌석 크기는 절대값이 아니라 "가장 흔한 블록 크기"(최빈 크기 군집)를 기준으로 한 상대 필터로 거른다.
+
+붙어 있는 좌석 덩어리: 색이 칠해진 좌석은 안티앨리어싱 가장자리가 배경 허용 범위를 벗어나 이웃과 한 연결요소로
+합쳐진다(회색 좌석은 틈이 배경색에 가까워 떨어진다). 좌석보다 큰 요소는 (1) 요소 자신의 색 농도에 맞춰 임계값을 다시
+잡아 가장자리 틈을 끊고, (2) 그래도 붙어 있으면 이웃 좌석의 피치(크기+간격)로 격자 분할한다. 분할 결과가 좌석 크기와
+맞지 않으면(무대 글자, 층 배지, 범례 등) 통째로 버린다. 색 값 자체는 어디에도 매핑하지 않는다 — 농도 대비만 쓴다.
 """
 from __future__ import annotations
 
@@ -28,6 +33,9 @@ CAND_MIN_SIDE = 6
 CAND_MAX_SIDE = 120
 MIN_CLUSTER = 8           # 같은 크기 블록이 이만큼은 있어야 좌석으로 인정
 BG_TOLERANCE = 15
+CLUMP_CORE_RATIO = 0.6    # 덩어리 안에서 "좌석 몸통"으로 보는 최소 농도 (중앙값 농도의 60%)
+CLUMP_MIN_EXPLAINED = 0.5 # 분할 조각이 덩어리 전경 면적의 이만큼은 설명해야 좌석 덩어리로 인정(가장자리 반투명 픽셀이 25~30%)
+MAX_CLUMPS = 2_000        # 분할을 시도하는 큰 요소 수 상한 (처리 시간 방어)
 
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -149,6 +157,128 @@ def estimate_background(img: np.ndarray) -> tuple[int, int, int]:
     return int(med[0]), int(med[1]), int(med[2])
 
 
+def _estimate_pitch(seats: list[dict], mw: float, mh: float) -> tuple[float, float]:
+    """단독으로 검출된 좌석들의 오른쪽/아래 이웃 간격 중앙값 = (가로 피치, 세로 피치). 못 구하면 크기*1.25."""
+    if len(seats) < 2:
+        return mw * 1.25, mh * 1.25
+    cx = np.array([s["cx"] for s in seats])
+    cy = np.array([s["cy"] for s in seats])
+    order = np.argsort(cy, kind="stable")
+    cx, cy = cx[order], cy[order]
+    dxs, dys = [], []
+    # 격자 인덱스로 이웃을 찾는다: 셀 크기 = 좌석 크기*2 (이웃은 인접 셀에만 있다)
+    cell = max(2.0, 2 * max(mw, mh))
+    grid: dict[tuple[int, int], list[int]] = {}
+    for i in range(len(cx)):
+        grid.setdefault((int(cx[i] // cell), int(cy[i] // cell)), []).append(i)
+    for i in range(len(cx)):
+        gx, gy = int(cx[i] // cell), int(cy[i] // cell)
+        best_x = best_y = None
+        for ax in (gx - 1, gx, gx + 1):
+            for ay in (gy - 1, gy, gy + 1):
+                for j in grid.get((ax, ay), ()):
+                    dx, dy = cx[j] - cx[i], cy[j] - cy[i]
+                    if abs(dy) <= 0.3 * mh and 0 < dx <= 2 * mw and (best_x is None or dx < best_x):
+                        best_x = dx
+                    if abs(dx) <= 0.3 * mw and 0 < dy <= 2 * mh and (best_y is None or dy < best_y):
+                        best_y = dy
+        if best_x is not None:
+            dxs.append(best_x)
+        if best_y is not None:
+            dys.append(best_y)
+    px = float(np.median(dxs)) if dxs else mw * 1.25
+    py = float(np.median(dys)) if dys else mh * 1.25
+    return max(px, mw * 1.05), max(py, mh * 1.05)
+
+
+def _fits(w: int, h: int, mw: float, mh: float, tol: tuple[float, float]) -> bool:
+    return tol[0] * mw <= w <= tol[1] * mw and tol[0] * mh <= h <= tol[1] * mh
+
+
+def _dip_cuts(profile: np.ndarray, n: int, pitch: float, cell: float) -> bool:
+    """격자 분할 근거: 균등 분할 경계마다 농도 프로파일에 (약해도) 골이 있어야 한다. 단색 막대(무대 등)는 골이 없다."""
+    if n < 2:
+        return True
+    ref = float(np.median(profile))
+    if ref <= 0:
+        return False
+    away = np.ones(len(profile), bool)
+    for i in range(1, n):
+        c = int(round(i * pitch - (pitch - cell) / 2))
+        seg = profile[max(0, c - 2):c + 3]
+        if seg.size == 0 or float(seg.min()) > 0.95 * ref:
+            return False
+        away[max(0, c - 2):c + 3] = False
+    # 골 사이는 평평해야 한다(좌석 몸통). 종 모양 프로파일(원형 배지 등)은 골이 우연히 있어도 거절한다.
+    flat = profile[away]
+    return flat.size == 0 or float((np.abs(flat - ref) <= 0.1 * ref).mean()) >= 0.85
+
+
+def _split_clump(img: np.ndarray, bg: tuple[int, int, int], x: int, y: int, w: int, h: int,
+                 comp: np.ndarray, mw: float, mh: float, pitch: tuple[float, float],
+                 tol: tuple[float, float]) -> list[dict] | None:
+    """
+    좌석보다 큰 연결요소 하나를 개별 좌석 상자로 분할한다. 좌석 덩어리가 아니면 None.
+    comp: 덩어리 영역의 전경 불리언 마스크(h x w).
+    """
+    sub = img[y:y + h, x:x + w].astype(np.int16)
+    diff = np.abs(sub - np.array(bg, np.int16)).max(axis=2)
+    total = int(comp.sum())
+    core = float(np.median(diff[comp]))
+    if core < 8 or total == 0:
+        return None
+    # 좌석 몸통 = 농도가 평평한 부분(3x3 안의 농도 차가 작음). 이웃 좌석 사이 반투명 틈 픽셀은 평평하지 않아 끊기고,
+    # 색이 다른 좌석(회색 옆 보라 등)도 각자 자기 농도의 몸통으로 남는다. 상자는 몸통을 1px 키워 가장자리를 되찾는다.
+    d32 = diff.astype(np.int16)
+    k3 = np.ones((3, 3), np.uint8)
+    flat = (cv2.dilate(diff, k3).astype(np.int16) - cv2.erode(diff, k3).astype(np.int16)) <= np.maximum(6, (0.08 * d32).astype(np.int16))
+    m2 = (comp & flat & (diff >= max(8.0, CLUMP_CORE_RATIO * 0.2 * core))).astype(np.uint8)
+    num, _lab, st, cen = cv2.connectedComponentsWithStats(m2, connectivity=4)
+    pieces: list[tuple[int, int, int, int, float]] = []   # x, y, w, h, 면적 (덩어리 상대 좌표)
+    for k in range(1, num):
+        if st[k, 4] < 2:
+            continue
+        bx0, by0 = max(0, int(st[k, 0]) - 1), max(0, int(st[k, 1]) - 1)
+        bx1, by1 = min(w, int(st[k, 0] + st[k, 2]) + 1), min(h, int(st[k, 1] + st[k, 3]) + 1)
+        pieces.append((bx0, by0, bx1 - bx0, by1 - by0, float(st[k, 4])))
+    out: list[tuple[int, int, int, int]] = []
+    explained = 0.0
+    px, py = pitch
+    for (bx, by, bw, bh, area) in pieces:
+        if _fits(bw, bh, mw, mh, tol):
+            out.append((bx, by, bw, bh))
+            explained += bw * bh
+            continue
+        # 아직 붙어 있는 조각: 피치 격자 분할. 가로/세로 개수를 반올림으로 구하고, 오차가 작을 때만 인정한다.
+        kx = max(1, int(round((bw + (px - mw)) / px)))
+        ky = max(1, int(round((bh + (py - mh)) / py)))
+        if kx * ky < 2 or kx * ky > 4000:
+            continue
+        if abs(bw - (kx * px - (px - mw))) > 0.25 * px or abs(bh - (ky * py - (py - mh))) > 0.25 * py:
+            continue
+        if comp[by:by + bh, bx:bx + bw].mean() < 0.75:
+            continue
+        piece = diff[by:by + bh, bx:bx + bw].astype(np.float32)
+        if not (_dip_cuts(piece.mean(axis=0), kx, (bw + (px - mw)) / kx, mw)
+                and _dip_cuts(piece.mean(axis=1), ky, (bh + (py - mh)) / ky, mh)):
+            continue
+        sx, sy = (bw + (px - mw)) / kx, (bh + (py - mh)) / ky
+        cw, ch = int(round(sx - (px - mw))), int(round(sy - (py - mh)))
+        if not _fits(cw, ch, mw, mh, tol):
+            continue
+        for j in range(ky):
+            for i in range(kx):
+                out.append((bx + int(round(i * sx)), by + int(round(j * sy)), cw, ch))
+        explained += bw * bh
+    if not out or explained < CLUMP_MIN_EXPLAINED * total:
+        return None
+    seats = []
+    for (bx, by, bw, bh) in out:
+        seats.append({"x": x + bx, "y": y + by, "w": bw, "h": bh,
+                      "cx": x + bx + (bw - 1) / 2.0, "cy": y + by + (bh - 1) / 2.0})
+    return seats
+
+
 @dataclass
 class DetectionResult:
     seats: list[dict]
@@ -168,7 +298,7 @@ def detect(img: np.ndarray, *, min_fill: float = 0.4,
     fg_mask = cv2.bitwise_not(cv2.inRange(img, tuple(int(v) for v in lo), tuple(int(v) for v in hi)))
     # JPEG 링잉 등으로 이웃 블록이 얇게 이어지는 것을 끊는다 (3x3 opening, 6px 이상 블록은 영향 없음).
     fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    num, _labels, stats, centroids = cv2.connectedComponentsWithStats(fg_mask, connectivity=8)
+    num, labels, stats, centroids = cv2.connectedComponentsWithStats(fg_mask, connectivity=8)
     components = num - 1
     if components > MAX_COMPONENTS:
         raise ImageTooComplexError("이미지에 구분되는 요소가 너무 많습니다. 좌석맵 이미지가 맞는지 확인하세요.")
@@ -201,7 +331,34 @@ def detect(img: np.ndarray, *, min_fill: float = 0.4,
         raise ImageTooComplexError("좌석 블록이 너무 많습니다. 좌석맵 이미지가 맞는지 확인하세요.")
     seats = [{"x": int(st[i, 0]), "y": int(st[i, 1]), "w": int(w[i]), "h": int(h[i]),
               "cx": float(centroids[i + 1][0]), "cy": float(centroids[i + 1][1])} for i in keep]
-    return DetectionResult(seats, components, candidates, candidates - len(keep), bg, (mw, mh))
+
+    # 붙어 있는 좌석 덩어리 복원: 좌석 크기를 넘는 요소를 분할해 본다.
+    keep_set = set(int(i) for i in keep)
+    pitch = _estimate_pitch(seats, mw, mh)
+    big = [i for i in range(components)
+           if i not in keep_set and area[i] > 20 and w[i] >= lo_r * mw and h[i] >= lo_r * mh
+           and (w[i] > hi_r * mw or h[i] > hi_r * mh)]
+    big.sort(key=lambda i: int(area[i]))
+    recovered: list[dict] = []
+    split_ok = 0
+    rejected: list[tuple[int, int, int, int]] = []
+    for i in big[:MAX_CLUMPS]:
+        x0, y0, bw, bh = int(st[i, 0]), int(st[i, 1]), int(w[i]), int(h[i])
+        comp = labels[y0:y0 + bh, x0:x0 + bw] == i + 1
+        got = _split_clump(img, bg, x0, y0, bw, bh, comp, mw, mh, pitch, size_tolerance)
+        if got:
+            recovered.extend(got)
+            split_ok += 1
+        else:
+            rejected.append((x0, y0, bw, bh))
+        if len(seats) + len(recovered) > MAX_BLOCKS:
+            raise ImageTooComplexError("좌석 블록이 너무 많습니다. 좌석맵 이미지가 맞는지 확인하세요.")
+    rejected += [(int(st[i, 0]), int(st[i, 1]), int(w[i]), int(h[i])) for i in big[MAX_CLUMPS:]]
+    seats += recovered
+    discarded = max(0, candidates - len(keep) - split_ok)
+    res = DetectionResult(seats, components, candidates, discarded, bg, (mw, mh))
+    res.extra = {"recovered": len(recovered), "clumps": split_ok, "rejected": rejected, "pitch": pitch}
+    return res
 
 
 def detect_seat_blocks(img: np.ndarray, **kw) -> list[dict]:

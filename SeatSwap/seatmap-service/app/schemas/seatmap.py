@@ -18,6 +18,7 @@ class SeatCoordinate(BaseModel):
     y: int
     w: int
     h: int
+    section: int = 1  # 구역(층) 번호, 위에서부터 1..
 
 
 class ImageInfo(BaseModel):
@@ -37,6 +38,22 @@ class RowInfo(_Camel):
     label_confidence: float = Field(alias="labelConfidence")
     seat_count: int = Field(alias="seatCount")
     aisles: List[AisleInfo]
+    section: int = 1
+
+
+class BBox(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class SectionInfo(_Camel):
+    section: int
+    row_count: int = Field(alias="rowCount")
+    seat_count: int = Field(alias="seatCount")
+    ocr_rows_read: int = Field(default=0, alias="ocrRowsRead")
+    bbox: BBox
 
 
 class RecognizeStats(_Camel):
@@ -44,6 +61,8 @@ class RecognizeStats(_Camel):
     row_count: int = Field(alias="rowCount")
     ocr_rows_read: int = Field(alias="ocrRowsRead")
     discarded_components: int = Field(alias="discardedComponents")
+    split_seats: int = Field(default=0, alias="splitSeats")        # 붙은 덩어리에서 분리해 복원한 좌석 수
+    section_count: int = Field(default=1, alias="sectionCount")
 
 
 class WarningInfo(BaseModel):  # 내장 Warning을 가리지 않도록 이름 변경 (응답 JSON 필드는 그대로)
@@ -55,6 +74,7 @@ class RecognizeResponse(BaseModel):
     image: ImageInfo
     seats: List[SeatCoordinate]
     rows: List[RowInfo]
+    sections: List[SectionInfo] = []
     stats: RecognizeStats
     warnings: List[WarningInfo]
 

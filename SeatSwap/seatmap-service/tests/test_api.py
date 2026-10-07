@@ -33,10 +33,13 @@ def test_recognize_upload_contract():
     r = client.post("/api/seatmap/recognize", files={"file": ("m.png", PNG, "image/png")})
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"image", "seats", "rows", "stats", "warnings"}
-    assert set(body["seats"][0]) == {"uid", "row", "col", "x", "y", "w", "h"}
+    assert set(body) == {"image", "seats", "rows", "sections", "stats", "warnings"}
+    assert set(body["seats"][0]) == {"uid", "row", "col", "x", "y", "w", "h", "section"}  # section은 추가 필드(하위 호환)
     assert body["stats"]["blockCount"] == 24 and len(body["seats"]) == 24
-    assert set(body["rows"][0]) == {"row", "rowSource", "labelConfidence", "seatCount", "aisles"}
+    assert set(body["rows"][0]) == {"row", "rowSource", "labelConfidence", "seatCount", "aisles", "section"}
+    assert body["sections"] == [{"section": 1, "rowCount": 3, "seatCount": 24, "ocrRowsRead": body["sections"][0]["ocrRowsRead"],
+                                 "bbox": body["sections"][0]["bbox"]}] and body["stats"]["sectionCount"] == 1
+    assert {s["section"] for s in body["seats"]} == {1}
 
 
 def test_recognize_upload_errors():
