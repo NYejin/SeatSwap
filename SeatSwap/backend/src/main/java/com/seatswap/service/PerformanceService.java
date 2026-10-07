@@ -4,7 +4,6 @@ import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
 import com.seatswap.dto.request.PerformanceCreateRequest;
-import com.seatswap.dto.request.PerformanceUpdateRequest;
 import com.seatswap.dto.response.PageResponse;
 import com.seatswap.dto.response.PerformanceDetailResponse;
 import com.seatswap.dto.response.PerformanceLookupResponse;
@@ -13,16 +12,13 @@ import com.seatswap.dto.response.SessionResponse;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
-import com.seatswap.exception.SeatSwapException;
 import com.seatswap.repository.PerformanceRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
-import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -38,8 +34,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 공연 등록·조회·수정·삭제 (FR-02).
- * 권한: 조회·등록은 로그인 사용자 누구나, 수정·삭제는 등록자만(아니면 AccessDeniedException → 403).
+ * 공연 등록·조회 (FR-02). 조회·등록은 로그인 사용자 누구나. 등록 후 수정·삭제는 없다(추후 관리자 수정 제안으로만).
  * 링크에서 공연정보를 읽는 외부 URL 요청은 이 서비스의 책임이 아니다 (후속 작업에서 별도로 둔다)..
  */
 @Slf4j
@@ -53,13 +48,10 @@ public class PerformanceService {
 
     static final String DUPLICATE_PERFORMANCE_MESSAGE = "이미 등록된 공연입니다.";
     static final String NOT_FOUND_MESSAGE = "공연을 찾을 수 없습니다.";
-    static final String FORBIDDEN_MESSAGE = "접근 권한이 없습니다.";
-    static final String DELETE_BLOCKED_MESSAGE = "티켓이 등록된 공연은 삭제할 수 없습니다.";
 
     private final PerformanceRepository performanceRepository;
     private final PerformanceSessionRepository sessionRepository;
     private final UserRepository userRepository;
-    private final TicketRepository ticketRepository;
     private final SourceKeyResolver sourceKeyResolver;
     private final SessionTimePolicy sessionTimePolicy;
     private final TransactionTemplate transactionTemplate;
@@ -67,14 +59,12 @@ public class PerformanceService {
     public PerformanceService(PerformanceRepository performanceRepository,
                               PerformanceSessionRepository sessionRepository,
                               UserRepository userRepository,
-                              TicketRepository ticketRepository,
                               SourceKeyResolver sourceKeyResolver,
                               SessionTimePolicy sessionTimePolicy,
                               PlatformTransactionManager transactionManager) {
         this.performanceRepository = performanceRepository;
         this.sessionRepository = sessionRepository;
         this.userRepository = userRepository;
-        this.ticketRepository = ticketRepository;
         this.sourceKeyResolver = sourceKeyResolver;
         this.sessionTimePolicy = sessionTimePolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -185,56 +175,6 @@ public class PerformanceService {
             Long winnerId = transactionTemplate.execute(
                     status -> performanceRepository.findIdBySourceKey(sourceKey).orElse(null));
             throw duplicatePerformance(winnerId);
-        }
-    }
-
-    /**
-     * 제목 수정 (등록자만). 공연장 이름은 등록 후 수정할 수 없다.
-     * 공연 행을 PESSIMISTIC_WRITE로 잠가 다른 변경(삭제, 회차 변경)과 직렬화한다.
-     */
-    @Transactional
-    public PerformanceDetailResponse update(Long performanceId, Long userId, PerformanceUpdateRequest request) {
-        Performance performance = lockPerformance(performanceId);
-        requireRegistrant(performance, userId);
-
-        if (request.title() == null) {
-            throw new SeatSwapException("수정할 항목이 없습니다.");
-        }
-        performance.changeTitle(cleanTitle(request.title()));
-        return toDetail(performance, sessionRepository.findByPerformance_IdOrderByStartsAtAsc(performanceId), userId);
-    }
-
-    /**
-     * 공연 삭제 (등록자만, 티켓 0건일 때만). 회차를 먼저 지운다.
-     * 공연 행을 잠가 회차 추가/수정과 직렬화한다 (회차 추가도 같은 행을 잠근다).
-     */
-    @Transactional
-    public void delete(Long performanceId, Long userId) {
-        Performance performance = lockPerformance(performanceId);
-        requireRegistrant(performance, userId);
-        if (ticketRepository.countByPerformanceSession_Performance_Id(performanceId) > 0) {
-            throw new ConflictException(DELETE_BLOCKED_MESSAGE);
-        }
-        sessionRepository.deleteByPerformanceId(performanceId);
-        performanceRepository.deleteById(performanceId);
-    }
-
-    // ---- 공용 (PerformanceSessionService에서도 사용) ----
-
-    /**
-     * 공연 행 비관적 쓰기 잠금 (SELECT ... FOR UPDATE). 공연에 딸린 데이터를 바꾸는 작업
-     * (공연 삭제, 제목 수정, 회차 추가/수정/삭제)은 모두 이 잠금을 먼저 잡아 서로 직렬화된다.
-     * 호출 측 트랜잭션 안에서만 의미가 있다.
-     * 주의: 이후 구현할 티켓 등록도 같은 공연 행을 잠가야 "티켓 0건 확인 -> 변경" 검사가 완전해진다.
-     */
-    Performance lockPerformance(Long performanceId) {
-        return performanceRepository.findByIdForUpdate(performanceId)
-                .orElseThrow(() -> new NotFoundException(NOT_FOUND_MESSAGE));
-    }
-
-    static void requireRegistrant(Performance performance, Long userId) {
-        if (!performance.isRegisteredBy(userId)) {
-            throw new AccessDeniedException(FORBIDDEN_MESSAGE);
         }
     }
 

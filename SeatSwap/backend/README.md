@@ -20,9 +20,9 @@
   - `config/SecurityConfig` — JWT 필터 등록, CORS(개발용 localhost:5173 허용), `/api/auth/**` permitAll, `/api/admin/**`는 ADMIN 권한 (해당 컨트롤러는 아직 없음)
   - `service/AuthService`, `controller/AuthController` — POST /api/auth/signup, /login, /refresh
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
-- **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`, `PerformanceSessionService`). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이며 등록 후 수정할 수 없다.
+- **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`). 공연은 회차와 함께 등록하며, 등록 후에는 아무도 제목·공연장·회차를 수정하거나 공연·회차를 삭제할 수 없다(수정은 추후 관리자 수정 제안으로만, 후속). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이다.
 - 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
-- 테스트는 169건이다.
+- 테스트는 146건이다.
 
 ## 인증 API
 
@@ -43,11 +43,6 @@
 | GET | /api/performances/lookup | 링크(sourceUrl)로 기존 공연 조회 ({exists, performanceId}) |
 | GET | /api/performances/{id} | 공연 상세 |
 | POST | /api/performances | 공연 등록 (201, 같은 링크가 있으면 409 + performanceId) |
-| PATCH | /api/performances/{id} | 공연 제목 수정 (공연장 이름은 수정 불가) |
-| DELETE | /api/performances/{id} | 공연 삭제 |
-| POST | /api/performances/{id}/sessions | 회차 추가 (201, 같은 시각이면 409) |
-| PATCH | /api/performances/{id}/sessions/{sessionId} | 회차 일시 변경 (등록자만, 티켓 0건일 때만) |
-| DELETE | /api/performances/{id}/sessions/{sessionId} | 회차 삭제 |
 
 그 외 모든 API는 `Authorization: Bearer {accessToken}` 헤더가 필요하다 (SecurityConfig 기준).
 

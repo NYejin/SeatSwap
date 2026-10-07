@@ -46,7 +46,7 @@ const comingSoonButton =
   `${cls.button} gap-2 border border-gray-200 bg-white text-gray-500 disabled:cursor-not-allowed`;
 const retryButton = `${cls.button} ${cls.buttonSolid} ${cls.retryButton}`;
 
-const COMING_SOON = ["내 티켓", "거래 내역", "받은 리뷰"] as const;
+const COMING_SOON = ["내 티켓", "거래 내역"] as const;
 
 /**
  * 신뢰도 점수는 소수 1자리. 값이 없으면(null) 대시.

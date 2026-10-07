@@ -6,14 +6,11 @@ import type {
   PerformanceDetail,
   PerformanceListParams,
   PerformanceLookup,
-  PerformanceSession,
   PerformanceSummary,
-  PerformanceUpdateRequest,
-  SessionRequest,
 } from "../types/performance";
 
 // 공연·회차 (FR-02). 모두 로그인 필요 — 401은 client.ts 인터셉터가 재발급·재시도 처리.
-// 오류: 400(필드/메시지), 403(등록자 아님), 404, 409({message} 또는 {message, performanceId}).
+// 오류: 400(필드/메시지), 404, 409({message} 또는 {message, performanceId}).
 export const performancesApi = {
   /** GET /api/performances?query=&page= */
   async list(params: PerformanceListParams, signal?: AbortSignal): Promise<PageResponse<PerformanceSummary>> {
@@ -43,34 +40,7 @@ export const performancesApi = {
     return data;
   },
 
-  /** PATCH /api/performances/{id} (등록자만) → 200 상세 */
-  async update(id: number, payload: PerformanceUpdateRequest): Promise<PerformanceDetail> {
-    const { data } = await apiClient.patch<PerformanceDetail>(`/performances/${id}`, payload);
-    return data;
-  },
-
-  /** DELETE /api/performances/{id} (등록자만) → 204. 티켓이 있으면 409 */
-  async remove(id: number): Promise<void> {
-    await apiClient.delete(`/performances/${id}`);
-  },
-
-  /** POST /api/performances/{id}/sessions (로그인 사용자 누구나) → 201. 같은 시각이 있으면 409 */
-  async addSession(id: number, startsAt: string): Promise<PerformanceSession> {
-    const body: SessionRequest = { startsAt };
-    const { data } = await apiClient.post<PerformanceSession>(`/performances/${id}/sessions`, body);
-    return data;
-  },
-
-  /** PATCH /api/performances/{id}/sessions/{sessionId} (등록자만). 티켓이 있으면 409. 응답 본문은 쓰지 않는다 */
-  async updateSession(id: number, sessionId: number, startsAt: string): Promise<void> {
-    const body: SessionRequest = { startsAt };
-    await apiClient.patch(`/performances/${id}/sessions/${sessionId}`, body);
-  },
-
-  /** DELETE /api/performances/{id}/sessions/{sessionId} (등록자만). 티켓이 있으면 409 */
-  async removeSession(id: number, sessionId: number): Promise<void> {
-    await apiClient.delete(`/performances/${id}/sessions/${sessionId}`);
-  },
+  // 공연은 등록 후 아무도 수정·삭제할 수 없다 (수정은 추후 관리자 수정 제안으로만)
 };
 
 /** 409 응답이 이미 등록된 공연을 가리키면 그 공연 id, 아니면 null */

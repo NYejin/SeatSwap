@@ -74,19 +74,6 @@ class AuditingClockTest {
     }
 
     @Test
-    void 수정시각은_수정때_갱신되고_생성시각은_유지된다() {
-        Performance performance = Performance.create("KSPO DOME", "콘서트",
-                "https://example.com/goods/1", "example:1", User.create("a@b.com", "encoded", "닉네임"));
-        org.springframework.test.util.ReflectionTestUtils.setField(performance, "createdAt", KST_NOW.minusDays(1));
-
-        performance.changeTitle("새 제목");
-        auditingHandler.markModified(performance);
-
-        assertThat(performance.getCreatedAt()).isEqualTo(KST_NOW.minusDays(1));
-        assertThat(performance.getUpdatedAt()).isEqualTo(KST_NOW);
-    }
-
-    @Test
     void 시각_필드가_있는_엔티티는_AuditingEntityListener를_등록한다() {
         for (Class<?> type : List.of(User.class, Performance.class, PerformanceSession.class)) {
             EntityListeners listeners = type.getAnnotation(EntityListeners.class);
