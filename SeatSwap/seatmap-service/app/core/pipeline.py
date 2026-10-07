@@ -27,6 +27,11 @@ def recognize_image(data: bytes, aisle_mode: str = "continue") -> dict:
     if not blocks:
         raise RecognitionFailedError("이미지에서 좌석 블록을 찾지 못했습니다.")
 
+    # 안정 식별자: 검출된 블록의 공간 정렬(y, x, w, h) 순서 기준 일련번호.
+    # 행/열 번호 부여(OCR, aisleMode, 정정)와 무관하게 같은 이미지면 항상 같은 uid.
+    for n, b in enumerate(sorted(blocks, key=lambda b: (b["y"], b["x"], b["w"], b["h"])), start=1):
+        b["uid"] = f"s{n:04d}"
+
     rows = ocr.cluster_rows(blocks)
     if len(rows) > MAX_ROWS:
         raise ImageTooComplexError("행이 너무 많습니다. 좌석맵 이미지가 맞는지 확인하세요.")
@@ -59,7 +64,7 @@ def recognize_image(data: bytes, aisle_mode: str = "continue") -> dict:
         cols, aisles = ocr.assign_columns(row, aisle_mode=aisle_mode)
         aisle_total += len(aisles)
         for s, c in zip(row, cols):
-            seats.append({"row": row_numbers[i], "col": c, "x": s["x"], "y": s["y"], "w": s["w"], "h": s["h"]})
+            seats.append({"uid": s["uid"], "row": row_numbers[i], "col": c, "x": s["x"], "y": s["y"], "w": s["w"], "h": s["h"]})
         row_infos.append({
             "row": row_numbers[i], "rowSource": row_src[i], "labelConfidence": round(conf[i], 1),
             "seatCount": len(row), "aisles": aisles,

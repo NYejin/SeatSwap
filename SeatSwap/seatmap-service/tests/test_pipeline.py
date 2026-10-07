@@ -131,3 +131,17 @@ def test_unreadable_rows_are_inferred_and_warned():
     assert any(w["code"] == "ROW_LABEL_UNREAD" for w in res["warnings"])
     rows = sorted({s["row"] for s in res["seats"]})
     assert rows == list(range(1, 14))
+
+
+def test_seat_uid_unique_deterministic_and_independent_of_aisle_mode():
+    data, expected = make_seatmap()
+    a = recognize_image(data, aisle_mode="continue")
+    b = recognize_image(data, aisle_mode="continue")
+    c = recognize_image(data, aisle_mode="skip")
+    uids = [s["uid"] for s in a["seats"]]
+    assert len(uids) == len(set(uids)) == len(expected)
+    assert all(isinstance(u, str) and 0 < len(u) <= 32 for u in uids)
+    by_pos = lambda r: {(s["x"], s["y"]): s["uid"] for s in r["seats"]}
+    assert by_pos(a) == by_pos(b) == by_pos(c)
+    # skip 모드에서는 col이 달라질 수 있어도 uid는 같다 (기존 필드는 유지)
+    assert all({"row", "col", "x", "y", "w", "h"} <= set(s) for s in a["seats"])
