@@ -1,6 +1,6 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. V1 12개 엔티티 기준선(V3 구현 후 14개, V4 예정 16개)과 네이밍 규칙을 담고 있다. 기준 이미지는 산출물/08_ERD에 있다.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. V1 12개 엔티티 기준선(V3 구현 후 14개, V4 예정이던 제재·신고 2개는 2026-10-07 동결)과 네이밍 규칙을 담고 있다. 기준 이미지는 산출물/08_ERD에 있다.
 ---
 
 # ERD 컨벤션
@@ -91,9 +91,26 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
     **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부, 희망 범위·회차 조건의 컬럼 설계 (스키마 변경 시 db-schema-architect 경유).
   - `Ticket.seatMapLayout.venue`는 `Ticket.performanceSession.performance.venue`와 같아야 한다 (서비스에서 검사).
 - `ExchangeRequest`는 `Ticket`과 1:1 — 티켓 하나당 교환 요청은 하나만 유효.
-- `ExchangeMatch`는 두 개의 `ExchangeRequest`(A측/B측)를 참조하는 단순 1:1 매칭 레코드다.
-  추천 점수, 랭킹 등 알고리즘 매칭용 컬럼을 추가하지 않는다 (매칭 모델은 신청/수락 기반으로 고정).
+- `ExchangeMatch`는 두 개의 `ExchangeRequest`(A측/B측)를 참조하는 매칭(제안) 레코드다. 매칭은 **조건 일치 판정으로 후보를 찾고 양쪽 수락으로
+  확정**하는 모델이며(2026-10-07 변경, 기존 "신청/수락 기반으로 고정"을 대체), 추천 점수·랭킹 등 **추천 알고리즘용 컬럼은 추가하지 않는다**.
+  조건 일치는 쿼리로 판정하고 저장하지 않는다. 한 요청에는 진행 중인 제안이 동시에 1개만 있어야 한다 (제약 방식은 설계 시 결정).
 - `Review`는 `ExchangeMatch` 완료 후에만 생성 가능하다.
+
+## 텍스트 좌석 입력 기반 매칭 스키마 방향 (2026-10-07, 가안 — 사용자 확정 전)
+
+CLAUDE.md '확정 전 기본안'에 따른 재설계 대상이다. 아래 테이블·컬럼 이름은 **가안**이며, 설계·확정은 `db-schema-architect`가
+사용자 확인을 받아 진행한다. 기존 마이그레이션 V1~V3는 수정하지 않고 **다음 번호로 추가**한다
+(V4 예정이던 제재·신고(`abuse_report`·`user_sanction`)는 동결 — 번호를 선점하지 않으며, 새 매칭 스키마가 그 시점의 다음 번호를 쓴다).
+
+- 좌석 키는 **(공연, 구역, 열, 번)**. 좌표·seat `uid`·좌석표 `section` 번호는 키가 아니다. 새 테이블은 `seat_map_layout`에 FK를 두지 않는다
+- `venue_zone`(가칭): 공연장 단위 구역 이름 — 정규화 키(`Venue.normalizeName`과 같은 방식)와 표시명, UK(venue_id, 정규화 키). 자동완성의 출처
+- `ticket`: 구역(FK `venue_zone`)·열·번 추가, 기존 `row_label`/`col_label` 문자열의 처리는 설계 시 결정. 같은 좌석 중복 등록 정책은 미정
+- `exchange_request`: `desired_condition`(문자열)·`extra_payment`를 자식 테이블로 대체. Ticket 1:1 유지
+- `exchange_want_range`(가칭): 요청 1:N. 구역, 열 범위, 번 범위, 회차 조건(같은 회차만/모든 회차/선택), **부호 있는 금액**(낼 수 있는 최대 +, 받고 싶은 최소 −)
+- `exchange_want_seat`(가칭): 범위를 펼친 개별 좌석(파생 데이터, range 1:N). 매칭 조인용 복합 인덱스(공연·구역·열·번)
+- `exchange_match`: 한 요청에 **진행 중 제안이 동시에 1개**만 가능하도록 하는 제약을 설계 시 정한다. 점수·랭킹 컬럼은 두지 않는다
+- 후보 조회는 쿼리(두 요청의 희망 좌석·소유 좌석 교차 + 금액 합 ≥ 0 + 회차 조건)로 하고 결과를 저장하지 않는다
+- `seat_map_layout.zone_name`은 좌석표 전용 값이다. 좌석표를 다시 붙일 때 `venue_zone`과 연결한다(그때 "이미지 덩어리 = 이 구역" 지정 단계가 필요)
 
 ## 08_ERD 반영 현황
 
