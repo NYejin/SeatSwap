@@ -15,12 +15,12 @@ import type {
 // 공연·회차 (FR-02). 모두 로그인 필요 — 401은 client.ts 인터셉터가 재발급·재시도 처리.
 // 오류: 400(필드/메시지), 403(등록자 아님), 404, 409({message} 또는 {message, performanceId}).
 export const performancesApi = {
-  /** GET /api/performances?query=&venueId=&page= */
+  /** GET /api/performances?query=&page= */
   async list(params: PerformanceListParams, signal?: AbortSignal): Promise<PageResponse<PerformanceSummary>> {
     const query = params.query?.trim();
     const { data } = await apiClient.get<PageResponse<PerformanceSummary>>("/performances", {
       // 빈 값은 보내지 않는다
-      params: { query: query || undefined, venueId: params.venueId, page: params.page ?? 0, asOf: params.asOf },
+      params: { query: query || undefined, page: params.page ?? 0, asOf: params.asOf },
       signal,
     });
     return data;

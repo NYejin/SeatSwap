@@ -12,19 +12,19 @@ import {
   normalizeLocalDateTime,
   validateSessionTimeStep,
 } from "../api/dateTime";
-import type { Venue } from "../types/performance";
 import TextField from "../components/TextField";
 import SessionDateTimePicker from "../components/SessionDateTimePicker";
-import VenuePicker from "../components/VenuePicker";
 import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 등록 (보호 라우트 /performances/new) — 단계형:
-// ① 티켓팅 링크(이미 등록됐는지 확인) ② 제목 ③ 공연장(검색·추가) ④ 회차(여러 개) ⑤ 확인 후 등록.
+// ① 티켓팅 링크(이미 등록됐는지 확인) ② 공연 정보(제목·공연장 이름·회차) ③ 확인 후 등록.
+// 공연장은 별도 엔티티 없이 텍스트 한 칸(venueName). 추후 ②단계에 링크에서 읽은 정보를 미리 채울 예정.
 
-const STEPS = ["티켓팅 링크", "공연 제목", "공연장", "회차", "확인"] as const;
-type Step = 0 | 1 | 2 | 3 | 4;
+const STEPS = ["티켓팅 링크", "공연 정보", "확인"] as const;
+type Step = 0 | 1 | 2;
 
 const TITLE_MAX = 200;
+const VENUE_MAX = 100;
 const URL_MAX = 2048;
 const SESSIONS_MAX = 100;
 
@@ -60,7 +60,25 @@ function validateSourceUrl(value: string): string | undefined {
 }
 
 /** 서버 필드명 → 그 필드를 입력하는 단계 */
-const FIELD_STEP: Record<string, Step> = { sourceUrl: 0, title: 1, venueId: 2, sessions: 3 };
+const FIELD_STEP: Record<string, Step> = { sourceUrl: 0, title: 1, venueName: 1, sessions: 1 };
+
+/** 서버 필드명 → 포커스를 줄 요소 id (회차는 그룹 래퍼 안의 첫 컨트롤) */
+const FIELD_FOCUS_ID: Record<string, string> = {
+  sourceUrl: "perf-source-url",
+  title: "perf-title",
+  venueName: "perf-venue",
+  sessions: "perf-sessions",
+};
+/** 여러 필드가 한꺼번에 틀렸을 때 먼저 보여줄 순서 */
+const FIELD_ORDER = ["sourceUrl", "title", "venueName", "sessions"] as const;
+
+/** id 요소로 포커스. 래퍼(div)면 그 안의 첫 입력 컨트롤로 */
+function focusById(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const target = el.matches("input,select,textarea,button") ? el : el.querySelector<HTMLElement>("input,select,textarea");
+  target?.focus();
+}
 
 export default function PerformanceRegisterPage() {
   const navigate = useNavigate();
@@ -68,6 +86,10 @@ export default function PerformanceRegisterPage() {
   const headingRef = useRef<HTMLHeadingElement>(null);
   /** 사용자가 단계를 옮겼을 때만 제목으로 포커스 (최초 진입·StrictMode 재실행에서는 하지 않음) */
   const focusHeading = useRef(false);
+  /** 단계 이동 뒤 제목 대신 포커스를 줄 요소 id (오류가 있는 입력) */
+  const focusTargetId = useRef<string | null>(null);
+  /** 중복 조회에서 "등록되지 않음"으로 확인된 링크 — 같은 링크면 다시 조회하지 않는다 */
+  const checkedUrl = useRef<string | null>(null);
 
   // ① 링크
   const [sourceUrl, setSourceUrl] = useState("");
@@ -75,30 +97,35 @@ export default function PerformanceRegisterPage() {
   const [checking, setChecking] = useState(false);
   const [existingId, setExistingId] = useState<number | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
-  // ② 제목
+  // ② 공연 정보: 제목·공연장 이름·회차
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string>();
-  // ③ 공연장
-  const [venue, setVenue] = useState<Venue | null>(null);
+  const [venueName, setVenueName] = useState("");
   const [venueError, setVenueError] = useState<string>();
-  // ④ 회차
   const [sessionInput, setSessionInput] = useState("");
   const [sessions, setSessions] = useState<string[]>([]);
   const [sessionError, setSessionError] = useState<string>();
-  // ⑤ 등록
+  // ③ 등록
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<{ message: string; step?: Step } | null>(null);
+  const [submitError, setSubmitError] = useState<{ message: string; step?: Step; focusId?: string } | null>(null);
   const [conflictId, setConflictId] = useState<number | null>(null);
 
   // 단계가 바뀌면 단계 제목으로 포커스 (스크린리더가 새 단계를 읽도록)
   useEffect(() => {
     if (!focusHeading.current) return;
     focusHeading.current = false;
-    headingRef.current?.focus();
+    const targetId = focusTargetId.current;
+    focusTargetId.current = null;
+    if (targetId) focusById(targetId);
+    else headingRef.current?.focus();
   }, [step]);
 
-  const goTo = (next: Step) => {
+  /** 단계 이동. 이전 등록 시도의 오류 박스·"등록된 공연 보기" 링크는 지운다. focusId가 있으면 제목 대신 그 입력으로 포커스 */
+  const goTo = (next: Step, focusId?: string) => {
     focusHeading.current = true;
+    focusTargetId.current = focusId ?? null;
+    setSubmitError(null);
+    setConflictId(null);
     setStep(next);
   };
 
@@ -110,6 +137,11 @@ export default function PerformanceRegisterPage() {
     setExistingId(null);
     setLookupError(null);
     if (error) return;
+    // 이미 "등록되지 않음"으로 확인한 같은 링크면 조회를 건너뛴다
+    if (sourceUrl.trim() === checkedUrl.current) {
+      goTo(1);
+      return;
+    }
     setChecking(true);
     try {
       const result = await performancesApi.lookup(sourceUrl.trim());
@@ -117,29 +149,13 @@ export default function PerformanceRegisterPage() {
         setExistingId(result.performanceId);
         return;
       }
+      checkedUrl.current = sourceUrl.trim();
       goTo(1);
     } catch (err) {
       setLookupError(parseApiError(err, "링크를 확인하지 못했습니다.").message);
     } finally {
       setChecking(false);
     }
-  };
-
-  const submitTitle = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const t = title.trim();
-    const error = !t ? "공연 제목을 입력해주세요." : t.length > TITLE_MAX ? `공연 제목은 ${TITLE_MAX}자 이하로 입력해주세요.` : undefined;
-    setTitleError(error);
-    if (!error) goTo(2);
-  };
-
-  const confirmVenue = () => {
-    if (!venue) {
-      setVenueError("공연장을 선택해주세요.");
-      return;
-    }
-    setVenueError(undefined);
-    goTo(3);
   };
 
   const addSession = (e: FormEvent<HTMLFormElement>) => {
@@ -171,22 +187,28 @@ export default function PerformanceRegisterPage() {
 
   const removeSession = (value: string) => setSessions((prev) => prev.filter((s) => s !== value));
 
-  const confirmSessions = () => {
-    if (sessions.length === 0) {
-      setSessionError("회차를 1개 이상 추가해주세요.");
-      return;
-    }
+  /** 제목·공연장·회차를 모두 검사. 처음 오류가 있는 칸으로 포커스를 옮긴다 */
+  const confirmInfo = () => {
+    const t = title.trim();
+    const v = venueName.trim();
+    const tErr = !t ? "공연 제목을 입력해주세요." : t.length > TITLE_MAX ? `공연 제목은 ${TITLE_MAX}자 이하로 입력해주세요.` : undefined;
+    const vErr = !v ? "공연장 이름을 입력해주세요." : v.length > VENUE_MAX ? `공연장 이름은 ${VENUE_MAX}자 이하로 입력해주세요.` : undefined;
+    let sErr: string | undefined;
+    if (sessions.length === 0) sErr = "회차를 1개 이상 추가해주세요.";
     // 단계를 오가는 사이 지난 회차가 생겼으면 알려준다
-    if (sessions.some((s) => isPastKst(s))) {
-      setSessionError("지난 회차가 있어요. 삭제한 뒤 진행해주세요.");
-      return;
-    }
-    setSessionError(undefined);
-    goTo(4);
+    else if (sessions.some((s) => isPastKst(s))) sErr = "지난 회차가 있어요. 삭제한 뒤 진행해주세요.";
+    setTitleError(tErr);
+    setVenueError(vErr);
+    setSessionError(sErr);
+    if (tErr) focusById("perf-title");
+    else if (vErr) focusById("perf-venue");
+    else if (sErr) focusById("perf-sessions");
+    if (tErr || vErr || sErr) return;
+    goTo(2);
   };
 
   const submit = async () => {
-    if (submitting || !venue) return;
+    if (submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     setConflictId(null);
@@ -194,16 +216,26 @@ export default function PerformanceRegisterPage() {
       const created = await performancesApi.create({
         sourceUrl: sourceUrl.trim(),
         title: title.trim(),
-        venueId: venue.id,
+        venueName: venueName.trim(),
         sessions,
       });
       navigate(`/performances/${created.id}`, { replace: true });
     } catch (err) {
       const existing = getConflictPerformanceId(err);
       const parsed = parseApiError(err, "공연을 등록하지 못했습니다.");
-      if (existing !== null) setConflictId(existing);
-      const field = Object.keys(parsed.fieldErrors).find((k) => k in FIELD_STEP);
-      setSubmitError({ message: parsed.message, step: field ? FIELD_STEP[field] : undefined });
+      if (existing !== null) {
+        setConflictId(existing);
+        checkedUrl.current = null;
+      }
+      // 서버 필드 오류 메시지를 해당 입력의 오류 상태에 넣어 이동한 단계에서 사유가 보이게 한다
+      const fe = parsed.fieldErrors;
+      if (fe.sourceUrl) setUrlError(fe.sourceUrl);
+      if (fe.title) setTitleError(fe.title);
+      if (fe.venueName) setVenueError(fe.venueName);
+      const sessionsKey = Object.keys(fe).find((k) => k === "sessions" || k.startsWith("sessions"));
+      if (sessionsKey) setSessionError(fe[sessionsKey]);
+      const first = FIELD_ORDER.find((k) => (k === "sessions" ? !!sessionsKey : !!fe[k]));
+      setSubmitError({ message: parsed.message, step: first ? FIELD_STEP[first] : undefined, focusId: first ? FIELD_FOCUS_ID[first] : undefined });
       setSubmitting(false);
     }
   };
@@ -224,6 +256,8 @@ export default function PerformanceRegisterPage() {
           onChange={(e) => {
             setSourceUrl(e.target.value);
             setExistingId(null);
+            setLookupError(null);
+            setUrlError(undefined);
           }}
           disabled={checking}
           error={urlError}
@@ -257,53 +291,34 @@ export default function PerformanceRegisterPage() {
     );
   } else if (step === 1) {
     body = (
-      <form className={cls.stepBody} onSubmit={submitTitle} noValidate>
+      <div className={cls.stepBody}>
+        {/* 추후 링크에서 읽은 정보를 미리 채우고 "이 정보가 맞나요?"를 묻는 기능이 들어갈 자리 */}
+        <p className={ui.notice}>정보가 맞는지 확인하고 틀리면 고쳐 주세요.</p>
         <TextField
           id="perf-title"
           label="공연 제목"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            setTitleError(undefined);
+          }}
           error={titleError}
           hint={`티켓팅 사이트에 표시된 제목 그대로 (${TITLE_MAX}자 이하)`}
           maxLength={TITLE_MAX}
         />
-        <div className={cls.actions}>
-          <button type="button" className={button.outline} onClick={() => goTo(0)}>
-            이전
-          </button>
-          <button type="submit" className={button.solid}>
-            다음
-          </button>
-        </div>
-      </form>
-    );
-  } else if (step === 2) {
-    // VenuePicker 안에 공연장 추가 <form>이 있으므로 이 단계는 form으로 감싸지 않는다
-    body = (
-      <div className={cls.stepBody}>
-        <VenuePicker
-          idPrefix="perf-new"
-          selected={venue}
-          onSelect={(v) => {
-            setVenue(v);
+        <TextField
+          id="perf-venue"
+          label="공연장 이름"
+          value={venueName}
+          onChange={(e) => {
+            setVenueName(e.target.value);
             setVenueError(undefined);
           }}
           error={venueError}
+          hint={`티켓팅 사이트에 표시된 공연장 이름 (${VENUE_MAX}자 이하). 등록 후에는 수정할 수 없어요.`}
+          maxLength={VENUE_MAX}
         />
-        <div className={cls.actions}>
-          <button type="button" className={button.outline} onClick={() => goTo(1)}>
-            이전
-          </button>
-          <button type="button" className={button.solid} onClick={confirmVenue}>
-            다음
-          </button>
-        </div>
-      </div>
-    );
-  } else if (step === 3) {
-    body = (
-      <div className={cls.stepBody}>
-        <form className="flex flex-col gap-2" onSubmit={addSession} noValidate>
+        <form id="perf-sessions" className="flex flex-col gap-2" onSubmit={addSession} noValidate>
           <div className="flex flex-wrap items-end gap-2">
             <SessionDateTimePicker
               legend="회차 날짜·시간 (한국 시간)"
@@ -317,7 +332,7 @@ export default function PerformanceRegisterPage() {
             </button>
           </div>
           {sessionError && (
-            <p id="perf-session-error" className={ui.fieldError}>
+            <p id="perf-session-error" className={ui.fieldError} role="alert">
               {sessionError}
             </p>
           )}
@@ -350,10 +365,10 @@ export default function PerformanceRegisterPage() {
         )}
 
         <div className={cls.actions}>
-          <button type="button" className={button.outline} onClick={() => goTo(2)}>
+          <button type="button" className={button.outline} onClick={() => goTo(0)}>
             이전
           </button>
-          <button type="button" className={button.solid} onClick={confirmSessions}>
+          <button type="button" className={button.solid} onClick={confirmInfo}>
             다음
           </button>
         </div>
@@ -369,8 +384,7 @@ export default function PerformanceRegisterPage() {
           <dd className={cls.summaryDesc}>{title.trim()}</dd>
           <dt className={cls.summaryTerm}>공연장</dt>
           <dd className={cls.summaryDesc}>
-            {venue?.name}
-            {venue?.address ? ` (${venue.address})` : ""}
+            {venueName.trim()}
           </dd>
           <dt className={cls.summaryTerm}>회차</dt>
           <dd className={cls.summaryDesc}>
@@ -391,7 +405,7 @@ export default function PerformanceRegisterPage() {
               </Link>
             )}
             {submitError.step !== undefined && (
-              <button type="button" className={button.outline} onClick={() => goTo(submitError.step!)}>
+              <button type="button" className={button.outline} onClick={() => goTo(submitError.step!, submitError.focusId)}>
                 {STEPS[submitError.step]} 단계로 이동
               </button>
             )}
@@ -399,7 +413,7 @@ export default function PerformanceRegisterPage() {
         )}
 
         <div className={cls.actions}>
-          <button type="button" className={button.outline} onClick={() => goTo(3)} disabled={submitting}>
+          <button type="button" className={button.outline} onClick={() => goTo(1)} disabled={submitting}>
             이전
           </button>
           <button type="button" className={button.solid} onClick={submit} disabled={submitting} aria-busy={submitting}>

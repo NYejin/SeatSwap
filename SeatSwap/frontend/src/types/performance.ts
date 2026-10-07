@@ -1,29 +1,5 @@
-// 공연·공연장·회차 (FR-02 공연 등록). 백엔드 계약(2026-10-06 기준)과 1:1 대응.
+// 공연·회차 (FR-02 공연 등록). 공연장은 별도 엔티티 없이 공연의 텍스트 속성 venueName. 백엔드 계약(2026-10-08 기준)과 1:1 대응.
 // 시각(startsAt 등)은 KST 현지 시각 문자열 "yyyy-MM-ddTHH:mm" (초가 붙어 와도 api/dateTime.ts가 허용).
-
-export interface Venue {
-  id: number;
-  name: string;
-  address: string | null;
-}
-
-/** 목록 등에 쓰이는 공연장 요약 */
-export interface VenueSummary {
-  id: number;
-  name: string;
-}
-
-/** POST /api/venues */
-export interface VenueCreateRequest {
-  name: string;
-  address?: string;
-}
-
-/** POST /api/venues 결과 — 201이면 새로 생성, 200이면 같은 공연장이 이미 있어 그것을 돌려줌 */
-export interface VenueCreateResult {
-  venue: Venue;
-  created: boolean;
-}
 
 export interface PerformanceSession {
   id: number;
@@ -34,7 +10,7 @@ export interface PerformanceSession {
 export interface PerformanceSummary {
   id: number;
   title: string;
-  venue: VenueSummary;
+  venueName: string;
   /** 지금 이후 가장 이른 회차. 없으면 null */
   nextSessionStartsAt: string | null;
   sessionCount: number;
@@ -45,9 +21,9 @@ export interface PerformanceDetail {
   id: number;
   title: string;
   sourceUrl: string;
-  venue: Venue;
+  venueName: string;
   registrant: { id: number; nickname: string };
-  /** 현재 사용자가 등록자인지 (제목·공연장 수정, 회차 수정·삭제, 공연 삭제 노출용 — 서버도 동일하게 검사) */
+  /** 현재 사용자가 등록자인지 (제목 수정, 회차 수정·삭제, 공연 삭제 노출용 — 서버도 동일하게 검사) */
   canEdit: boolean;
   sessions: PerformanceSession[];
   createdAt: string;
@@ -61,7 +37,6 @@ export interface PerformanceLookup {
 
 export interface PerformanceListParams {
   query?: string;
-  venueId?: number;
   /** 0부터 */
   page?: number;
   /**
@@ -75,7 +50,8 @@ export interface PerformanceListParams {
 export interface PerformanceCreateRequest {
   sourceUrl: string;
   title: string;
-  venueId: number;
+  /** 공연장 이름 (필수, 100자 이하) */
+  venueName: string;
   /** 회차 시작 시각 목록 (1개 이상) */
   sessions: string[];
 }
@@ -83,7 +59,6 @@ export interface PerformanceCreateRequest {
 /** PATCH /api/performances/{id} — 보낸 항목만 바뀐다 */
 export interface PerformanceUpdateRequest {
   title?: string;
-  venueId?: number;
 }
 
 /** POST·PATCH 회차 */

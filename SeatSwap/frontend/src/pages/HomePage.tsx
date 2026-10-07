@@ -53,7 +53,7 @@ function GuestIntro() {
       <div className={ui.container}>
         <section className={`${ui.card} ${cls.intro}`} aria-labelledby="home-intro-title">
           <h1 id="home-intro-title" className={ui.pageTitle}>
-            같은 공연, 더 좋은 자리로
+            같은 공연, 원하는 자리로
           </h1>
           <p className={cls.introText}>
             SeatSwap은 같은 공연 티켓을 가진 사람끼리 좌석을 교환하는 서비스예요. 로그인하면 등록된 공연을 보고, 새
@@ -220,7 +220,7 @@ function PerformanceList() {
                 <li key={item.id}>
                   <Link to={`/performances/${item.id}`} className={cls.item}>
                     <span className={cls.itemTitle}>{item.title}</span>
-                    <span className={cls.itemVenue}>{item.venue.name}</span>
+                    <span className={cls.itemVenue}>{item.venueName}</span>
                     <span className={cls.itemMeta}>
                       {item.nextSessionStartsAt ? (
                         <span className={cls.itemNext}>
