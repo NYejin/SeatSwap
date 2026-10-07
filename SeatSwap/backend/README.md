@@ -43,6 +43,20 @@
   `1 | << Flyway Baseline >> | BASELINE` 행 확인. 롤백: 이전 이미지로 되돌리면 된다(스키마는 변경되지 않고 이력 테이블만 추가됨.
   원하면 `DROP TABLE flyway_schema_history`). 이전 이미지는 이력 테이블을 무시하므로 문제없다. 단, 이 롤백은 V1(baseline)만 있는 상태에서만 유효하다. V2 이상이 적용된 DB에 이전 이미지(`ddl-auto: update`)를 올리면 스키마가 앞서 있어 위험하므로 백업 복원으로 되돌린다.
 
+## 관리자 권한 / V2 적용 시 주의
+
+- 관리자는 DB에서 직접 부여한다: `UPDATE users SET role = 'ADMIN' WHERE email = '...';` — **반드시 대문자 `ADMIN`으로만**.
+  `users.role`, `venue.status`, `seat_map_layout.status`는 `utf8mb4_bin` 컬럼이라 소문자(`admin`)는 CHECK 제약에서 거부된다.
+  가입은 항상 USER이며 요청 본문의 role은 무시된다. role은 토큰에 넣지 않고 매 요청 DB에서 읽는다(변경 즉시 반영).
+- **MySQL 최소 버전 8.0.16** — 그 미만은 CHECK 제약을 문법만 받고 강제하지 않는다 (현재 docker 이미지는 mysql:8.0).
+- V2 적용 전 사전 점검(행이 있는 DB에서 새 UNIQUE가 실패하지 않도록):
+  ```sql
+  SELECT COUNT(*) FROM seat_map_layout;                          -- 0이면 안전
+  SELECT venue_id, COALESCE(zone_name,'') z, COUNT(*) FROM seat_map_layout
+    GROUP BY venue_id, z HAVING COUNT(*) > 1;                    -- 결과가 있으면 정리 후 적용
+  SELECT COUNT(*) FROM seat_map_layout WHERE image_url IS NOT NULL;  -- V2가 image_url 컬럼을 삭제함
+  ```
+
 ## 로컬 환경변수 (.env)
 
 `./gradlew bootRun`으로 로컬 실행 시, `backend/.env` 파일이 있으면 `build.gradle`의

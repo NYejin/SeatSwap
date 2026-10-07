@@ -3,6 +3,8 @@ package com.seatswap.domain;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -19,6 +21,10 @@ import java.util.Locale;
  * 리포지토리 조회로 처리한다.
  *
  * 수정/삭제: 여러 공연·좌석맵이 공유하는 기준 데이터라 일반 사용자 수정·삭제는 허용하지 않는다.
+ *
+ * 정식 등록(status): 공연 자체에는 상태가 없고 Venue만 UNVERIFIED/VERIFIED를 가진다.
+ * 정식 등록은 좌석표 등록 시에만 가능하므로 VERIFIED와 SeatMapLayout OFFICIAL은 항상 같이 바뀐다
+ * ({@link SeatMapLayout#promote}가 {@link #verify}를 호출한다).
  */
 @Entity
 @Table(
@@ -53,6 +59,21 @@ public class Venue {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    /** 정식 등록 상태. varchar 컬럼 (Hibernate 6의 MySQL native enum 매핑 방지). */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(nullable = false, length = 20)
+    private VenueStatus status = VenueStatus.UNVERIFIED;
+
+    /** 정식 등록한 관리자. UNVERIFIED면 null. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "verified_by", foreignKey = @ForeignKey(name = "fk_venue_verified_by"))
+    private User verifiedBy;
+
+    /** 정식 등록 시각(KST). UNVERIFIED면 null. */
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
+
     /**
      * 공연장 생성. 호출 전에 서비스에서 이름/주소 길이와 정규화 결과를 검증해 400으로 응답해야 한다
      * (여기서의 IllegalArgumentException은 최후 방어선).
@@ -76,6 +97,28 @@ public class Venue {
         venue.normalizedName = normalized;
         venue.address = (cleanAddress == null || cleanAddress.isEmpty()) ? null : cleanAddress;
         return venue;
+    }
+
+    /**
+     * 정식 등록 처리. 좌석표 승격({@link SeatMapLayout#promote})에서만 호출한다 (package-private) —
+     * "정식 등록은 좌석표 등록 시에만 가능"이라는 불변식을 지키기 위해 외부에 열지 않는다.
+     * 이미 VERIFIED면 최초 등록자·시각을 유지한다 (OFFICIAL 좌석표는 여러 개 허용).
+     * 시각은 호출자가 Clock(Asia/Seoul) 기준으로 넘긴다.
+     */
+    void verify(User admin, LocalDateTime now) {
+        if (admin == null || now == null) {
+            throw new IllegalArgumentException("정식 등록에는 관리자와 시각이 필요합니다.");
+        }
+        if (status == VenueStatus.VERIFIED) {
+            return;
+        }
+        this.status = VenueStatus.VERIFIED;
+        this.verifiedBy = admin;
+        this.verifiedAt = now;
+    }
+
+    public boolean isVerified() {
+        return status == VenueStatus.VERIFIED;
     }
 
     /**

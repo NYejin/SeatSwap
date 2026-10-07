@@ -1,6 +1,7 @@
 package com.seatswap.controller;
 
 import com.seatswap.config.SecurityConfig;
+import com.seatswap.domain.UserRole;
 import com.seatswap.dto.response.UserResponse;
 import com.seatswap.security.AuthUserPrincipal;
 import com.seatswap.security.CustomUserDetailsService;
@@ -66,12 +67,12 @@ class UserControllerSliceTest {
 
     @Test
     void validTokenReturnsMe() throws Exception {
-        when(userService.getMe(1L)).thenReturn(new UserResponse(1L, "a@b.com", "닉네임", 4.5));
+        when(userService.getMe(1L)).thenReturn(new UserResponse(1L, "a@b.com", "닉네임", 4.5, UserRole.USER));
 
         mockMvc.perform(get("/api/users/me").header("Authorization", "Bearer good"))
                 .andExpect(status().isOk())
                 .andExpect(content().json(
-                        "{\"id\":1,\"email\":\"a@b.com\",\"nickname\":\"닉네임\",\"trustScore\":4.5}", true));
+                        "{\"id\":1,\"email\":\"a@b.com\",\"nickname\":\"닉네임\",\"trustScore\":4.5,\"role\":\"USER\"}", true));
     }
 
     @Test

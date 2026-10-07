@@ -3,6 +3,8 @@ package com.seatswap.domain;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
@@ -27,6 +29,12 @@ public class User {
     @Column(nullable = false)
     private String nickname;
 
+    /** 권한. 가입은 항상 USER, ADMIN은 DB에서 직접 부여한다. (varchar 컬럼 — Hibernate 6의 MySQL native enum 매핑 방지) */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(nullable = false, length = 20)
+    private UserRole role = UserRole.USER;
+
     // 신뢰도 점수 — 거래 완료 후 Review 누적 기반 (요구사항정의서 FR-13)
     private Double trustScore = 0.0;
 
@@ -45,6 +53,7 @@ public class User {
         user.password = encodedPassword;
         user.nickname = nickname;
         user.trustScore = 0.0;
+        user.role = UserRole.USER; // 가입은 항상 USER
         return user;
     }
 }

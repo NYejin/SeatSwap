@@ -61,6 +61,8 @@ public class SecurityConfig {
                         // 예외 발생 시 서블릿 컨테이너가 /error로 포워드하는데, 여기서 막히면 원래 오류가
                         // 403 빈 바디로 둔갑한다. 오류 응답 자체는 인증 없이 내려가야 한다.
                         .requestMatchers("/error").permitAll()
+                        // 관리자 전용 (role은 매 요청 DB에서 로드 — JwtAuthenticationFilter). 일반 사용자는 403
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 // 미인증 → 401 {"message":"로그인이 필요합니다."}, 권한 없음 → 403 {"message":"접근 권한이 없습니다."}
