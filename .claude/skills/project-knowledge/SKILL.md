@@ -79,6 +79,9 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 ### 좌석맵 확보·좌석표 흐름 (2026-10-07 결정, CLAUDE.md와 동일)
 - 링크 스크래핑 불가: 멜론·YES24·티켓링크는 공개 페이지에 좌석맵이 없고(예매·보안문자 뒤), 인터파크는 robots.txt가 전면 금지. 로그인·캡차 우회·내부 API 조사는 하지 않음
 - 좌석표 상태: 공연장 정식 등록 전에는 사용자 이미지 인식 결과를 `DRAFT`(공연장당 하나, 재사용·수정)로 저장 → 관리자가 공연장·공연을 정식 등록하면 `OFFICIAL`, 이후 그 공연장 공연에 자동 연결
+- 좌석표 세부(2026-10-07 사용자 결정): DRAFT는 공연장 안에서 **구역(zone)별 하나**(구역별 여러 개 허용), OFFICIAL은 지금은 여러 개 허용 후 **추후 공연장당 1개로 제한 예정**. 정식 등록은 좌석표 등록 시에만 가능해 Venue VERIFIED와 좌석표 OFFICIAL은 항상 함께 바뀜(공연에는 정식 상태 없음, Venue.status UNVERIFIED/VERIFIED만).
+- 티켓은 좌석표 없이 먼저 등록(`ticket.seatmap_id` NULL 허용, `image_url` 삭제), 교환글 등록 시 DRAFT 좌석표 업로드. OFFICIAL은 사용자 직접 수정 불가(정정 신고로만), 관리자는 직접 수정 가능. 제재는 SEATMAP_EDIT(수정·신고 정지)/ACCOUNT(계정 정지) 두 종류, 신고(abuse_report)는 항상 로그, 회원탈퇴는 익명화(FK 유지)
+- 좌석맵 서비스 응답의 좌석에 안정적 식별자 `uid`(예 s0001, 검출 공간 순서 기준 결정적, 행/열 보정·aisleMode 무관, 하위 호환)를 추가 — 수정 로그·정정 신고가 좌석을 가리키는 키
 - DRAFT는 확인용으로만 표시. 교환 매칭은 본인 좌석 정보 + 희망 좌석 범위로 하고, 좌표 기반 선택·매칭은 OFFICIAL에서만
 - 모든 수정은 로그(누가·언제·전후). 악의적 수정은 신고나 관리자 확인이 있을 때만 제재(자동 제재 없음). 관리자는 DB에서 ADMIN 직접 부여로 시작
 - 이미지 보관: 원본·주소 저장 안 함, 좌표는 원본 픽셀 기준, 화면은 SVG. 필요 시 핫링크/서비스 보관으로 확장(컬럼은 Flyway로 추가)
@@ -103,7 +106,7 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 
 ## 6. 데이터 모델 (산출물/08_ERD 요약)
 
-12개 엔티티: User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection,
+12개 엔티티(현재 V1 기준; V2 이후 `seat_map_revision`, `seat_map_revision_item`, `abuse_report`, `user_sanction` 추가로 16개 예정): User, Venue, Performance, PerformanceSession, Ticket, SeatMapLayout, SeatCorrection,
 ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 (2026-10-06 공연 회차 `PerformanceSession` 추가로 11 → 12. 08_ERD 원본 png는 아직 11개 기준 —
 반영할 변경 목록은 erd-conventions 스킬 "08_ERD 원본 반영 대기" 절)
@@ -111,7 +114,7 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 주요 관계:
 - Venue 1:N SeatMapLayout / 1:N Performance
 - Performance 1:N PerformanceSession (회차: 날짜·시간), User 1:N Performance (등록자)
-- SeatMapLayout 1:N SeatCorrection / 1:N Ticket
+- SeatMapLayout 1:N SeatCorrection / 1:N Ticket (V2: Ticket의 seatmap_id는 NULL 허용, DRAFT는 공연장+구역당 1개)
 - User 1:N Ticket, PerformanceSession 1:N Ticket (Ticket은 공연이 아니라 회차를 참조)
 - Ticket 1:1 ExchangeRequest (교환 후보·매칭 검증은 회차가 속한 **공연이 같은지** 기준, 회차까지 같을 필요 없음)
 - ExchangeRequest 1:N ExchangeMatch (A측/B측)
@@ -286,6 +289,13 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
 - **2026-10-07 결정 — 교환 범위는 공연 단위 (CLAUDE.md와 동일)**: 같은 공연의 다른 회차 티켓끼리도 교환 가능. 매칭 판정·후보 조회·신청 유효성 검증은 session이 아니라 performance 기준.
   OFFICIAL 좌석표는 회차와 무관하게 공연장 단위로 공유. DRAFT 공연은 본인 좌석 정보 + 희망 좌석 범위로 매칭하고 희망 범위에 회차를 포함할 수 있음.
   **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부 등 세부. 이 결정에 따른 04 요구사항정의서·08_ERD 원본 반영은 원본 확보 후 (07 작업일지 기록 위치는 사용자가 정함)
+- **2026-10-07 이어서 진행(스키마 설계 ~ V2 구현, 상세는 산출물/07_작업일지/2026-10-07.md '이어서 진행한 작업')**
+  - 결정: DRAFT 구역별 하나·OFFICIAL 복수 허용 후 1개 제한 예정, 티켓 먼저 등록·교환글에서 DRAFT 업로드, 제재 2종, 회원 익명화, 신고 항상 로그, 좌석 uid (4절 참고)
+  - 구현 완료·**병합 대기**: `feature/admin-seatmap-schema`(Flyway V2: users.role, venue.status, seat_map_layout 상태·version·이미지 크기·승격,
+    image_url 삭제, ticket.seatmap_id nullable, draft_key; role은 매 요청 DB 로드, /api/admin/** ADMIN, /me에 role; 테스트 195건),
+    `feature/seatmap-seat-uid`(좌석 uid, pytest 187건). erd.dot의 V2는 병합 후 현재로 승격 예정
+  - 없는 것: 관리자 API/서비스, V3(수정 로그·seat_correction 개편), V4(제재·신고), 관리자 페이지. 정책 미정: 이미 OFFICIAL이 있는 공연장의 DRAFT 허용 여부. Testcontainers 미도입
+  - 이슈: Docker Desktop 꺼진 채 재빌드 시 mysql이 Exited(137) → 백엔드 `UnknownHostException: mysql`, mysql 먼저 기동으로 해결
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
 - 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.
   현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 + 2026-10-06 섹션), `2026-10-07.md`
