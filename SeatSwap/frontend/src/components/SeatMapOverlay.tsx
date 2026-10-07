@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useCallback, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import type { SeatCoordinate } from "../types/seatmap";
 import { button, FOCUS_RING, ui } from "./ui";
 import { hasMultipleSections, seatLabel, seatSection } from "./seatLabel";
@@ -9,6 +9,8 @@ interface Props {
   imageHeight: number;
   seats: SeatCoordinate[];
   selectedUid?: string | null;
+  /** 번호를 바꿔 저장 대기 중인 좌석 uid (미리보기 표시용) */
+  changedUids?: ReadonlySet<string>;
   onSelectSeat: (seat: SeatCoordinate) => void;
 }
 
@@ -41,16 +43,24 @@ const SEAT_BASE =
   `[vector-effect:non-scaling-stroke] cursor-pointer focus-visible:stroke-primary-600 focus-visible:stroke-[3px] ${FOCUS_RING} `;
 const SEAT_IDLE = `${SEAT_BASE}fill-gray-200 stroke-gray-500`;
 const SEAT_SELECTED = `${SEAT_BASE}fill-primary-600 stroke-primary-800`;
+// 변경된 좌석: 색 외에 굵은 점선 테두리로도 구분한다 (선택과 겹쳐도 점선 유지)
+// 채움은 SVG <pattern> 빗금(좌석 크기에 비례, 확대해도 같은 비율)이라 className에 fill을 두지 않는다.
+// 선 두께·점선은 non-scaling-stroke라 화면 px 기준이므로, 작은 좌석에서 실선처럼 보여도 빗금이 구분해 준다.
+const SEAT_CHANGED = `${SEAT_BASE}stroke-gray-900 stroke-2 [stroke-dasharray:4_2]`;
+const SEAT_CHANGED_SELECTED = `${SEAT_BASE}fill-primary-600 stroke-gray-900 stroke-[3px] [stroke-dasharray:4_2]`;
 
 interface SeatRectProps {
   seat: SeatCoordinate;
   selected: boolean;
   tabbable: boolean;
   multiSection: boolean;
+  changed: boolean;
+  /** 변경 좌석 빗금 채움 (url(#...)) */
+  hatchFill: string;
 }
 
 /** 좌석 하나 — props가 같으면 다시 그리지 않는다 (수천 개 대응). 이벤트는 <svg>에서 위임 처리 */
-const SeatRect = memo(function SeatRect({ seat, selected, tabbable, multiSection }: SeatRectProps) {
+const SeatRect = memo(function SeatRect({ seat, selected, tabbable, multiSection, changed, hatchFill }: SeatRectProps) {
   return (
     <rect
       data-uid={seat.uid}
@@ -58,11 +68,14 @@ const SeatRect = memo(function SeatRect({ seat, selected, tabbable, multiSection
       y={seat.y}
       width={seat.w}
       height={seat.h}
-      className={selected ? SEAT_SELECTED : SEAT_IDLE}
+      className={
+        changed ? (selected ? SEAT_CHANGED_SELECTED : SEAT_CHANGED) : selected ? SEAT_SELECTED : SEAT_IDLE
+      }
+      fill={changed && !selected ? hatchFill : undefined}
       role="button"
       tabIndex={tabbable ? 0 : -1}
       aria-pressed={selected}
-      aria-label={seatLabel(seat, multiSection)}
+      aria-label={changed ? `${seatLabel(seat, multiSection)} (번호 변경됨, 저장 전)` : seatLabel(seat, multiSection)}
     />
   );
 });
@@ -73,7 +86,8 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-export default function SeatMapOverlay({ imageWidth, imageHeight, seats, selectedUid, onSelectSeat }: Props) {
+export default function SeatMapOverlay({ imageWidth, imageHeight, seats, selectedUid, changedUids, onSelectSeat }: Props) {
+  const patternId = useId().replace(/:/g, "");
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   /** 방향키 이동 기준(roving tabindex). 선택된 좌석이 있으면 그것, 없으면 첫 좌석 */
@@ -227,11 +241,32 @@ export default function SeatMapOverlay({ imageWidth, imageHeight, seats, selecte
             className={cls.svg}
             viewBox={viewBox}
             role="group"
-            aria-label={`좌석표, 좌석 ${seats.length}개. 방향키로 이동하고 Enter로 선택`}
+            aria-label={`좌석표, 좌석 ${seats.length}개${
+              changedUids && changedUids.size > 0 ? `, 번호 변경 대기 ${changedUids.size}개` : ""
+            }. 방향키로 이동하고 Enter로 선택`}
             onClick={handleClick}
             onKeyDown={handleKeyDown}
             onFocus={handleFocus}
           >
+            <defs>
+              <pattern
+                id={patternId}
+                width={layout.fontSize * 0.5}
+                height={layout.fontSize * 0.5}
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(45)"
+              >
+                <rect width={layout.fontSize * 0.5} height={layout.fontSize * 0.5} className="fill-accent-100" />
+                <line
+                  x1={0}
+                  y1={0}
+                  x2={0}
+                  y2={layout.fontSize * 0.5}
+                  strokeWidth={layout.fontSize * 0.2}
+                  className="stroke-gray-900"
+                />
+              </pattern>
+            </defs>
             {layout.labels.map((l) => (
               <text
                 key={l.key}
@@ -268,6 +303,8 @@ export default function SeatMapOverlay({ imageWidth, imageHeight, seats, selecte
                 selected={seat.uid === selectedUid}
                 tabbable={seat.uid === tabUid}
                 multiSection={layout.multiSection}
+                changed={changedUids?.has(seat.uid) ?? false}
+                hatchFill={`url(#${patternId})`}
               />
             ))}
           </svg>

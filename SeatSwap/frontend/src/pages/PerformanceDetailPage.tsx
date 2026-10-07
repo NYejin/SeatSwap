@@ -425,6 +425,7 @@ function SeatMapsSection({ venueId }: { venueId: number }) {
                 <span className="flex flex-wrap items-center gap-2">
                   <span>{item.zoneName ?? "전체"}</span>
                   <span className={ui.badge}>{item.status === "DRAFT" ? "임시(확인용)" : "정식"}</span>
+                  {typeof item.seatCount === "number" && <span className={ui.muted}>{item.seatCount}석</span>}
                 </span>
                 <Link
                   to={`/seatmaps/${item.id}/select`}

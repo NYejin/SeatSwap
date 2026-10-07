@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seatswap.domain.SeatMapLayout;
+import com.seatswap.domain.SeatMapRevision;
+import com.seatswap.domain.SeatMapRevisionAction;
 import com.seatswap.domain.SeatMapStatus;
 import com.seatswap.domain.User;
 import com.seatswap.domain.Venue;
@@ -18,6 +20,7 @@ import com.seatswap.exception.NotFoundException;
 import com.seatswap.exception.SeatMapException;
 import com.seatswap.repository.SeatCorrectionRepository;
 import com.seatswap.repository.SeatMapLayoutRepository;
+import com.seatswap.repository.SeatMapRevisionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
 import com.seatswap.repository.VenueRepository;
@@ -71,6 +74,7 @@ public class SeatMapService {
     static final long DAILY_WINDOW_HOURS = 24;
     static final String ZONE_LIMIT_MESSAGE = "이 공연장에 등록할 수 있는 구역 수를 넘었어요.";
     static final String DAILY_LIMIT_MESSAGE = "하루에 등록할 수 있는 좌석표 수를 넘었어요. 내일 다시 시도해주세요.";
+    static final String INITIAL_REVISION_REASON = "최초 인식";
     static final String DELETE_FORBIDDEN_MESSAGE = "작성자 또는 관리자만 삭제할 수 있어요.";
 
     static final String VENUE_NOT_FOUND_MESSAGE = "존재하지 않는 공연장입니다.";
@@ -83,6 +87,7 @@ public class SeatMapService {
 
     private final SeatMapLayoutRepository seatMapLayoutRepository;
     private final SeatCorrectionRepository seatCorrectionRepository;
+    private final SeatMapRevisionRepository revisionRepository;
     private final VenueRepository venueRepository;
     private final UserRepository userRepository;
     private final SeatMapRecognitionClient recognitionClient;
@@ -110,12 +115,13 @@ public class SeatMapService {
 
     public SeatMapService(SeatMapLayoutRepository seatMapLayoutRepository,
                           SeatCorrectionRepository seatCorrectionRepository,
+                          SeatMapRevisionRepository revisionRepository,
                           VenueRepository venueRepository,
                           UserRepository userRepository,
                           SeatMapRecognitionClient recognitionClient,
                           ObjectMapper objectMapper,
                           PlatformTransactionManager transactionManager) {
-        this(seatMapLayoutRepository, seatCorrectionRepository, venueRepository, userRepository, recognitionClient,
+        this(seatMapLayoutRepository, seatCorrectionRepository, revisionRepository, venueRepository, userRepository, recognitionClient,
                 objectMapper, transactionManager, DEFAULT_MAX_CONCURRENT_RECOGNITIONS, DEFAULT_PERMIT_WAIT_MS,
                 Clock.systemDefaultZone(), DEFAULT_MAX_ZONES_PER_VENUE, DEFAULT_DAILY_LIMIT_PER_USER);
     }
@@ -123,6 +129,7 @@ public class SeatMapService {
     @Autowired
     public SeatMapService(SeatMapLayoutRepository seatMapLayoutRepository,
                           SeatCorrectionRepository seatCorrectionRepository,
+                          SeatMapRevisionRepository revisionRepository,
                           VenueRepository venueRepository,
                           UserRepository userRepository,
                           SeatMapRecognitionClient recognitionClient,
@@ -137,6 +144,7 @@ public class SeatMapService {
         this.permitWaitMs = permitWaitMs;
         this.seatMapLayoutRepository = seatMapLayoutRepository;
         this.seatCorrectionRepository = seatCorrectionRepository;
+        this.revisionRepository = revisionRepository;
         this.venueRepository = venueRepository;
         this.userRepository = userRepository;
         this.recognitionClient = recognitionClient;
@@ -195,8 +203,11 @@ public class SeatMapService {
                 Venue venue = requireVenue(venueId);
                 User creator = requireUser(userId);
                 SeatMapLayout layout = seatMapLayoutRepository.saveAndFlush(SeatMapLayout.createDraft(
-                        venue, zone, seatJson, OCR_DONE,
+                        venue, zone, seatJson, recognition.seats().size(), OCR_DONE,
                         recognition.image().width(), recognition.image().height(), creator));
+                // 최초 인식 로그. 좌석 JSON 전체(수천 개)는 로그에 복사하지 않는다 (after_json = NULL)
+                revisionRepository.save(SeatMapRevision.of(layout, layout.getVersion(),
+                        SeatMapRevisionAction.RECOGNIZED, creator, INITIAL_REVISION_REASON, null, null));
                 return SeatMapResponse.of(layout, recognition.seats(), true);
             });
         } catch (DataIntegrityViolationException e) {
@@ -235,6 +246,12 @@ public class SeatMapService {
      * TODO: 임시 기능 — TEMP-DRAFT-DELETE: 플래그(dev-draft-delete-enabled)가 true인 동안은 로그인한 누구나 허용.
      * 역할은 JWT가 아니라 필터가 DB의 User.role로 만든 principal(admin)을 쓴다.
      */
+    /** 좌석표 엔티티 기준 삭제 권한 (수정 API 응답의 canDelete용). */
+    public boolean canDeleteLayout(SeatMapLayout layout, Long userId, boolean admin) {
+        Long creatorId = layout.getCreatedBy() == null ? null : layout.getCreatedBy().getId();
+        return canDelete(layout.getStatus(), creatorId, userId, admin);
+    }
+
     private boolean canDelete(SeatMapStatus status, Long creatorId, Long userId, boolean admin) {
         if (status != SeatMapStatus.DRAFT) {
             return false;
@@ -244,15 +261,19 @@ public class SeatMapService {
 
     static final String DELETE_OFFICIAL_MESSAGE = "정식 등록된 좌석표는 삭제할 수 없습니다.";
     static final String DELETE_REFERENCED_MESSAGE = "티켓 또는 오류 신고가 연결된 좌석표는 삭제할 수 없습니다.";
+    static final String DELETE_EDITED_MESSAGE = "수정 이력이 있는 좌석표는 삭제할 수 없습니다.";
 
     /**
      * DRAFT 좌석표 삭제: 작성자 또는 ADMIN만 (아니면 403). OFFICIAL이거나 티켓·오류 신고가 참조하면 409.
      * 순서: 404 -> OFFICIAL 409 -> 권한 403 -> 참조 409.
      * 로그에는 사용자 id와 좌석표 id만 남긴다 (seat_json은 읽지도 않는다).
-     * 한계: 삭제는 흔적이 남지 않아(수정 로그는 V3 예정) 삭제 후 재업로드로 일일 제한을 우회할 수 있다.
+     * 한계: 수정 이력이 없는 DRAFT는 최초 인식 로그도 함께 지워지므로 삭제 후 재업로드로 일일 제한을 우회할 수 있다.
      */
     @Transactional
     public void deleteDraft(Long seatMapId, Long userId, boolean admin) {
+        // 수정·정정 반영(SeatMapEditService)과 같은 순서로 좌석표 행을 먼저 잠근다 (없으면 404)
+        seatMapLayoutRepository.lockById(seatMapId)
+                .orElseThrow(() -> new NotFoundException(SEATMAP_NOT_FOUND_MESSAGE));
         SeatMapLayoutRepository.OwnerView view = seatMapLayoutRepository.findOwnerViewById(seatMapId)
                 .orElseThrow(() -> new NotFoundException(SEATMAP_NOT_FOUND_MESSAGE));
         if (view.getStatus() != SeatMapStatus.DRAFT) {
@@ -265,6 +286,12 @@ public class SeatMapService {
                 || seatCorrectionRepository.countBySeatMapLayout_Id(seatMapId) > 0) {
             throw new ConflictException(DELETE_REFERENCED_MESSAGE);
         }
+        // 수정 로그는 append-only라 지우지 않는다: 수정·정정 이력이 있으면 삭제를 거부하고,
+        // 최초 인식 로그(RECOGNIZED)만 있으면 그 한 건만 함께 정리한다 (seat_map_revision FK가 RESTRICT)
+        if (revisionRepository.countBySeatMapLayout_IdAndActionTypeNot(seatMapId, SeatMapRevisionAction.RECOGNIZED) > 0) {
+            throw new ConflictException(DELETE_EDITED_MESSAGE);
+        }
+        revisionRepository.deleteAllBySeatMapId(seatMapId);
         if (seatMapLayoutRepository.deleteDraftById(seatMapId) == 0) {
             // 조회 직후 다른 요청이 먼저 지웠다
             throw new NotFoundException(SEATMAP_NOT_FOUND_MESSAGE);
@@ -272,7 +299,7 @@ public class SeatMapService {
         log.info("Draft seatMap {} deleted by user {}", seatMapId, userId);
     }
 
-    // TODO: reportCorrection() — 동일 정정 2건 이상 시 자동 반영 로직
+    // 좌석표 수정·정정 신고·수정 로그 조회는 SeatMapEditService
 
     // ---- 내부 ----
 

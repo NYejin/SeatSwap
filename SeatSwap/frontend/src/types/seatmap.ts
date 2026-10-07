@@ -55,3 +55,37 @@ export interface SeatMapUploadParams {
   zoneName?: string;
   aisleMode?: AisleMode;
 }
+
+// ---- 번호 수정(PATCH /api/seatmaps/{id}/seats)·정정 신고(POST /api/seatmaps/{id}/corrections) ----
+
+/** 수정 대상 필드: ROW_LABEL = 열 번호(row), COL_LABEL = 번 번호(col) */
+export type SeatChangeField = "ROW_LABEL" | "COL_LABEL";
+
+export interface SeatChange {
+  uid: string;
+  field: SeatChangeField;
+  /** 1~9999 */
+  value: number;
+}
+
+export interface UpdateSeatsRequest {
+  /** 화면이 본 version — 다른 사람이 먼저 수정했으면 409 VERSION_CONFLICT */
+  expectedVersion: number;
+  /** 수정 사유(필수, 500자 이하) */
+  reason: string;
+  /** 최대 2000건 */
+  changes: SeatChange[];
+}
+
+export interface SeatCorrectionRequest {
+  uid: string;
+  field: SeatChangeField;
+  value: number;
+  note?: string;
+}
+
+/** PENDING: 접수됨(같은 정정이 2건 이상 모이면 반영), APPLIED: 바로 반영됨 */
+export interface SeatCorrectionResponse {
+  status: "PENDING" | "APPLIED";
+  correctionId: number;
+}

@@ -45,6 +45,10 @@ public class SeatMapLayout {
     // OCR_PENDING, OCR_DONE 등 — 색상/판매상태 매핑은 하지 않음 (결정사항 참고)
     private String ocrStatus;
 
+    /** seatJson 배열 길이 (목록 응답용, V3). 라벨 수정은 좌석 수를 바꾸지 않는다. */
+    @Column(nullable = false)
+    private int seatCount;
+
     /** varchar 컬럼 (Hibernate 6의 MySQL native enum 매핑 방지). */
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -103,8 +107,19 @@ public class SeatMapLayout {
      * TODO(정책 미정): 이미 OFFICIAL 좌석표가 있는 공연장에 같은 구역의 DRAFT를 만들 수 있는지는
      * 아직 정해지지 않았다. 지금은 막지 않는다 (DB 제약도 DRAFT끼리만 유일).
      */
+    @Deprecated // seatCount를 0으로 저장한다. 서비스는 8-인자 오버로드를 쓰고, 이 형태는 테스트 전용이다.
     public static SeatMapLayout createDraft(Venue venue, String zoneName, String seatJson, String ocrStatus,
                                             Integer imageWidth, Integer imageHeight, User createdBy) {
+        return createDraft(venue, zoneName, seatJson, 0, ocrStatus, imageWidth, imageHeight, createdBy);
+    }
+
+    /** seatCount(좌석 수)를 함께 저장하는 생성 팩토리. 서비스는 이쪽을 쓴다. */
+    public static SeatMapLayout createDraft(Venue venue, String zoneName, String seatJson, int seatCount,
+                                            String ocrStatus, Integer imageWidth, Integer imageHeight,
+                                            User createdBy) {
+        if (seatCount < 0) {
+            throw new IllegalArgumentException("좌석 수는 0 이상이어야 합니다.");
+        }
         if (venue == null) {
             throw new IllegalArgumentException("공연장이 필요합니다.");
         }
@@ -121,6 +136,7 @@ public class SeatMapLayout {
         layout.venue = venue;
         layout.zoneName = normalizeZoneName(zoneName);
         layout.seatJson = seatJson;
+        layout.seatCount = seatCount;
         layout.ocrStatus = ocrStatus;
         layout.imageWidth = imageWidth;
         layout.imageHeight = imageHeight;
@@ -152,5 +168,22 @@ public class SeatMapLayout {
         this.status = SeatMapStatus.OFFICIAL;
         this.promotedBy = admin;
         this.promotedAt = now;
+    }
+
+    /**
+     * 좌석 라벨(행/열 번호) 수정 결과를 반영한다. 호출자가 수정된 seat_json과 그 JSON을 실제로 파싱한 좌석 수를 넘긴다.
+     * 라벨 수정은 좌석 수를 바꾸지 않으므로 정상이라면 seatCount는 그대로다. 과거 행처럼 저장된 seat_count가
+     * 실제와 어긋나 있으면 여기서 실제 값으로 바로잡는다 (예외로 막지 않는다).
+     * 이미지·좌표·상태는 건드리지 않는다. version은 @Version이 저장 시 올린다.
+     */
+    public void updateSeatLabels(String newSeatJson, int actualSeatCount) {
+        if (newSeatJson == null || newSeatJson.isBlank()) {
+            throw new IllegalArgumentException("좌석 좌표 데이터가 필요합니다.");
+        }
+        if (actualSeatCount < 0) {
+            throw new IllegalArgumentException("좌석 수는 0 이상이어야 합니다.");
+        }
+        this.seatJson = newSeatJson;
+        this.seatCount = actualSeatCount;
     }
 }

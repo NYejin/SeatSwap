@@ -3,7 +3,9 @@ package com.seatswap.repository;
 import com.seatswap.domain.SeatMapLayout;
 import com.seatswap.domain.SeatMapStatus;
 import com.seatswap.dto.response.SeatMapSummaryResponse;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +19,21 @@ public interface SeatMapLayoutRepository extends JpaRepository<SeatMapLayout, Lo
     /** 상세 조회: 공연장을 함께 읽는다 (open-in-view=false라 트랜잭션 밖에서 lazy 접근 불가). */
     @Query("select l from SeatMapLayout l join fetch l.venue where l.id = :id")
     Optional<SeatMapLayout> findDetailById(@Param("id") Long id);
+
+    /**
+     * 수정·정정 반영용 행 잠금 조회 (SELECT ... FOR UPDATE). 같은 좌석표의 수정·정정 반영을 직렬화한다.
+     * 공연장은 join하지 않는다 (join fetch를 쓰면 공연장 행까지 잠긴다) — 트랜잭션 안에서 lazy로 읽는다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select l from SeatMapLayout l where l.id = :id")
+    Optional<SeatMapLayout> findForUpdateById(@Param("id") Long id);
+
+    /**
+     * 행 잠금만 거는 가벼운 조회 (SELECT id ... FOR UPDATE, seat_json LOB을 읽지 않는다). DRAFT 삭제 전에
+     * 수정·정정 반영과 직렬화하려고 쓴다. 트랜잭션 안에서만 호출한다.
+     */
+    @Query(value = "select id from seat_map_layout where id = :id for update", nativeQuery = true)
+    Optional<Long> lockById(@Param("id") Long id);
 
     /** 구역이 있는 DRAFT의 id (공연장 + 구역당 하나 — uk_seat_map_layout_draft_key). seat_json은 읽지 않는다. */
     @Query("""
@@ -36,7 +53,7 @@ public interface SeatMapLayoutRepository extends JpaRepository<SeatMapLayout, Lo
 
     /** 공연장의 좌석표 목록 (seat_json 미포함). */
     @Query("""
-            select new com.seatswap.dto.response.SeatMapSummaryResponse(l.id, l.zoneName, l.status, l.version, l.createdAt)
+            select new com.seatswap.dto.response.SeatMapSummaryResponse(l.id, l.zoneName, l.status, l.version, l.seatCount, l.createdAt)
             from SeatMapLayout l
             where l.venue.id = :venueId
             order by l.id asc

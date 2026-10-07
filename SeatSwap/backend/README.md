@@ -43,6 +43,16 @@
   `1 | << Flyway Baseline >> | BASELINE` 행 확인. 롤백: 이전 이미지로 되돌리면 된다(스키마는 변경되지 않고 이력 테이블만 추가됨.
   원하면 `DROP TABLE flyway_schema_history`). 이전 이미지는 이력 테이블을 무시하므로 문제없다. 단, 이 롤백은 V1(baseline)만 있는 상태에서만 유효하다. V2 이상이 적용된 DB에 이전 이미지(`ddl-auto: update`)를 올리면 스키마가 앞서 있어 위험하므로 백업 복원으로 되돌린다.
 
+## V3 적용 시 주의 (수정 로그·정정 신고 개편)
+
+- V3(`V3__add_seatmap_revision_and_correction.sql`)는 `seat_map_layout.seat_count`·인덱스 추가, `seat_map_revision`·`seat_map_revision_item` 신설, `seat_correction` 개편(`vote_count` 삭제, 대상 좌석·필드 컬럼 추가)을 한다.
+- **가드**: 구 `seat_correction` 행은 대상 좌석(uid)을 알 수 없어 이관할 수 없으므로, 파일 맨 앞에서 `seat_correction`에 행이 있으면 `SIGNAL`로 즉시 실패한다(아무것도 바꾸기 전에). 적용 전 확인:
+  ```sql
+  SELECT COUNT(*) FROM seat_correction;   -- 0이어야 한다
+  ```
+- 가드로 실패하면 `flyway_schema_history`에 실패 행이 남아 앱이 기동하지 않는다. 절차: ① `seat_correction`을 비우거나 백업한다(`mysqldump`) ② 실패 이력을 `flyway repair`로 지운다(또는 `DELETE FROM flyway_schema_history WHERE success = 0;`) ③ 앱을 다시 기동하면 V3가 처음부터 다시 적용된다. 가드가 실패하면 임시 프로시저(`v3_guard_seat_correction_empty`)가 남을 수 있으나 재시도 때 먼저 DROP 한다.
+- MySQL은 DDL이 트랜잭션에 묶이지 않으므로, 가드 이후 단계에서 중간 실패하면 앞선 변경이 남는다. 이 경우 백업을 복원한 뒤 다시 시도한다.
+
 ## 관리자 권한 / V2 적용 시 주의
 
 - 관리자는 DB에서 직접 부여한다: `UPDATE users SET role = 'ADMIN' WHERE email = '...';` — **반드시 대문자 `ADMIN`으로만**.

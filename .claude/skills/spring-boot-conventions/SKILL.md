@@ -43,6 +43,8 @@ com.seatswap
   동시 인식은 전역 3건·사용자당 1건으로 제한한다(초과 시 429 `RATE_LIMITED` / 503 `BUSY`).
   등록 전 제한 검사(인식 호출 전): 공연장당 구역 상한 20(422 `ZONE_LIMIT_REACHED`, ADMIN 포함), 사용자 24시간 10건(429 `DAILY_LIMIT_REACHED`, ADMIN 제외). 설정은 `seatmap-service.max-zones-per-venue`·`daily-limit-per-user`(환경변수 `SEATMAP_MAX_ZONES_PER_VENUE`·`SEATMAP_DAILY_LIMIT_PER_USER`). 삭제 권한은 작성자·ADMIN(403 `ForbiddenException`, 임시 플래그 true면 누구나), 역할은 JWT가 아니라 `principal.isAdmin()`(DB role) 사용, 응답 `canDelete`. 업스트림 오류는 `SeatMapException`의 오류 코드로 매핑하고 응답 문구는 고정 한국어로 내려 업스트림 내용을 노출하지 않는다. 인식 결과는 저장 전에 검증한다(좌석 6000 상한, 좌석 section 1~50 등).
 
+- 좌석표 수정·정정 신고 관례(`SeatMapEditService`, 2026-10-07): 반영은 좌석표 행을 `FOR UPDATE`로 잠근 뒤 한 트랜잭션에서 처리하고, 낙관적 잠금(`@Version`)·`expectedVersion` 비교로 충돌은 409 `VERSION_CONFLICT`로 돌려준다. 일일 한도는 수정 로그·신고 행을 24시간 윈도로 집계하고(수정 200·신고 30·PENDING 50, `seatmap.*` 설정, ADMIN 제외) 초과 시 429, 락 대기 실패는 503 `BUSY`. 수정 로그는 append-only라 수정·삭제 코드를 두지 않는다. 설정: `SEATMAP_CORRECTION_THRESHOLD`(최소 2)·`SEATMAP_EDIT_DAILY_LIMIT`·`SEATMAP_CORRECTION_DAILY_LIMIT`·`SEATMAP_CORRECTION_PENDING_LIMIT`.
+
 ## DB 스키마 변경 (Flyway)
 - `spring.jpa.hibernate.ddl-auto: validate` — 스키마는 Hibernate가 아니라 Flyway가 관리한다.
 - 스키마 변경은 `src/main/resources/db/migration/V{n}__{snake_description}.sql` **신규 파일로만** 한다.

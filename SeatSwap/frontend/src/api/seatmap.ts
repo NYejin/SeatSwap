@@ -1,7 +1,14 @@
 import axios from "axios";
 import { apiClient } from "./client";
 import { parseApiError } from "./errors";
-import type { SeatMap, SeatMapSummary, SeatMapUploadParams } from "../types/seatmap";
+import type {
+  SeatCorrectionRequest,
+  SeatCorrectionResponse,
+  SeatMap,
+  SeatMapSummary,
+  SeatMapUploadParams,
+  UpdateSeatsRequest,
+} from "../types/seatmap";
 
 // 좌석표 (UC-03/04). 로그인 필요 — 401은 client.ts 인터셉터가 처리한다.
 // 원본 이미지는 서버에 저장되지 않는다(인식 중 메모리에서만 처리 후 폐기).
@@ -40,6 +47,21 @@ export const seatMapApi = {
     return data;
   },
 
+  /**
+   * PATCH /api/seatmaps/{id}/seats → 200 SeatMapResponse(새 version).
+   * DRAFT는 로그인 사용자 누구나, OFFICIAL은 ADMIN만. 오류는 parseSeatEditError로 해석한다.
+   */
+  async updateSeats(id: number, body: UpdateSeatsRequest): Promise<SeatMap> {
+    const { data } = await apiClient.patch<SeatMap>(`/seatmaps/${id}/seats`, body);
+    return data;
+  },
+
+  /** POST /api/seatmaps/{id}/corrections → 201. OFFICIAL만 (DRAFT는 409 — 직접 수정 안내) */
+  async reportCorrection(id: number, body: SeatCorrectionRequest): Promise<SeatCorrectionResponse> {
+    const { data } = await apiClient.post<SeatCorrectionResponse>(`/seatmaps/${id}/corrections`, body);
+    return data;
+  },
+
   // TODO: 임시 기능
   // TEMP-DRAFT-DELETE: 테스트용 임시 기능 — DELETE /api/seatmaps/{id} → 204 (DRAFT만. 404=없음/기능 비활성, 409=OFFICIAL·참조 중)
   async remove(id: number): Promise<void> {
@@ -74,4 +96,30 @@ export function parseSeatMapError(error: unknown, fallback: string): SeatMapErro
     if (typeof record.seatMapId === "number" && Number.isFinite(record.seatMapId)) seatMapId = record.seatMapId;
   }
   return { status: error.response?.status ?? null, code, seatMapId, message, timedOut };
+}
+
+export interface SeatEditErrorInfo {
+  /** conflict: 다른 사람이 먼저 수정함(새로고침 필요) */
+  kind: "conflict" | "message";
+  message: string;
+}
+
+/** 번호 수정(PATCH) 오류를 한국어 안내로 바꾼다. 403·중복 번호는 서버 메시지를 우선 쓴다 */
+export function parseSeatEditError(error: unknown): SeatEditErrorInfo {
+  const info = parseSeatMapError(error, "번호를 저장하지 못했습니다.");
+  if (info.status === 409 && info.code === "VERSION_CONFLICT") {
+    return { kind: "conflict", message: "다른 사용자가 먼저 수정했어요. 새로고침 후 다시 시도해 주세요." };
+  }
+  if (info.status === 422) {
+    if (info.code === "UNKNOWN_SEAT") {
+      return { kind: "message", message: "존재하지 않는 좌석이 포함돼 있어요. 새로고침 후 다시 시도해 주세요." };
+    }
+    if (info.code === "DUPLICATE_SEAT_NUMBER") {
+      return { kind: "message", message: info.message || "겹치는 좌석 번호가 있어요. 번호를 확인해 주세요." };
+    }
+  }
+  if (info.status === 403) {
+    return { kind: "message", message: info.message || "이 좌석표는 수정할 수 없어요. 정식 좌석표는 오류 신고로 정정해 주세요." };
+  }
+  return { kind: "message", message: info.message };
 }

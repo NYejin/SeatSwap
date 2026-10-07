@@ -1,6 +1,6 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 확정된 12개 엔티티 기준선과 네이밍 규칙을 담고 있다. 기준 이미지는 산출물/08_ERD에 있다.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. V1 12개 엔티티 기준선(V3 구현 후 14개, V4 예정 16개)과 네이밍 규칙을 담고 있다. 기준 이미지는 산출물/08_ERD에 있다.
 ---
 
 # ERD 컨벤션
@@ -11,10 +11,11 @@ User, Venue, Performance, **PerformanceSession**, Ticket, SeatMapLayout, SeatCor
 ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
 
 - 2026-10-06 변경: `PerformanceSession`(공연 회차) 추가로 11개 → 12개.
-- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (신규 작성 완료). 현재(V1) 12개 테이블(V2~V4 구현 후 16개 예정) + 예정(V2~V4) 변경을
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (신규 작성 완료). V1 12개 테이블 + V2 변경 + V3 신규 2개(구현 완료·병합 대기, 14개) + V4 예정 2개(16개)를
   함께 그리며, 예정 부분은 노란 배경/주황 헤더로 구분한다. **V2~V4는 구현 후 현재(V1)로 승격**한다 (V2는 구현 완료·master 병합 대기 — 병합 후 승격, 지금은 예정 표기 유지)
-  (승격 시 해당 표기를 흰색으로 되돌리고 이 문서의 기준선을 갱신). 예정 신규 테이블: `seat_map_revision`,
-  `seat_map_revision_item`(V3), `abuse_report`, `user_sanction`(V4) (컬럼은 확정 설계안 기준).
+  (승격 시 해당 표기를 흰색으로 되돌리고 이 문서의 기준선을 갱신). V3 신규 테이블 `seat_map_revision`,
+  `seat_map_revision_item`은 **구현 완료**(2026-10-07, `feature/seatmap-edit-log`, 병합 후 현재로 승격, erd.dot은 구현 SQL 기준으로 정정됨). 예정 신규 테이블: `abuse_report`, `user_sanction`(V4, 컬럼은 확정 설계안 기준).
+  엔티티 수: V1 12 → V2 컬럼 변경만 → V3 +2 = 14 → V4 +2 = 16.
 - V1 SQL의 `performance_session` 주석("같은 회차의 티켓끼리만 교환")은 **공연 단위로 정정됨(V2 주석)**. V1 파일은 수정하지 않는다.
 - 기존 ERD.png(11개 기준)는 폐기 대상이며, graphviz `dot`이 있는 환경에서 `erd.dot`으로 재생성한다.
 
@@ -64,6 +65,10 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
     교환글 등록 시 DRAFT 좌석표를 업로드한다. 서비스의 "좌석표 venue = 공연 venue" 검사는 seatmap_id가 있을 때만 한다.
   - 수정 로그(`seat_map_revision`, `seat_map_revision_item`)·정정 신고(`seat_correction`)는 좌석을 `seat_uid`(seatmap-service의 안정 식별자)로 가리킨다.
     수정 로그는 **append-only**(수정·삭제하지 않음). 신고(`abuse_report`)는 항상 로그에 남기고 관리자가 확인한다.
+  - **V3 구현 사실** (2026-10-07): `seat_map_layout.seat_count`·idx(created_by, created_at) 추가. `seat_map_revision`의 `revision_no`는 `seat_map_layout.version`과 같은 값(결번은 있어도 중복 없음), UK(seatmap_id, revision_no), action_type·layout_status는 `utf8mb4_bin`+CHECK. `seat_correction`은 1신고=1행(`vote_count` 삭제), status NOT NULL+CHECK(PENDING/APPLIED/REJECTED/SUPERSEDED).
+  - **PENDING 한정 중복 방지 패턴**: 종결 뒤에는 재신고를 허용해야 하므로 `status='PENDING'`일 때만 키 문자열을 만드는 생성 컬럼(`pending_key`, STORED, 아니면 NULL)에 UNIQUE를 건다 (NULL은 UNIQUE 대상 제외, V2 `draft_key`와 같은 방식).
+  - **append-only 로그 패턴**: 수정 로그는 INSERT만 한다(엔티티에 setter 없음, FK는 ON DELETE RESTRICT). 수정 로그가 있는 좌석표는 삭제할 수 없다 — 단 현재 코드는 최초 인식 로그(RECOGNIZED)만 있으면 로그째 삭제한다(미결정, soft delete는 V4 설계 후보).
+  - **SIGNAL 가드 패턴**: 데이터를 이관할 수 없는 변경(예: V3의 `seat_correction` 구 스키마 행)은 파일 맨 앞에서 임시 프로시저+`SIGNAL SQLSTATE '45000'`으로 즉시 실패시킨다(MySQL은 DDL이 트랜잭션에 묶이지 않아 중간 실패 시 앞선 변경이 남기 때문). 실패 후에는 `flyway repair` 후 재시도.
   - 제재(`user_sanction`)는 `SEATMAP_EDIT`(수정·신고 정지)/`ACCOUNT`(계정 정지) 두 종류, `imposed_by` NOT NULL(관리자만 부과, 자동 제재 없음).
   - 회원탈퇴는 물리 삭제가 아니라 **익명화**(로그·제재 FK 유지). OFFICIAL 좌석표는 사용자 직접 수정 불가(정정 신고로만), 관리자는 직접 수정 가능.
 - 공연·회차·공연장 (2026-10-06 확정):
