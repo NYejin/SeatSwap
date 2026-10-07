@@ -61,3 +61,12 @@ seatmap-service:
   # TEMP-DRAFT-DELETE (테스트용, 추후 제거 또는 비활성화): true면 로그인한 누구나 DRAFT 삭제 가능.
   # false면 작성자·관리자만 삭제 (DELETE /api/seatmaps/{id}는 항상 존재, 권한 없으면 403)
   dev-draft-delete-enabled: ${SEATMAP_DEV_DRAFT_DELETE:true}
+
+seatmap:
+  # 정식(OFFICIAL) 좌석표 정정 신고: 같은 정정을 서로 다른 신고자 N명이 접수하면 자동 반영 (미만이면 검토 대기)
+  # 2 미만으로 설정해도 2로 고정(WARN): 신고 한 건이 곧 공식 좌석표 수정이 되면 안 된다
+  correction-threshold: ${SEATMAP_CORRECTION_THRESHOLD:2}
+  # 남용 완화: 사용자당 24시간 한도(ADMIN 제외)와 사용자당 검토 대기 신고 상한
+  edit-daily-limit: ${SEATMAP_EDIT_DAILY_LIMIT:200}
+  correction-daily-limit: ${SEATMAP_CORRECTION_DAILY_LIMIT:30}
+  correction-pending-limit: ${SEATMAP_CORRECTION_PENDING_LIMIT:50}

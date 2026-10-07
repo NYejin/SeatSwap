@@ -2,6 +2,7 @@ package com.seatswap.exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -55,6 +56,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
         log.warn("Unclassified data integrity violation: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", DATA_CONFLICT_MESSAGE));
+    }
+
+    // 행 잠금 대기 초과·교착(CannotAcquireLockException 포함) -> 503 일반 문구. 잠시 뒤 다시 시도하면 된다
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, String>> handleLockFailure(PessimisticLockingFailureException e) {
+        log.warn("Lock acquisition failed: {}", e.getClass().getSimpleName());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("code", "BUSY", "message", "요청이 몰려 처리하지 못했어요. 잠시 후 다시 시도해주세요."));
     }
 
     // 좌석표 등록/인식 오류 — {"code": ..., "message": ...} (seatmap-service 오류 형식과 동일)

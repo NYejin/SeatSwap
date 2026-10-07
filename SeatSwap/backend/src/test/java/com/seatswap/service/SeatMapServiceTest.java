@@ -2,6 +2,8 @@ package com.seatswap.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seatswap.domain.SeatMapLayout;
+import com.seatswap.domain.SeatMapRevision;
+import com.seatswap.domain.SeatMapRevisionAction;
 import com.seatswap.domain.SeatMapStatus;
 import com.seatswap.dto.response.SeatMapResponse;
 import com.seatswap.dto.response.SeatMapSeat;
@@ -13,6 +15,7 @@ import com.seatswap.exception.NotFoundException;
 import com.seatswap.exception.SeatMapException;
 import com.seatswap.repository.SeatCorrectionRepository;
 import com.seatswap.repository.SeatMapLayoutRepository;
+import com.seatswap.repository.SeatMapRevisionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
 import com.seatswap.repository.VenueRepository;
@@ -59,11 +62,12 @@ class SeatMapServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SeatCorrectionRepository correctionRepository = mock(SeatCorrectionRepository.class);
     private final TicketRepository ticketRepository = mock(TicketRepository.class);
+    private final SeatMapRevisionRepository revisionRepository = mock(SeatMapRevisionRepository.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-07T03:00:00Z"), ZoneId.of("Asia/Seoul"));
     private final SeatMapService service = newService(3);
 
     private SeatMapService newService(int maxConcurrent) {
-        SeatMapService created = new SeatMapService(layoutRepository, correctionRepository,
+        SeatMapService created = new SeatMapService(layoutRepository, correctionRepository, revisionRepository,
                 venueRepository, userRepository, client, objectMapper, new SyncTransactionManager(),
                 maxConcurrent, 20, clock, 20, 10);
         // TEMP-DRAFT-DELETE: 필드 주입된 의존성/플래그
@@ -143,6 +147,29 @@ class SeatMapServiceTest {
         assertThat(saved.getImageHeight()).isEqualTo(400);
         assertThat(objectMapper.readTree(saved.getSeatJson()).get(0).fieldNames())
                 .toIterable().containsExactlyInAnyOrder("uid", "row", "col", "x", "y", "w", "h", "section");
+    }
+
+    @Test
+    void createDraftStoresSeatCountAndRecognizedRevision() {
+        stubHappyPath();
+
+        service.createDraft(10L, 1L, false, png(), "A구역", null);
+
+        ArgumentCaptor<SeatMapLayout> layoutCaptor = ArgumentCaptor.forClass(SeatMapLayout.class);
+        verify(layoutRepository).saveAndFlush(layoutCaptor.capture());
+        assertThat(layoutCaptor.getValue().getSeatCount()).isEqualTo(2);
+
+        ArgumentCaptor<SeatMapRevision> revisionCaptor = ArgumentCaptor.forClass(SeatMapRevision.class);
+        verify(revisionRepository).save(revisionCaptor.capture());
+        SeatMapRevision revision = revisionCaptor.getValue();
+        assertThat(revision.getActionType()).isEqualTo(SeatMapRevisionAction.RECOGNIZED);
+        assertThat(revision.getRevisionNo()).isEqualTo(1);
+        assertThat(revision.getLayoutStatus()).isEqualTo(SeatMapStatus.DRAFT);
+        assertThat(revision.getActor().getId()).isEqualTo(1L);
+        assertThat(revision.getReason()).isEqualTo("최초 인식");
+        // 좌석 JSON 전체는 로그에 복사하지 않는다
+        assertThat(revision.getBeforeJson()).isNull();
+        assertThat(revision.getAfterJson()).isNull();
     }
 
     @Test
@@ -467,6 +494,7 @@ class SeatMapServiceTest {
     // ---- 삭제 권한 / canDelete ----
 
     private void stubOwner(SeatMapStatus status, Long creatorId) {
+        when(layoutRepository.lockById(55L)).thenReturn(Optional.of(55L));
         when(layoutRepository.findOwnerViewById(55L)).thenReturn(Optional.of(new SeatMapLayoutRepository.OwnerView() {
             @Override
             public SeatMapStatus getStatus() {
@@ -555,6 +583,43 @@ class SeatMapServiceTest {
                 .isInstanceOfSatisfying(ConflictException.class,
                         e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.DELETE_REFERENCED_MESSAGE));
         verify(layoutRepository, never()).deleteDraftById(any());
+    }
+
+    @Test
+    void deleteRejectsEditedDraftAndOnlyCleansInitialRecognizedRevision() {
+        stubOwner(SeatMapStatus.DRAFT, 1L);
+        when(layoutRepository.deleteDraftById(55L)).thenReturn(1);
+
+        // 수정·정정 로그가 있으면 로그(append-only)를 지우지 않으므로 삭제 거부
+        when(revisionRepository.countBySeatMapLayout_IdAndActionTypeNot(55L, SeatMapRevisionAction.RECOGNIZED))
+                .thenReturn(1L);
+        assertThatThrownBy(() -> service.deleteDraft(55L, 1L, false))
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.getMessage()).isEqualTo(SeatMapService.DELETE_EDITED_MESSAGE));
+        verify(revisionRepository, never()).deleteAllBySeatMapId(any());
+        verify(layoutRepository, never()).deleteDraftById(any());
+
+        // 최초 인식 로그만 있으면 그것만 정리하고 삭제
+        when(revisionRepository.countBySeatMapLayout_IdAndActionTypeNot(55L, SeatMapRevisionAction.RECOGNIZED))
+                .thenReturn(0L);
+        service.deleteDraft(55L, 1L, false);
+        verify(revisionRepository).deleteAllBySeatMapId(55L);
+        verify(layoutRepository).deleteDraftById(55L);
+    }
+
+    @Test
+    void deleteLocksRowFirstAndUnknownIs404WithoutFurtherChecks() {
+        when(layoutRepository.lockById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deleteDraft(1L, 1L, true)).isInstanceOf(NotFoundException.class);
+        verify(layoutRepository, never()).findOwnerViewById(any());
+
+        stubOwner(SeatMapStatus.DRAFT, 1L);
+        when(layoutRepository.deleteDraftById(55L)).thenReturn(1);
+        service.deleteDraft(55L, 1L, false);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(layoutRepository);
+        order.verify(layoutRepository).lockById(55L);
+        order.verify(layoutRepository).findOwnerViewById(55L);
     }
 
     @Test

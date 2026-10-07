@@ -4,13 +4,18 @@ import { parseApiError } from "../api/errors";
 import { getErrorStatus } from "../api/performances";
 import { seatMapApi } from "../api/seatmap";
 import SeatMapOverlay from "../components/SeatMapOverlay";
+import SeatMapEditPanel from "../components/SeatMapEditPanel";
 import SeatMapErrorReportButton from "../components/SeatMapErrorReportButton";
+import SeatMapSavePanel from "../components/SeatMapSavePanel";
 import { hasMultipleSections, seatLabel } from "../components/seatLabel";
 import { button, linkButton, liveRegionClass, ui } from "../components/ui";
-import type { SeatCoordinate, SeatMap } from "../types/seatmap";
+import { useAuth } from "../hooks/useAuth";
+import { useSeatEdits } from "../hooks/useSeatEdits";
+import type { SeatMap } from "../types/seatmap";
 
 // UC-03/UC-04 좌석표 보기·좌석 선택 (보호 라우트 /seatmaps/:id/select).
 // 좌표만 받아 SVG로 그린다(원본 이미지는 서버에 없음). DRAFT 좌석표는 확인용으로만 쓴다.
+// 번호 수정: DRAFT는 로그인 사용자 누구나, OFFICIAL은 ADMIN만(UI 분기용, 최종 판정은 서버). 일반 사용자는 OFFICIAL에서 '오류 신고'.
 
 type LoadState =
   | { status: "loading" }
@@ -24,7 +29,7 @@ export default function SeatMapSelectPage() {
   const validId = Number.isInteger(id) && id > 0;
   const [state, setState] = useState<LoadState>(validId ? { status: "loading" } : { status: "notFound" });
   const [retryKey, setRetryKey] = useState(0);
-  const [selected, setSelected] = useState<SeatCoordinate | null>(null);
+  const [selectedUid, setSelectedUid] = useState<string | null>(null);
 
   useEffect(() => {
     if (!validId) {
@@ -33,7 +38,7 @@ export default function SeatMapSelectPage() {
     }
     const controller = new AbortController();
     setState({ status: "loading" });
-    setSelected(null);
+    setSelectedUid(null);
     seatMapApi
       .get(id, controller.signal)
       .then((seatMap) => setState({ status: "success", seatMap }))
@@ -44,6 +49,15 @@ export default function SeatMapSelectPage() {
       });
     return () => controller.abort();
   }, [id, validId, retryKey]);
+
+  // 정정 반영 등 화면을 유지한 채 최신 좌석표로 조용히 갱신 (실패하면 기존 화면 유지)
+  const refresh = () => {
+    if (!validId) return;
+    seatMapApi
+      .get(id)
+      .then((seatMap) => setState({ status: "success", seatMap }))
+      .catch(() => undefined);
+  };
 
   const loadingText = state.status === "loading" ? "좌석표를 불러오는 중..." : "";
 
@@ -76,7 +90,14 @@ export default function SeatMapSelectPage() {
         )}
 
         {state.status === "success" && (
-          <SeatMapView seatMap={state.seatMap} selected={selected} onSelect={setSelected} />
+          <SeatMapView
+            seatMap={state.seatMap}
+            selectedUid={selectedUid}
+            onSelect={setSelectedUid}
+            onSaved={(seatMap) => setState({ status: "success", seatMap })}
+            onRefresh={refresh}
+            onReload={() => setRetryKey((k) => k + 1)}
+          />
         )}
       </div>
     </div>
@@ -85,15 +106,55 @@ export default function SeatMapSelectPage() {
 
 function SeatMapView({
   seatMap,
-  selected,
+  selectedUid,
   onSelect,
+  onSaved,
+  onRefresh,
+  onReload,
 }: {
   seatMap: SeatMap;
-  selected: SeatCoordinate | null;
-  onSelect: (seat: SeatCoordinate) => void;
+  selectedUid: string | null;
+  onSelect: (uid: string) => void;
+  onSaved: (seatMap: SeatMap) => void;
+  onRefresh: () => void;
+  onReload: () => void;
 }) {
+  const { profile } = useAuth();
   const isDraft = seatMap.status === "DRAFT";
+  const canEdit = isDraft || profile?.role === "ADMIN";
+  const [editMode, setEditMode] = useState(false);
+  const edits = useSeatEdits(seatMap.seats);
+  const { previewSeats, changedUids } = edits;
+  const pendingCount = edits.changes.length;
+  const selected = previewSeats.find((s) => s.uid === selectedUid) ?? null;
   const multiSection = hasMultipleSections(seatMap.seats);
+
+  // 저장하지 않은 변경이 있으면 탭 닫기·새로고침 전에 브라우저 경고
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [pendingCount]);
+
+  // 수정 시작/끝 후 포커스가 body로 빠지지 않게 반대편 토글 버튼으로 옮긴다
+  const startRef = useRef<HTMLButtonElement>(null);
+  const endRef = useRef<HTMLButtonElement>(null);
+  const modeToggled = useRef(false);
+  useEffect(() => {
+    if (!modeToggled.current) return;
+    modeToggled.current = false;
+    (editMode ? endRef : startRef).current?.focus();
+  }, [editMode]);
+
+  const toggleEditMode = () => {
+    if (editMode && pendingCount > 0 && !window.confirm(`저장하지 않은 변경 ${pendingCount}건이 사라져요. 수정을 끝낼까요?`)) {
+      return;
+    }
+    if (editMode) edits.reset();
+    modeToggled.current = true;
+    setEditMode(!editMode);
+  };
   const canRender = seatMap.imageWidth > 0 && seatMap.imageHeight > 0 && seatMap.seats.length > 0;
 
   return (
@@ -116,9 +177,10 @@ function SeatMapView({
           <SeatMapOverlay
             imageWidth={seatMap.imageWidth}
             imageHeight={seatMap.imageHeight}
-            seats={seatMap.seats}
+            seats={previewSeats}
             selectedUid={selected?.uid ?? null}
-            onSelectSeat={onSelect}
+            changedUids={changedUids}
+            onSelectSeat={(seat) => onSelect(seat.uid)}
           />
         ) : (
           <p className={ui.body}>표시할 좌석이 없어요.</p>
@@ -133,9 +195,62 @@ function SeatMapView({
           >
             {selected ? seatLabel(selected, multiSection) : "좌석을 눌러 열·번을 확인하세요."}
           </p>
-          {selected && <SeatMapErrorReportButton seat={selected} multiSection={multiSection} />}
+          {/* 오류 신고는 선택 좌석이 있으면 항상 함께 노출 — 정식은 정정 신고, 임시는 번호 수정 안내 */}
+          {selected && !isDraft && (
+            <SeatMapErrorReportButton
+              key={selected.uid}
+              seatMapId={seatMap.id}
+              seat={selected}
+              multiSection={multiSection}
+              onApplied={onRefresh}
+            />
+          )}
+          {selected && isDraft && (
+            <p className={ui.notice}>
+              번호가 실제와 다르면 아래 &apos;번호 수정&apos;으로 직접 고칠 수 있어요. 수정 내용은 기록으로 남아요.
+            </p>
+          )}
         </div>
       </section>
+
+      {canEdit && canRender && (
+        <section className={`${ui.card} flex flex-col gap-3`} aria-labelledby="seatmap-edit-title">
+          <h2 id="seatmap-edit-title" className={ui.sectionTitle}>
+            번호 수정
+          </h2>
+          {!editMode ? (
+            <>
+              <p className={ui.body}>좌석 번호(열·번)가 실제와 다르면 고칠 수 있어요.</p>
+              <div>
+                <button ref={startRef} type="button" className={button.solid} onClick={toggleEditMode}>
+                  번호 수정 시작
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className={ui.body}>좌석을 눌러 선택한 뒤 번호를 바꾸세요. 저장하기 전에는 반영되지 않아요.</p>
+                <button ref={endRef} type="button" className={button.outline} onClick={toggleEditMode}>
+                  수정 끝내기
+                </button>
+              </div>
+              {selected ? (
+                <SeatMapEditPanel seat={selected} multiSection={multiSection} edits={edits} />
+              ) : (
+                <p className={ui.notice}>수정할 좌석을 먼저 눌러 선택해 주세요.</p>
+              )}
+              <SeatMapSavePanel
+                seatMap={seatMap}
+                multiSection={multiSection}
+                edits={edits}
+                onSaved={onSaved}
+                onReload={onReload}
+              />
+            </>
+          )}
+        </section>
+      )}
 
       {/* TODO: 임시 기능 */}
       {/* TEMP-DRAFT-DELETE: 테스트용 임시 기능 — DRAFT만 삭제 후 재업로드. 제거 시 이 줄과 아래 TempDraftDeleteSection 삭제 */}

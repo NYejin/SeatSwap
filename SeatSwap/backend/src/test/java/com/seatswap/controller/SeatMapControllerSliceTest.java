@@ -15,6 +15,7 @@ import com.seatswap.security.JwtAccessDeniedHandler;
 import com.seatswap.security.JwtAuthenticationEntryPoint;
 import com.seatswap.security.JwtTokenProvider;
 import com.seatswap.security.SecurityErrorResponseWriter;
+import com.seatswap.service.SeatMapEditService;
 import com.seatswap.service.SeatMapService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,8 @@ class SeatMapControllerSliceTest {
     private CustomUserDetailsService userDetailsService;
     @MockBean
     private SeatMapService seatMapService;
+    @MockBean
+    private SeatMapEditService seatMapEditService;
 
     private static final String AUTH = "Bearer good";
 
@@ -174,13 +177,13 @@ class SeatMapControllerSliceTest {
     @Test
     void listReturnsArrayIncludingEmpty() throws Exception {
         when(seatMapService.listByVenue(10L)).thenReturn(List.of(
-                new SeatMapSummaryResponse(55L, null, SeatMapStatus.DRAFT, 1, LocalDateTime.of(2026, 10, 7, 12, 0, 1))));
+                new SeatMapSummaryResponse(55L, null, SeatMapStatus.DRAFT, 1, 2, LocalDateTime.of(2026, 10, 7, 12, 0, 1))));
         when(seatMapService.listByVenue(11L)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/venues/10/seatmaps").header("Authorization", AUTH))
                 .andExpect(status().isOk())
                 .andExpect(content().json(
-                        "[{\"id\":55,\"zoneName\":null,\"status\":\"DRAFT\",\"version\":1,\"createdAt\":\"2026-10-07T12:00:01\"}]", true));
+                        "[{\"id\":55,\"zoneName\":null,\"status\":\"DRAFT\",\"version\":1,\"seatCount\":2,\"createdAt\":\"2026-10-07T12:00:01\"}]", true));
         mockMvc.perform(get("/api/venues/11/seatmaps").header("Authorization", AUTH))
                 .andExpect(status().isOk()).andExpect(content().json("[]", true));
     }
