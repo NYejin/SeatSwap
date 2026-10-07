@@ -23,8 +23,6 @@ export interface PerformanceDetail {
   sourceUrl: string;
   venueName: string;
   registrant: { id: number; nickname: string };
-  /** 현재 사용자가 등록자인지 (제목 수정, 회차 수정·삭제, 공연 삭제 노출용 — 서버도 동일하게 검사) */
-  canEdit: boolean;
   sessions: PerformanceSession[];
   createdAt: string;
 }
@@ -54,14 +52,4 @@ export interface PerformanceCreateRequest {
   venueName: string;
   /** 회차 시작 시각 목록 (1개 이상) */
   sessions: string[];
-}
-
-/** PATCH /api/performances/{id} — 보낸 항목만 바뀐다 */
-export interface PerformanceUpdateRequest {
-  title?: string;
-}
-
-/** POST·PATCH 회차 */
-export interface SessionRequest {
-  startsAt: string;
 }
