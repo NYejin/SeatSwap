@@ -19,8 +19,6 @@
   - `config/SecurityConfig` — JWT 필터 등록, CORS(개발용 localhost:5173 허용), `/api/auth/**` permitAll
   - `service/AuthService`, `controller/AuthController` — POST /api/auth/signup, /login, /refresh
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
-- 좌석 인식(OpenCV/OCR)은 이 서버가 아니라 ../seatmap-service(FastAPI)에서 처리,
-  이 서버는 결과 좌표 JSON을 받아 SeatMapLayout에 저장하는 역할만 한다
 
 ## 인증 API
 

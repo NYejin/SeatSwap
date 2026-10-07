@@ -10,7 +10,9 @@
 - **차액 거래**: 좌석 등급 차이가 있을 경우 한쪽이 추가 금액을 지불하며 교환
 - 매칭은 추천 알고리즘이 아닌 **단순 1:1 신청/수락** 구조
 
-## 기술적으로 가장 도전적이었던 부분 — 좌석맵 자동 인식
+## 좌석표 이미지 인식 (후순위 보류, 코드는 태그에 보관)
+
+> 2026-10-07 방향 전환: 현재 메인 브랜치에서는 제외했습니다. 구현은 git 태그 `archive/seatmap-track-20261007`에 보관되어 있고, 당분간 사용자가 좌석을 텍스트(구역·열·번)로 입력하는 방식으로 먼저 서비스합니다.
 
 티켓팅 사이트 좌석맵 이미지를 스크래핑한 뒤, **딥러닝 없이 고전적 컴퓨터비전**(배경 제외 + `connectedComponentsWithStats`)만으로 개별 좌석 좌표를 검출합니다. 실제 멜론티켓 개별좌석도 이미지로 검증한 결과, 약 207~210개 좌석 블록을 정확히 검출했습니다. 이후 Tesseract OCR로 행 번호를 인식하고, x좌표 순서로 열 번호를 자동 부여합니다. 인식 오류는 사용자 신고 기반으로 보정되며(동일 정정 2건 이상 시 자동 반영), 한 번 보정된 공연장 좌석맵은 이후 재사용됩니다.
 
@@ -21,16 +23,17 @@
 | Frontend | React, TypeScript, Vite | 인터랙티브 UI(좌석맵 오버레이, 채팅)에 적합, 타입 안전성 |
 | Backend | Spring Boot, Spring Security(JWT), JPA, WebSocket(STOMP) | 11개 엔티티의 관계형 데이터 처리, 성숙한 인증 생태계 |
 | DB | MySQL | FK 관계가 많은 구조에 적합 |
-| 이미지 인식 서버 | FastAPI, OpenCV, Tesseract OCR | Python이 이미지/OCR 생태계의 중심, 메인 서버와 책임 분리 |
+| 이미지 인식 서버 | FastAPI, OpenCV, Tesseract OCR | Python이 이미지/OCR 생태계의 중심, 메인 서버와 책임 분리 (후순위 보류, 태그 보관) |
 
-백엔드(`backend`)와 좌석 인식 서버(`seatmap-service`)를 별도 프로세스로 분리한 이유 등, 더 자세한 설계 근거는 [`CLAUDE.md`](./CLAUDE.md)와 [`산출물/03_프로젝트계획서`](./산출물/03_프로젝트계획서)에 정리되어 있습니다.
+더 자세한 설계 근거는 [`CLAUDE.md`](./CLAUDE.md)와 [`산출물/03_프로젝트계획서`](./산출물/03_프로젝트계획서)에 정리되어 있습니다.
 
 ## 구현 현황
 
 - [x] 기획/설계 문서화 (프로젝트계획서, 요구사항정의서, WBS, ERD)
 - [x] Spring Boot / React / FastAPI 스켈레톤 및 Docker Compose 구성
 - [x] 회원가입 / 로그인 / JWT 인증 (access·refresh 토큰, 자동 재발급)
-- [ ] 공연 등록 및 좌석맵 인식 파이프라인
+- [x] 공연·공연장·회차 등록/조회
+- [ ] 좌석표 이미지 인식 (후순위 보류, 태그 `archive/seatmap-track-20261007`에 보관)
 - [ ] 교환 요청 / 1:1 매칭
 - [ ] 실시간 채팅
 - [ ] 거래 상태 관리 / 리뷰·신뢰도
@@ -44,7 +47,6 @@
 ├── SeatSwap/           # 소스코드
 │   ├── backend/            # Spring Boot
 │   ├── frontend/            # React + Vite
-│   ├── seatmap-service/     # FastAPI + OpenCV/OCR
 │   └── docker-compose.yml
 └── 산출물/             # 문서 산출물
     ├── 03_프로젝트계획서
@@ -57,7 +59,7 @@
 
 ## 로컬에서 실행하기
 
-Docker Compose로 전체 스택(MySQL + backend + seatmap-service + frontend)을 한 번에 띄울 수 있습니다.
+Docker Compose로 전체 스택(MySQL + backend + frontend)을 한 번에 띄울 수 있습니다.
 
 ```bash
 cd SeatSwap
@@ -69,7 +71,6 @@ docker compose up --build
 |---|---|
 | 프론트엔드 | http://localhost:5173 |
 | 백엔드 API | http://localhost:8080/api |
-| 좌석 인식 서비스 | http://localhost:8001 |
 
 자세한 실행 방법(개별 가상환경 실행, 트러블슈팅 등)은 [`SeatSwap/README.md`](./SeatSwap/README.md)를 참고하세요.
 

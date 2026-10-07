@@ -13,9 +13,6 @@ backend/bin/
 frontend/node_modules/
 frontend/dist/
 
-# seatmap-service (Python)
-seatmap-service/.venv/
-seatmap-service/__pycache__/
 **/__pycache__/
 *.pyc
 
