@@ -16,7 +16,6 @@ import com.seatswap.security.JwtAuthenticationEntryPoint;
 import com.seatswap.security.JwtTokenProvider;
 import com.seatswap.security.SecurityErrorResponseWriter;
 import com.seatswap.service.PerformanceService;
-import com.seatswap.service.PerformanceSessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,8 +63,6 @@ class PerformanceControllerSliceTest {
     private CustomUserDetailsService userDetailsService;
     @MockBean
     private PerformanceService performanceService;
-    @MockBean
-    private PerformanceSessionService sessionService;
 
     @BeforeEach
     void setUp() {
@@ -93,7 +90,6 @@ class PerformanceControllerSliceTest {
                 .andExpect(content().json("{\"message\":\"로그인이 필요합니다.\"}", true));
         mockMvc.perform(post("/api/performances").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(delete("/api/performances/1")).andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -203,68 +199,6 @@ class PerformanceControllerSliceTest {
     }
 
     @Test
-    void updateByNonRegistrantIs403() throws Exception {
-        when(performanceService.update(eq(100L), eq(1L), any()))
-                .thenThrow(new AccessDeniedException("접근 권한이 없습니다."));
-        mockMvc.perform(auth(patch("/api/performances/100")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"새 제목\"}"))
-                .andExpect(status().isForbidden())
-                .andExpect(content().json("{\"message\":\"접근 권한이 없습니다.\"}", true));
-    }
-
-    @Test
-    void updateIgnoresUnknownFieldsAndPassesTitleOnly() throws Exception {
-        // 수정 요청 DTO에는 title만 있다. venueName·venueId 같은 알 수 없는 필드는 400 없이 무시된다.
-        when(performanceService.update(eq(100L), eq(1L), any())).thenReturn(detail(true));
-        mockMvc.perform(auth(patch("/api/performances/100")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"새 제목\",\"venueName\":\"다른 공연장\",\"venueId\":11}"))
-                .andExpect(status().isOk());
-        verify(performanceService).update(eq(100L), eq(1L), argThat(r -> "새 제목".equals(r.title())));
-    }
-
-    @Test
-    void updateReturnsDetailAndDeleteReturns204() throws Exception {
-        when(performanceService.update(eq(100L), eq(1L), any())).thenReturn(detail(true));
-        mockMvc.perform(auth(patch("/api/performances/100")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"새 제목\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.registrant.nickname").value("등록자"));
-
-        mockMvc.perform(auth(delete("/api/performances/100"))).andExpect(status().isNoContent());
-        verify(performanceService).delete(100L, 1L);
-    }
-
-    @Test
-    void sessionEndpoints() throws Exception {
-        when(sessionService.add(100L, SHOW)).thenReturn(new SessionResponse(7L, SHOW));
-        mockMvc.perform(auth(post("/api/performances/100/sessions")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"startsAt\":\"2026-11-01T19:00\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(content().json("{\"id\":7,\"startsAt\":\"2026-11-01T19:00\"}", true));
-
-        when(sessionService.add(100L, SHOW.plusDays(1))).thenThrow(new ConflictException("이미 등록된 회차입니다."));
-        mockMvc.perform(auth(post("/api/performances/100/sessions")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"startsAt\":\"2026-11-02T19:00\"}"))
-                .andExpect(status().isConflict())
-                .andExpect(content().json("{\"message\":\"이미 등록된 회차입니다.\"}", true));
-
-        mockMvc.perform(auth(post("/api/performances/100/sessions")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(content().json("{\"startsAt\":\"회차 일시를 입력해주세요.\"}", true));
-
-        when(sessionService.reschedule(100L, 7L, 1L, SHOW.plusHours(1)))
-                .thenReturn(new SessionResponse(7L, SHOW.plusHours(1)));
-        mockMvc.perform(auth(patch("/api/performances/100/sessions/7")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"startsAt\":\"2026-11-01T20:00\"}"))
-                .andExpect(status().isOk())
-                .andExpect(content().json("{\"id\":7,\"startsAt\":\"2026-11-01T20:00\"}", true));
-
-        mockMvc.perform(auth(delete("/api/performances/100/sessions/7"))).andExpect(status().isNoContent());
-        verify(sessionService).delete(100L, 7L, 1L);
-    }
-
-    @Test
     void asOfParameterIsParsedAndInvalidFormatIs400() throws Exception {
         when(performanceService.search(eq(null), eq(1), eq(20), eq(LocalDateTime.of(2026, 10, 6, 12, 0))))
                 .thenReturn(new PageResponse<>(List.of(), 1, 20, 0, 0));
@@ -279,9 +213,12 @@ class PerformanceControllerSliceTest {
 
     @Test
     void unclassifiedIntegrityViolationIs409GenericMessage() throws Exception {
-        when(sessionService.add(100L, SHOW)).thenThrow(new DataIntegrityViolationException("fk"));
-        mockMvc.perform(auth(post("/api/performances/100/sessions")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"startsAt\":\"2026-11-01T19:00\"}"))
+        when(performanceService.create(eq(1L), any(PerformanceCreateRequest.class)))
+                .thenThrow(new DataIntegrityViolationException("fk"));
+        mockMvc.perform(auth(post("/api/performances")).contentType(MediaType.APPLICATION_JSON).content("""
+                        {"sourceUrl":"https://tickets.interpark.com/goods/1","title":"두아 리파 내한",
+                         "venueName":"KSPO DOME","sessions":["2026-11-01T19:00"]}
+                        """))
                 .andExpect(status().isConflict())
                 .andExpect(content().json("{\"message\":\"요청이 다른 변경과 충돌했습니다. 다시 시도해주세요.\"}", true));
     }

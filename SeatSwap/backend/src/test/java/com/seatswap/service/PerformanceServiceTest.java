@@ -4,7 +4,6 @@ import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
 import com.seatswap.dto.request.PerformanceCreateRequest;
-import com.seatswap.dto.request.PerformanceUpdateRequest;
 import com.seatswap.dto.response.PageResponse;
 import com.seatswap.dto.response.PerformanceDetailResponse;
 import com.seatswap.dto.response.PerformanceSummaryResponse;
@@ -14,7 +13,6 @@ import com.seatswap.exception.NotFoundException;
 import com.seatswap.exception.SeatSwapException;
 import com.seatswap.repository.PerformanceRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
-import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,7 +54,6 @@ class PerformanceServiceTest {
     private PerformanceRepository performanceRepository;
     private PerformanceSessionRepository sessionRepository;
     private UserRepository userRepository;
-    private TicketRepository ticketRepository;
     private PerformanceService service;
 
     private final User registrant = user(1L, "등록자");
@@ -67,9 +64,8 @@ class PerformanceServiceTest {
         performanceRepository = mock(PerformanceRepository.class);
         sessionRepository = mock(PerformanceSessionRepository.class);
         userRepository = mock(UserRepository.class);
-        ticketRepository = mock(TicketRepository.class);
         service = new PerformanceService(performanceRepository, sessionRepository, userRepository,
-                ticketRepository, new SourceKeyResolver(), PerformanceFixtures.timePolicy(),
+                new SourceKeyResolver(), PerformanceFixtures.timePolicy(),
                 PerformanceFixtures.noopTransactionManager());
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(registrant));
@@ -247,55 +243,6 @@ class PerformanceServiceTest {
         assertThatThrownBy(() -> service.search(null, -1, 20, null)).isInstanceOf(FieldValidationException.class);
     }
 
-    // ---- update / delete ----
-
-    @Test
-    void updateByNonRegistrantIsForbidden() {
-        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(performance(100L, kspo, registrant)));
-        assertThatThrownBy(() -> service.update(100L, 2L, new PerformanceUpdateRequest("새 제목")))
-                .isInstanceOf(AccessDeniedException.class)
-                .hasMessage("접근 권한이 없습니다.");
-    }
-
-    @Test
-    void updateChangesTitleOnlyAndKeepsVenueName() {
-        Performance p = performance(100L, kspo, registrant);
-        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(p));
-        when(sessionRepository.findByPerformance_IdOrderByStartsAtAsc(100L)).thenReturn(List.of());
-
-        PerformanceDetailResponse detail = service.update(100L, 1L, new PerformanceUpdateRequest(" 새 제목 "));
-
-        assertThat(detail.title()).isEqualTo("새 제목");
-        assertThat(detail.venueName()).isEqualTo("KSPO DOME");
-        assertThat(p.getVenueName()).isEqualTo("KSPO DOME");
-    }
-
-    @Test
-    void updateWithoutTitleIsRejected() {
-        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(performance(100L, kspo, registrant)));
-        assertThatThrownBy(() -> service.update(100L, 1L, new PerformanceUpdateRequest(null)))
-                .isInstanceOf(SeatSwapException.class)
-                .hasMessage("수정할 항목이 없습니다.");
-    }
-
-    @Test
-    void deleteChecksOwnershipAndTicketsThenDeletesSessionsFirst() {
-        Performance p = performance(100L, kspo, registrant);
-        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(p));
-
-        assertThatThrownBy(() -> service.delete(100L, 2L)).isInstanceOf(AccessDeniedException.class);
-
-        when(ticketRepository.countByPerformanceSession_Performance_Id(100L)).thenReturn(2L);
-        assertThatThrownBy(() -> service.delete(100L, 1L)).isInstanceOf(ConflictException.class);
-        verify(performanceRepository, never()).deleteById(anyLong());
-
-        when(ticketRepository.countByPerformanceSession_Performance_Id(100L)).thenReturn(0L);
-        service.delete(100L, 1L);
-        InOrder order = inOrder(sessionRepository, performanceRepository);
-        order.verify(sessionRepository).deleteByPerformanceId(100L);
-        order.verify(performanceRepository).deleteById(100L);
-    }
-
     // ---- 리뷰 반영 ----
 
     @Test
@@ -318,15 +265,6 @@ class PerformanceServiceTest {
         service.search(null, 0, 20, asOf);
 
         verify(sessionRepository).findStats(List.of(100L), truncated);
-    }
-
-    @Test
-    void updateAndDeleteLockPerformanceRowAndMissingIs404() {
-        when(performanceRepository.findByIdForUpdate(404L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.update(404L, 1L, new PerformanceUpdateRequest("t")))
-                .isInstanceOf(NotFoundException.class);
-        assertThatThrownBy(() -> service.delete(404L, 1L)).isInstanceOf(NotFoundException.class);
-        verify(performanceRepository, never()).findById(anyLong());
     }
 
     // ---- 10분 단위 ----

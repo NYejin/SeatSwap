@@ -3,9 +3,7 @@ package com.seatswap.repository;
 import com.seatswap.domain.Performance;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -13,11 +11,6 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface PerformanceRepository extends JpaRepository<Performance, Long> {
-
-    /** 쓰기 잠금 조회 (SELECT ... FOR UPDATE). 연관은 fetch하지 않는다 - 공유 행(users)까지 잠그지 않도록. */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select p from Performance p where p.id = :id")
-    Optional<Performance> findByIdForUpdate(@Param("id") Long id);
 
     @Query("select p.id from Performance p where p.sourceKey = :sourceKey")
     Optional<Long> findIdBySourceKey(@Param("sourceKey") String sourceKey);

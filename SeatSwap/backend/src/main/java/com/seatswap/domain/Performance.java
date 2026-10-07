@@ -22,9 +22,8 @@ import java.time.LocalDateTime;
  * 공연장은 별도 테이블 없이 공연의 텍스트 속성(venueName)이다. 등록 후 수정할 수 없다
  * (티켓팅 링크에서 자동으로 읽어 채울 예정이라 사용자 수정을 열지 않는다).
  *
- * 수정/삭제 정책: 등록자만. 제목 수정 가능,
- * sourceUrl/sourceKey/venueName은 수정 불가(잘못 넣었으면 삭제 후 재등록). 삭제는 하위 회차에 티켓이
- * 하나도 없을 때만.
+ * 수정/삭제 정책: 등록 후 아무도 수정·삭제할 수 없다(제목·공연장·링크 모두). 수정은 추후 관리자 수정 제안으로만.
+ * 등록자(registrant)는 상세 응답의 canEdit 표시 등에 쓰는 기록이다.
  */
 @Entity
 @Table(
@@ -66,7 +65,7 @@ public class Performance {
     @Column(name = "source_key", nullable = false, updatable = false, length = SOURCE_KEY_MAX_LENGTH)
     private String sourceKey;
 
-    /** 등록자. 수정/삭제 권한 판정에 쓴다. */
+    /** 등록자. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "registrant_id", nullable = false, updatable = false)
     private User registrant;
@@ -98,11 +97,6 @@ public class Performance {
         performance.sourceKey = sourceKey;
         performance.registrant = registrant;
         return performance;
-    }
-
-    /** 제목 수정 (등록자 권한은 서비스에서 확인). */
-    public void changeTitle(String title) {
-        this.title = cleanTitle(title);
     }
 
     /** 등록자 여부. LAZY 프록시의 id만 읽으므로 추가 쿼리가 나가지 않는다. */

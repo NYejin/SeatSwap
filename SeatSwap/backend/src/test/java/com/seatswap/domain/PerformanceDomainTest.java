@@ -62,8 +62,6 @@ class PerformanceDomainTest {
                 LocalDateTime.of(2026, 12, 24, 19, 0, 30, 123));
 
         assertThat(session.getStartsAt()).isEqualTo(LocalDateTime.of(2026, 12, 24, 19, 0));
-        session.reschedule(LocalDateTime.of(2026, 12, 25, 18, 0, 59));
-        assertThat(session.getStartsAt()).isEqualTo(LocalDateTime.of(2026, 12, 25, 18, 0));
         assertThatThrownBy(() -> PerformanceSession.create(performance, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
