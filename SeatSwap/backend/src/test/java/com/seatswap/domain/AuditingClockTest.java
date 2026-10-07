@@ -61,15 +61,13 @@ class AuditingClockTest {
     @Test
     void 생성시각은_Clock의_KST_기준으로_채워진다() {
         User user = User.create("a@b.com", "encoded", "닉네임");
-        Venue venue = Venue.create("KSPO DOME", null);
-        Performance performance = Performance.create(venue, "콘서트", "https://example.com/goods/1",
+        Performance performance = Performance.create("KSPO DOME", "콘서트", "https://example.com/goods/1",
                 "example:1", user);
         PerformanceSession session = PerformanceSession.create(performance, KST_NOW.plusDays(30));
 
-        List.of(user, venue, performance, session).forEach(auditingHandler::markCreated);
+        List.of(user, performance, session).forEach(auditingHandler::markCreated);
 
         assertThat(user.getCreatedAt()).isEqualTo(KST_NOW);
-        assertThat(venue.getCreatedAt()).isEqualTo(KST_NOW);
         assertThat(performance.getCreatedAt()).isEqualTo(KST_NOW);
         assertThat(performance.getUpdatedAt()).isEqualTo(KST_NOW);
         assertThat(session.getCreatedAt()).isEqualTo(KST_NOW);
@@ -77,7 +75,7 @@ class AuditingClockTest {
 
     @Test
     void 수정시각은_수정때_갱신되고_생성시각은_유지된다() {
-        Performance performance = Performance.create(Venue.create("KSPO DOME", null), "콘서트",
+        Performance performance = Performance.create("KSPO DOME", "콘서트",
                 "https://example.com/goods/1", "example:1", User.create("a@b.com", "encoded", "닉네임"));
         org.springframework.test.util.ReflectionTestUtils.setField(performance, "createdAt", KST_NOW.minusDays(1));
 
@@ -90,7 +88,7 @@ class AuditingClockTest {
 
     @Test
     void 시각_필드가_있는_엔티티는_AuditingEntityListener를_등록한다() {
-        for (Class<?> type : List.of(User.class, Venue.class, Performance.class, PerformanceSession.class)) {
+        for (Class<?> type : List.of(User.class, Performance.class, PerformanceSession.class)) {
             EntityListeners listeners = type.getAnnotation(EntityListeners.class);
             assertThat(listeners).as(type.getSimpleName()).isNotNull();
             assertThat(listeners.value()).as(type.getSimpleName()).contains(AuditingEntityListener.class);

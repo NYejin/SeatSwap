@@ -3,7 +3,6 @@ package com.seatswap.service;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
-import com.seatswap.domain.Venue;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -40,14 +39,8 @@ final class PerformanceFixtures {
         return user;
     }
 
-    static Venue venue(long id, String name) {
-        Venue venue = Venue.create(name, null);
-        ReflectionTestUtils.setField(venue, "id", id);
-        return venue;
-    }
-
-    static Performance performance(long id, Venue venue, User registrant) {
-        Performance performance = Performance.create(venue, "공연 " + id,
+    static Performance performance(long id, String venueName, User registrant) {
+        Performance performance = Performance.create(venueName, "공연 " + id,
                 "https://tickets.interpark.com/goods/" + id, "interpark:" + id, registrant);
         ReflectionTestUtils.setField(performance, "id", id);
         return performance;

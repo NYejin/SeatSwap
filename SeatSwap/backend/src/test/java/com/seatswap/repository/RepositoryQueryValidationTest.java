@@ -33,8 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RepositoryQueryValidationTest {
 
     @Autowired
-    private VenueRepository venueRepository;
-    @Autowired
     private PerformanceRepository performanceRepository;
     @Autowired
     private PerformanceSessionRepository performanceSessionRepository;
@@ -45,7 +43,6 @@ class RepositoryQueryValidationTest {
 
     @Test
     void allRepositoryQueriesParse() {
-        assertThat(venueRepository).isNotNull();
         assertThat(performanceRepository).isNotNull();
         assertThat(performanceSessionRepository).isNotNull();
         assertThat(ticketRepository).isNotNull();

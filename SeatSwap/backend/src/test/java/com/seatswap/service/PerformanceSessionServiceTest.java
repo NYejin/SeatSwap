@@ -3,7 +3,6 @@ package com.seatswap.service;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
-import com.seatswap.domain.Venue;
 import com.seatswap.dto.response.SessionResponse;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
@@ -25,7 +24,6 @@ import static com.seatswap.service.PerformanceFixtures.performance;
 import static com.seatswap.service.PerformanceFixtures.session;
 import static com.seatswap.service.PerformanceFixtures.uniqueViolation;
 import static com.seatswap.service.PerformanceFixtures.user;
-import static com.seatswap.service.PerformanceFixtures.venue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -42,7 +40,7 @@ class PerformanceSessionServiceTest {
     private PerformanceSessionService service;
 
     private final User registrant = user(1L, "등록자");
-    private final Venue kspo = venue(10L, "KSPO DOME");
+    private final String kspo = "KSPO DOME";
     private Performance performance;
     private final LocalDateTime future = NOW.plusDays(5).withHour(19);
 

@@ -1,7 +1,7 @@
 # SeatSwap Backend (Spring Boot)
 
 ## 패키지 구조
-- domain       — JPA 엔티티 5종 (User·Venue·Performance·PerformanceSession·Ticket)과 enum UserRole·VenueStatus (08_ERD 기준)
+- domain       — JPA 엔티티 4종 (User·Performance·PerformanceSession·Ticket)과 enum UserRole (공연장은 Performance.venueName 텍스트, V2에서 venue 테이블 삭제)
 - repository   — JpaRepository
 - service      — 비즈니스 로직
 - controller   — REST API + WebSocket(STOMP)
@@ -12,7 +12,7 @@
 
 ## 현재 상태
 - 2026-10-07 방향 전환으로 좌석표 트랙 코드와 교환·채팅·후기 등 빈 스켈레톤(컨트롤러·서비스·저장소)을 삭제했다. 좌석표 코드는 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
-- 엔티티는 User·Venue·Performance·PerformanceSession·Ticket 5종이다. Ticket은 엔티티·저장소만 있고 티켓 등록 API는 아직 없다.
+- 엔티티는 User·Performance·PerformanceSession·Ticket 4종이다. Ticket은 엔티티·저장소만 있고 티켓 등록 API는 아직 없다.
 - **회원가입/로그인/JWT 인증(FR-01)은 구현 완료**:
   - `security/JwtTokenProvider` — access/refresh 토큰 발급·검증 (jjwt 0.12.5)
   - `security/JwtAuthenticationFilter` — Authorization 헤더 검증 후 SecurityContext 설정
@@ -20,9 +20,9 @@
   - `config/SecurityConfig` — JWT 필터 등록, CORS(개발용 localhost:5173 허용), `/api/auth/**` permitAll, `/api/admin/**`는 ADMIN 권한 (해당 컨트롤러는 아직 없음)
   - `service/AuthService`, `controller/AuthController` — POST /api/auth/signup, /login, /refresh
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
-- **공연·공연장·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `VenueController`, `PerformanceService`, `PerformanceSessionService`, `VenueService`)
+- **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`, `PerformanceSessionService`). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이며 등록 후 수정할 수 없다.
 - 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
-- 테스트는 182건이다.
+- 테스트는 169건이다.
 
 ## 인증 API
 
@@ -39,13 +39,11 @@
 | Method | Path | 설명 |
 |---|---|---|
 | GET | /api/users/me | 내 정보 조회 |
-| GET | /api/venues | 공연장 이름 검색 (query, 최대 20건) |
-| POST | /api/venues | 공연장 등록 (정규화 이름이 같으면 200 + 기존 공연장, 없으면 201) |
-| GET | /api/performances | 공연 목록 (query, venueId, page, size, asOf) |
+| GET | /api/performances | 공연 목록 (제목 검색 query, page, size, asOf) |
 | GET | /api/performances/lookup | 링크(sourceUrl)로 기존 공연 조회 ({exists, performanceId}) |
 | GET | /api/performances/{id} | 공연 상세 |
 | POST | /api/performances | 공연 등록 (201, 같은 링크가 있으면 409 + performanceId) |
-| PATCH | /api/performances/{id} | 공연 수정 |
+| PATCH | /api/performances/{id} | 공연 제목 수정 (공연장 이름은 수정 불가) |
 | DELETE | /api/performances/{id} | 공연 삭제 |
 | POST | /api/performances/{id}/sessions | 회차 추가 (201, 같은 시각이면 409) |
 | PATCH | /api/performances/{id}/sessions/{sessionId} | 회차 일시 변경 (등록자만, 티켓 0건일 때만) |
@@ -55,19 +53,24 @@
 
 ## DB 마이그레이션 (Flyway)
 
-- 마이그레이션 파일: `src/main/resources/db/migration/V{n}__{snake_description}.sql` (V1 = 새 기준선: `users`, `venue`, `performance`, `performance_session`, `ticket` 5개 테이블, 한국어 주석)
+- 마이그레이션 파일: `src/main/resources/db/migration/V{n}__{snake_description}.sql` (V1 = 새 기준선 5개 테이블, V2 = `venue` 삭제·`performance.venue_name` 추가, 한국어 주석)
 - 적용 이력: `SELECT * FROM flyway_schema_history;` (docker: `docker exec seatswap-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" seatswap -e "SELECT * FROM flyway_schema_history"'`)
 - 규칙: 스키마 변경은 새 V 파일로만, 적용된 파일 수정 금지, `ddl-auto: validate`, 엔티티 변경과 마이그레이션을 함께 작성
 - 앱 기동 시 자동 적용된다.
 - 2026-10-07에 좌석표 트랙을 걷어내며 기준선을 새로 만들었다. 이전 V1~V3(12개+좌석표 테이블)와 좌석표 코드는 git 태그
   `archive/seatmap-track-20261007`에 보관되어 있다. **이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 볼륨을 지운 뒤 다시 띄운다**
   (지우지 않으면 `flyway_schema_history`에 남은 옛 V1 체크섬이 달라 기동하지 않는다).
+- **V2 적용 안내 (`venue` 삭제)**: 공연장은 `performance.venue_name` 텍스트가 되고 `venue` 테이블은 삭제된다.
+  - 적용 전 점검: `SELECT COUNT(*) FROM performance p LEFT JOIN venue v ON v.id = p.venue_id WHERE v.id IS NULL;` 이 0이어야 한다(venue에 연결되지 않은 공연). 사라질 정보(`SELECT * FROM venue;`)도 확인한다.
+  - 백업 권장: 적용 전 `mysqldump`로 `venue`·`performance`를 받아 둔다.
+  - 되돌릴 수 없는 손실: `venue.address`, `status`, `verified_by`, `verified_at`, `normalized_name`.
+  - 가드 실패(venue 매칭 없는 공연이 있어 SIGNAL로 중단)한 경우: 임시 프로시저 `v2_drop_venue`와 NULL 허용 `venue_name` 컬럼이 남을 수 있다. 데이터를 고친 뒤 `flyway repair`로 실패 기록을 지우고 다시 적용하면 남은 단계부터 이어서 진행된다(프로시저는 재실행 시 먼저 DROP 된다).
 - MySQL 최소 버전 8.0.16 — 그 미만은 CHECK 제약을 문법만 받고 강제하지 않는다 (현재 docker 이미지는 mysql:8.0).
 
 ## 관리자 권한
 
 - 관리자는 DB에서 직접 부여한다: `UPDATE users SET role = 'ADMIN' WHERE email = '...';` — **반드시 대문자 `ADMIN`으로만**.
-  `users.role`, `venue.status`는 `utf8mb4_bin` 컬럼이라 소문자(`admin`)는 CHECK 제약에서 거부된다.
+  `users.role`은 `utf8mb4_bin` 컬럼이라 소문자(`admin`)는 CHECK 제약에서 거부된다.
   가입은 항상 USER이며 요청 본문의 role은 무시된다. role은 토큰에 넣지 않고 매 요청 DB에서 읽는다(변경 즉시 반영).
 
 ## 로컬 환경변수 (.env)
