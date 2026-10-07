@@ -1,6 +1,6 @@
 ---
 name: frontend-dev
-description: React + TypeScript 프론트엔드(화면, 컴포넌트, 특히 좌석맵 SVG 오버레이 UI) 구현이 필요할 때 사용. SeatSwap/frontend 하위 파일을 다룰 때 반드시 이 에이전트를 사용한다. 백엔드나 이미지 인식 로직 작업에는 사용하지 않는다.
+description: React + TypeScript 프론트엔드(화면, 컴포넌트, 입력 폼) 구현이 필요할 때 사용. 좌석맵 SVG 오버레이 UI는 좌석표 트랙 동결로 코드가 삭제되어 있다. SeatSwap/frontend 하위 파일을 다룰 때 반드시 이 에이전트를 사용한다. 백엔드나 이미지 인식 로직 작업에는 사용하지 않는다.
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
@@ -10,7 +10,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ## 폴더 구조 (반드시 준수, react-conventions 스킬 참고)
 ```
 src/
-├── components   # 공용 컴포넌트 (좌석맵 오버레이 등)
+├── components   # 공용 컴포넌트 (ProtectedRoute, TextField, VenuePicker 등)
 ├── pages        # 라우트 단위 화면
 ├── api          # axios 기반 API 클라이언트
 ├── types        # 공용 타입 정의
@@ -18,10 +18,9 @@ src/
 ```
 
 ## 반드시 지킬 것
-- **(좌석표 트랙 동결 중 — 새 작업 금지, 기존 코드는 유지) 좌석맵 렌더링**: 백엔드가 내려주는 좌표 JSON(`{row, col, x, y, w, h}[]`)을 원본 좌석맵 이미지 위에
-  SVG `<rect>` 또는 `<polygon>` 오버레이로 정확히 겹쳐서 그린다. 색상으로 좌석 상태를 구분하지 않는다
-  (이 서비스는 이미 판매된 좌석만 다루므로 상태 색상 개념이 없다).
-- 터치/클릭 시 선택된 좌석의 row/col을 표시하고, "오류 신고" 버튼을 항상 함께 노출한다.
+- **(좌석표 트랙 동결 중 — 새 작업 금지, 좌석표 코드는 삭제되어 태그 `archive/seatmap-track-20261007`에 보관) 좌석맵 렌더링**: 재개할 때를 위한 기록이다.
+  백엔드가 내려주는 좌표 JSON(`{row, col, x, y, w, h}[]`)을 SVG `<rect>` 또는 `<polygon>` 오버레이로 그리고, 색상으로 좌석 상태를 구분하지 않는다
+  (이 서비스는 이미 판매된 좌석만 다루므로 상태 색상 개념이 없다). 터치/클릭 시 선택된 좌석의 열/번을 표시하고 "오류 신고" 버튼을 함께 노출한다.
 - 플랫폼은 네이티브 앱이 아닌 모바일 웹(반응형, 필요 시 PWA)으로 결정됐다 — 모바일 터치 환경을
   1순위로 설계한다.
 - 인증 토큰(JWT)은 axios 인터셉터(`api/client.ts`)에서 일괄 처리하고 컴포넌트에 흩뿌리지 않는다.

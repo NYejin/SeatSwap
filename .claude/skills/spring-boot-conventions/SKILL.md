@@ -37,6 +37,7 @@ com.seatswap
   두 티켓의 `performanceSession.performance`가 같은지 확인하고 회차 동일 여부는 요구하지 않는다. 세부(차액, 같은 회차 우선 노출)는 미정.
 - WebSocket(STOMP)은 채팅 전용 — `/topic/chat/{matchId}` 형태의 destination 규칙을 따른다.
 - 엔티티 연관관계는 기본 `FetchType.LAZY`, N+1 우려되는 조회는 fetch join 또는 `@EntityGraph` 사용.
+> 좌석표 트랙 동결(2026-10-07): 아래 seatmap-service·좌석표 관련 관례의 코드는 삭제되어 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다. 재개 시 참고용이며 현재 코드에는 없다.
 - 좌석 인식(OpenCV/OCR)은 이 서버의 책임이 아니다 — `SeatSwap/seatmap-service`(FastAPI)가
   반환하는 좌표 JSON을 받아 저장하는 클라이언트 역할만 한다.
 - seatmap-service 연동 관례(`SeatMapRecognitionClient`): `RestClient`에 연결 5초·읽기 60초 타임아웃을 두고, 공유 키가 설정된 경우에만 `X-Internal-Key` 헤더를 보낸다(선택). 인식 호출은 **트랜잭션 밖에서** 하고 결과 저장만 트랜잭션 안에서 한다.

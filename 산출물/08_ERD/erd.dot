@@ -1,12 +1,12 @@
-// SeatSwap ERD (목표 스키마) -- V1(현재, master) + V2·V3(구현 완료, 병합 후 현재로 승격) + V4(예정, 미적용)
+// SeatSwap ERD -- 현재 스키마: 새 V1 (users, venue, performance, performance_session, ticket 5개 테이블)
 // 생성: dot -Tpng erd.dot -o ERD.png   (한글 라벨: 나눔고딕 등 한글 폰트 필요)
-// 표기: 흰색 = 현재(V1) / 노란 배경 = V2·V3(구현 완료, 병합 대기) 및 V4(예정) 신규·변경 컬럼 / 주황 헤더 = V3·V4 신규 테이블 / 취소선 = 삭제 컬럼
+// 2026-10-07 방향 전환으로 좌석표 트랙(좌석표·수정 로그·신고·제재 테이블)과 미구현 교환·채팅·후기 테이블을 제외하고 새로 작성.
+// 이전 설계(12~16개 테이블)는 git 태그 archive/seatmap-track-20261007 에 보관되어 있다.
+// 기준: SeatSwap/backend/src/main/resources/db/migration/V1__init_schema.sql
 // 시각 컬럼(created_at, updated_at, starts_at 등)은 모두 KST(Asia/Seoul) 벽시계 시각
-// V2·V3는 병합 후 현재로 승격하고 이 표기를 흰색으로 되돌린다. V4는 구현 후 승격한다.
-// V3(2026-10-07, feature/seatmap-edit-log)는 구현 SQL(V3__add_seatmap_revision_and_correction.sql) 기준으로 정정됨.
 digraph SeatSwapERD {
   graph [rankdir=LR, fontname="NanumGothic,Malgun Gothic", fontsize=12, labelloc=t, nodesep=0.5, ranksep=1.2, splines=true,
-         label=<<B>SeatSwap ERD - 목표 스키마 (V1 12개 + V3 신규 2개 = 14개 테이블, V4 예정 2개 추가 시 16개)</B><BR/>시각 컬럼은 모두 KST 기준>];
+         label=<<B>SeatSwap ERD - 현재 스키마 (V1, 5개 테이블)</B><BR/>시각 컬럼은 모두 KST 기준 / 교환 도메인(티켓 좌석 확장·매칭·채팅·후기)은 설계 예정>];
   node  [shape=plain, fontname="NanumGothic,Malgun Gothic", fontsize=10];
   edge  [fontname="NanumGothic,Malgun Gothic", fontsize=9, dir=both, arrowtail=tee, arrowhead=crow];
 
@@ -14,11 +14,9 @@ digraph SeatSwapERD {
   legend [label=<
     <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#DDDDDD"><B>범례</B></TD></TR>
-      <TR><TD BGCOLOR="#FFFFFF" WIDTH="18"> </TD><TD ALIGN="LEFT">현재 (V1, master 적용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD ALIGN="LEFT">V2·V3 구현 완료(병합 대기) / V4 예정: 신규·변경 컬럼</TD></TR>
-      <TR><TD BGCOLOR="#F4B183"> </TD><TD ALIGN="LEFT">V3·V4 신규 테이블 (헤더)</TD></TR>
-      <TR><TD><S>abc</S></TD><TD ALIGN="LEFT">삭제 예정 컬럼</TD></TR>
+      <TR><TD BGCOLOR="#FFFFFF" WIDTH="18"> </TD><TD ALIGN="LEFT">현재 (V1)</TD></TR>
       <TR><TD>PK/FK/UK</TD><TD ALIGN="LEFT">키 / 제약</TD></TR>
+      <TR><TD>NN</TD><TD ALIGN="LEFT">NOT NULL</TD></TR>
     </TABLE>>];
 
   // ---------- 회원 ----------
@@ -27,11 +25,11 @@ digraph SeatSwapERD {
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>users</B> (User)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
       <TR><TD>UK</TD><TD ALIGN="LEFT">email (255, NN)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">nickname (NN)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">password (BCrypt)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">trust_score</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">nickname (255, NN)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">password (255, NN, BCrypt)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">trust_score (DOUBLE)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">created_at</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">role (USER/ADMIN, DB에서 직접 부여)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">role (USER/ADMIN, NN, 기본 USER, utf8mb4_bin + CHECK)</TD></TR>
     </TABLE>>];
 
   // ---------- 공연장 / 공연 / 회차 ----------
@@ -41,235 +39,61 @@ digraph SeatSwapERD {
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">name (100, NN)</TD></TR>
       <TR><TD>UK</TD><TD ALIGN="LEFT">normalized_name (100, NN)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">address</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">created_at</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">status (UNVERIFIED/VERIFIED)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">verified_by -> users (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">verified_at (NULL 허용)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">address (255)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">created_at (NN)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">status (UNVERIFIED/VERIFIED, NN, 기본 UNVERIFIED, utf8mb4_bin + CHECK)</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">verified_by → users (NULL 허용)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">verified_at (NULL 허용)</TD></TR>
     </TABLE>>];
 
   performance [label=<
     <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>performance</B> (Performance)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">venue_id -> venue (NN)</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">registrant_id -> users (NN)</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">venue_id → venue (NN)</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">registrant_id → users (NN)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">title (200, NN)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">source_url (2048, NN)</TD></TR>
       <TR><TD>UK</TD><TD ALIGN="LEFT">source_key (500, NN, utf8mb4_bin)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">created_at / updated_at</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">created_at / updated_at (NN)</TD></TR>
     </TABLE>>];
 
   performance_session [label=<
     <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>performance_session</B> (PerformanceSession)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK,UK</TD><TD ALIGN="LEFT">performance_id -> performance (NN)</TD></TR>
-      <TR><TD>UK</TD><TD ALIGN="LEFT">starts_at (분 단위, KST)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">created_at</TD></TR>
-      <TR><TD COLSPAN="2" ALIGN="LEFT">uk_..._performance_starts_at (performance_id, starts_at)</TD></TR>
+      <TR><TD>FK,UK</TD><TD ALIGN="LEFT">performance_id → performance (NN)</TD></TR>
+      <TR><TD>UK</TD><TD ALIGN="LEFT">starts_at (NN, 분 단위, KST)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">created_at (NN)</TD></TR>
+      <TR><TD COLSPAN="2" ALIGN="LEFT">uk_performance_session_performance_starts_at (performance_id, starts_at)</TD></TR>
+      <TR><TD COLSPAN="2" ALIGN="LEFT">idx_performance_session_starts_at (starts_at)</TD></TR>
     </TABLE>>];
 
-  // ---------- 좌석표 ----------
-  seat_map_layout [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>seat_map_layout</B> (SeatMapLayout) - 공연장 단위</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">venue_id -> venue (NN)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">zone_name (구역)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">ocr_status</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">seat_json (LONGTEXT, 좌표)</TD></TR>
-      <TR><TD><S>삭제</S></TD><TD ALIGN="LEFT"><S>image_url</S> (원본 이미지 미보관)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">status (DRAFT/OFFICIAL)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">version (수정마다 증가)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">image_width / image_height (좌표 기준 px)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">created_by -> users</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">promoted_by -> users (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V2</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">promoted_at / created_at / updated_at</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">seat_count INT NN DEFAULT 0 (좌석 수, 목록용)</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">idx_seat_map_layout_created_by_at (created_by, created_at)<BR/>일일 등록 한도 집계</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">DRAFT: 공연장+구역당 1개 / OFFICIAL: 여러 개 허용(추후 1개 제한)</TD></TR>
-    </TABLE>>];
-
-  seat_map_revision [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>seat_map_revision</B> (V3 구현 완료) 수정 로그 헤더, append-only</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">PK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">id</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK,UK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">seatmap_id -> seat_map_layout</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">UK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revision_no INT NN (= seat_map_layout.version)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">action_type VARCHAR(30) NN, utf8mb4_bin<BR/>RECOGNIZED/USER_EDIT/CORRECTION_APPLIED/<BR/>ADMIN_EDIT/PROMOTED/REVERTED</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">layout_status VARCHAR(20) NN (DRAFT/OFFICIAL)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">actor_id -> users (NULL = 시스템 자동 반영)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reason VARCHAR(500)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">before_json / after_json LONGTEXT NULL (전체 교체 시에만, 라벨 수정은 NULL)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">created_at DATETIME(6) NN</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">uk_seat_map_revision_seatmap_no (seatmap_id, revision_no)<BR/>idx_seat_map_revision_actor_created (actor_id, created_at)</TD></TR>
-    </TABLE>>];
-
-  seat_map_revision_item [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>seat_map_revision_item</B> (V3 구현 완료) 좌석·필드 단위 전후, append-only</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">PK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">id</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revision_id -> seat_map_revision</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">seat_uid VARCHAR(32) NN, utf8mb4_bin</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">field_name VARCHAR(20) NN, CHECK<BR/>ROW_LABEL/COL_LABEL/X/Y/W/H/<BR/>SEAT_ADDED/SEAT_REMOVED</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">before_value / after_value VARCHAR(255)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">correction_id -> seat_correction (NULL 허용, 자동 반영 시)</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">idx_seat_map_revision_item_revision (revision_id)<BR/>idx_seat_map_revision_item_seat_uid (seat_uid)</TD></TR>
-    </TABLE>>];
-
-  seat_correction [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>seat_correction</B> (SeatCorrection) 정정 신고 - V3 개편 구현 완료</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">seatmap_id -> seat_map_layout (NN)</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">reporter_id -> users (NN)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">original_label</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">corrected_label</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">status NN DEFAULT 'PENDING'<BR/>PENDING/APPLIED/REJECTED/SUPERSEDED</TD></TR>
-      <TR><TD><S>삭제</S></TD><TD ALIGN="LEFT"><S>vote_count</S> (1신고=1행, 건수는 집계)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">target_seat_uid VARCHAR(32) NN, utf8mb4_bin</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">target_field VARCHAR(20) NN (ROW_LABEL/COL_LABEL)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">normalized_value VARCHAR(100) NN, utf8mb4_bin (중복·집계 키)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">layout_version INT NN (신고 시점 버전)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">created_at DATETIME(6) NN</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reviewed_by -> users (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reviewed_at / review_note VARCHAR(500)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">applied_revision_id -> seat_map_revision (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">V3</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">pending_key VARCHAR(250), 생성 컬럼(STORED)<BR/>status=PENDING일 때만 값, 아니면 NULL</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">uk_seat_correction_pending_key (pending_key) - 대기 중 중복 신고만 방지<BR/>idx_seat_correction_aggregate (seatmap_id, target_seat_uid,<BR/>target_field, status)<BR/>idx_seat_correction_reporter_created (reporter_id, created_at)</TD></TR>
-      <TR><TD COLSPAN="2" ALIGN="LEFT">OFFICIAL만 신고 가능: 서로 다른 신고자 2명 이상이면 자동 반영<BR/>DRAFT는 신고 대신 직접 수정(USER_EDIT)으로 즉시 반영</TD></TR>
-    </TABLE>>];
-
-  // ---------- 티켓 / 교환 ----------
+  // ---------- 티켓 ----------
   ticket [label=<
     <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>ticket</B> (Ticket)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">user_id -> users (NN)</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">performance_session_id -> performance_session (NN)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">seatmap_id -> seat_map_layout (V2: NULL 허용)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">row_label / col_label</TD></TR>
-    </TABLE>>];
-
-  exchange_request [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>exchange_request</B> (ExchangeRequest)</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK,UK</TD><TD ALIGN="LEFT">ticket_id -> ticket (NN, 1:1)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">desired_condition</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">extra_payment (차액)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">status / created_at</TD></TR>
-    </TABLE>>];
-
-  exchange_match [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>exchange_match</B> (ExchangeMatch) 단순 1:1</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">request_a_id -> exchange_request</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">request_b_id -> exchange_request</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">status / matched_at</TD></TR>
-      <TR><TD COLSPAN="2" ALIGN="LEFT">스코어링 컬럼 없음 (신청/수락 기반)</TD></TR>
-    </TABLE>>];
-
-  chat_room [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>chat_room</B> (ChatRoom)</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK,UK</TD><TD ALIGN="LEFT">match_id -> exchange_match (1:1)</TD></TR>
-    </TABLE>>];
-
-  message [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>message</B> (Message)</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">chatroom_id -> chat_room</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">sender_id -> users</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">content / sent_at</TD></TR>
-    </TABLE>>];
-
-  review [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>review</B> (Review)</TD></TR>
-      <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">match_id -> exchange_match</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">reviewer_id -> users</TD></TR>
-      <TR><TD>FK</TD><TD ALIGN="LEFT">target_id -> users</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">rating / comment</TD></TR>
-    </TABLE>>];
-
-  // ---------- V4 예정 ----------
-  abuse_report [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>abuse_report</B> (V4 예정) 수정 신고</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">PK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">id</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK,UK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reporter_id -> users</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK,UK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revision_id -> seat_map_revision (신고 대상 수정)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reason VARCHAR(500) NN</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">status VARCHAR(20)<BR/>OPEN/DISMISSED/ACTION_TAKEN</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">handled_by -> users</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">handled_at / handle_note VARCHAR(500) / created_at</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">uk (reporter_id, revision_id)</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">항상 로그에 남아 관리자가 확인 (자동 처리 없음)</TD></TR>
-    </TABLE>>];
-
-  user_sanction [label=<
-    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
-      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>user_sanction</B> (V4 예정) 제재</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">PK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">id</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">user_id -> users (제재 대상)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">imposed_by -> users (NN = 자동 제재 없음)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">scope VARCHAR(20) (SEATMAP_EDIT/ACCOUNT)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">source_type (USER_REPORT/ADMIN_FINDING)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">abuse_report_id -> abuse_report (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revision_id -> seat_map_revision (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">reason VARCHAR(500)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">starts_at / ends_at (NULL = 무기한)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4">FK</TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revoked_by -> users (NULL 허용)</TD></TR>
-      <TR><TD BGCOLOR="#FFF3C4"> </TD><TD BGCOLOR="#FFF3C4" ALIGN="LEFT">revoked_at / revoke_reason / created_at</TD></TR>
-      <TR><TD COLSPAN="2" BGCOLOR="#FFF3C4" ALIGN="LEFT">활성 여부는 컬럼 없이 기간으로 계산</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">user_id → users (NN, 보유자)</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">performance_session_id → performance_session (NN)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">row_label (열, 텍스트)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">col_label (번, 텍스트)</TD></TR>
     </TABLE>>];
 
   // ---------- 주석 노드 ----------
-  note_scope [shape=note, fontsize=10, label="교환 범위는 공연(Performance) 단위 (2026-10-07):\l같은 공연의 다른 회차 티켓끼리도 교환 가능.\l매칭 판정은 session.performance 동일 여부로 하며\l교환 성사 시 각 티켓의 performance_session_id가 바뀐다.\l"];
-  // V1 SQL의 performance_session 주석("같은 회차끼리만")은 공연 단위로 정정됨 (V2 주석에서 정정, V1 파일은 수정 금지)
-  note_seat [shape=note, fontsize=10, label="좌석표는 Venue 단위로 저장·재사용 (공연과 무관).\lOFFICIAL 좌석표는 회차와 무관하게 그 공연장의 모든 공연이 공유.\lDRAFT 좌석표는 확인용 (매칭은 본인 좌석+희망 범위).\l"];
+  note_scope [shape=note, fontsize=10, label="교환 범위는 공연(Performance) 단위 (2026-10-07):\l같은 공연의 다른 회차 티켓끼리도 교환 가능.\lticket은 회차만 참조하고 공연은 performance_session.performance로 얻는다.\l"];
+  note_design [shape=note, fontsize=10, label="교환 도메인은 설계 예정:\l티켓 구역 컬럼, 희망 좌석 범위·추가금, 매칭(제안), 채팅, 후기.\l확정 전 기본안은 CLAUDE.md 참고. 새 V 파일로 추가한다.\l"];
 
-  // ---------- 관계 (현재 V1) ----------
+  // ---------- 관계 ----------
   venue -> performance [label="1:N"];
   performance -> performance_session [label="1:N"];
   performance_session -> ticket [label="1:N"];
-  venue -> seat_map_layout [label="1:N (공연장 단위)"];
-  seat_map_layout -> ticket [label="1:N (V2: 0..N)"];
-  seat_map_layout -> seat_correction [label="1:N"];
-  users -> ticket [label="1:N"];
+  users -> ticket [label="1:N 보유자"];
   users -> performance [label="1:N 등록자"];
-  ticket -> exchange_request [label="1:1", arrowhead=tee];
-  exchange_request -> exchange_match [label="1:N (A/B 양측)"];
-  exchange_match -> chat_room [label="1:1", arrowhead=tee];
-  chat_room -> message [label="1:N"];
-  exchange_match -> review [label="1:N"];
-  users -> message [label="sender", style=dashed];
-  users -> review [label="reviewer/target", style=dashed];
-  users -> seat_correction [label="reporter", style=dashed];
-
-  // ---------- V2~V4 관계 (주황 점선: V2·V3 구현 완료 병합 대기, V4 예정) ----------
-  edge [color="#C55A11", fontcolor="#C55A11", style=dashed];
-  users -> venue [label="V2 verified_by"];
-  users -> seat_map_layout [label="V2 created_by/promoted_by"];
-  seat_map_layout -> seat_map_revision [label="V3 1:N"];
-  seat_map_revision -> seat_map_revision_item [label="V3 1:N"];
-  seat_map_revision_item -> seat_correction [label="V3 correction_id"];
-  seat_correction -> seat_map_revision [label="V3 applied_revision_id"];
-  users -> seat_correction [label="V3 reviewed_by"];
-  seat_map_revision -> abuse_report [label="V4 1:N"];
-  users -> abuse_report [label="V4 reporter"];
-  abuse_report -> user_sanction [label="V4 1:N"];
-  users -> user_sanction [label="V4 대상 / imposed_by"];
-  users -> seat_map_revision [label="V3 editor"];
+  users -> venue [label="verified_by (정식 등록 관리자)", style=dashed];
 
   // ---------- 배치 보조 ----------
   legend -> users [style=invis];
   performance_session -> note_scope [style=dotted, arrowhead=none, arrowtail=none, color=gray, label=""];
-  seat_map_layout -> note_seat [style=dotted, arrowhead=none, arrowtail=none, color=gray, label=""];
+  ticket -> note_design [style=dotted, arrowhead=none, arrowtail=none, color=gray, label=""];
 }

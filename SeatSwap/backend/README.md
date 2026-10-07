@@ -1,7 +1,7 @@
 # SeatSwap Backend (Spring Boot)
 
 ## 패키지 구조
-- domain       — JPA 엔티티 11종 (08_ERD 기준)
+- domain       — JPA 엔티티 5종 (User·Venue·Performance·PerformanceSession·Ticket)과 enum UserRole·VenueStatus (08_ERD 기준)
 - repository   — JpaRepository
 - service      — 비즈니스 로직
 - controller   — REST API + WebSocket(STOMP)
@@ -11,14 +11,18 @@
 - exception    — 커스텀 예외 + 전역 핸들러
 
 ## 현재 상태
-- 11개 엔티티, Repository, Service, Controller **틀(스켈레톤)** 생성됨 — 대부분 TODO
-- **회원가입/로그인/JWT 인증(FR-01)은 실제 구현 완료**:
+- 2026-10-07 방향 전환으로 좌석표 트랙 코드와 교환·채팅·후기 등 빈 스켈레톤(컨트롤러·서비스·저장소)을 삭제했다. 좌석표 코드는 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
+- 엔티티는 User·Venue·Performance·PerformanceSession·Ticket 5종이다. Ticket은 엔티티·저장소만 있고 티켓 등록 API는 아직 없다.
+- **회원가입/로그인/JWT 인증(FR-01)은 구현 완료**:
   - `security/JwtTokenProvider` — access/refresh 토큰 발급·검증 (jjwt 0.12.5)
   - `security/JwtAuthenticationFilter` — Authorization 헤더 검증 후 SecurityContext 설정
   - `security/CustomUserDetailsService` — 이메일 기준 사용자 조회
-  - `config/SecurityConfig` — JWT 필터 등록, CORS(개발용 localhost:5173 허용), `/api/auth/**` permitAll
+  - `config/SecurityConfig` — JWT 필터 등록, CORS(개발용 localhost:5173 허용), `/api/auth/**` permitAll, `/api/admin/**`는 ADMIN 권한 (해당 컨트롤러는 아직 없음)
   - `service/AuthService`, `controller/AuthController` — POST /api/auth/signup, /login, /refresh
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
+- **공연·공연장·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `VenueController`, `PerformanceService`, `PerformanceSessionService`, `VenueService`)
+- 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
+- 테스트는 182건이다.
 
 ## 인증 API
 
@@ -27,6 +31,25 @@
 | POST | /api/auth/signup | 회원가입 (email, password, nickname) → 생성된 사용자 정보 반환 |
 | POST | /api/auth/login | 로그인 (email, password) → accessToken, refreshToken 반환 |
 | POST | /api/auth/refresh | refreshToken으로 accessToken 재발급 |
+
+## 공연·공연장·회차·내 정보 API
+
+모두 로그인(Bearer 토큰)이 필요하다.
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | /api/users/me | 내 정보 조회 |
+| GET | /api/venues | 공연장 이름 검색 (query, 최대 20건) |
+| POST | /api/venues | 공연장 등록 (정규화 이름이 같으면 200 + 기존 공연장, 없으면 201) |
+| GET | /api/performances | 공연 목록 (query, venueId, page, size, asOf) |
+| GET | /api/performances/lookup | 링크(sourceUrl)로 기존 공연 조회 ({exists, performanceId}) |
+| GET | /api/performances/{id} | 공연 상세 |
+| POST | /api/performances | 공연 등록 (201, 같은 링크가 있으면 409 + performanceId) |
+| PATCH | /api/performances/{id} | 공연 수정 |
+| DELETE | /api/performances/{id} | 공연 삭제 |
+| POST | /api/performances/{id}/sessions | 회차 추가 (201, 같은 시각이면 409) |
+| PATCH | /api/performances/{id}/sessions/{sessionId} | 회차 일시 변경 (등록자만, 티켓 0건일 때만) |
+| DELETE | /api/performances/{id}/sessions/{sessionId} | 회차 삭제 |
 
 그 외 모든 API는 `Authorization: Bearer {accessToken}` 헤더가 필요하다 (SecurityConfig 기준).
 
@@ -62,7 +85,8 @@ cp .env.example .env
 `.env`는 `.gitignore`에 등록되어 있어 커밋되지 않는다.
 
 ## 다음 단계
-1. 프론트(ProtectedRoute, api/client.ts)와 연동 테스트 — 로그인 응답의 accessToken 저장/재발급 흐름
-2. dto/request, dto/response를 나머지 도메인(공연/티켓/교환 등)에도 채우며 Controller 바디 구현
-3. ExchangeService의 신청/수락 상태 전이 로직 구현
-4. 배포 시 SecurityConfig의 CORS allowed-origin을 실제 프론트 도메인으로 교체
+1. 교환 도메인 설계 (좌석 키 = 공연·구역·열·번, 희망 범위·추가금·회차 조건 — CLAUDE.md '확정 전 기본안' 확인 후 확정) 및 스키마 V2
+2. 티켓 등록 API (텍스트 좌석 입력)
+3. 자동 매칭 (후보 제시, 양쪽 수락으로 확정)
+4. 채팅(WebSocketConfig 구현)·후기
+5. 배포 시 SecurityConfig의 CORS allowed-origin을 실제 프론트 도메인으로 교체

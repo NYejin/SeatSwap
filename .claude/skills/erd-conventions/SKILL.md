@@ -1,23 +1,18 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. V1 12개 엔티티 기준선(V3 구현 후 14개, V4 예정이던 제재·신고 2개는 2026-10-07 동결)과 네이밍 규칙을 담고 있다. 기준 이미지는 산출물/08_ERD에 있다.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 새 V1 기준선(users·venue·performance·performance_session·ticket 5개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
 ---
 
 # ERD 컨벤션
 
-## 기준선 (12개 엔티티)
+## 기준선 (5개 테이블, 새 V1)
 
-User, Venue, Performance, **PerformanceSession**, Ticket, SeatMapLayout, SeatCorrection,
-ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
+User(users), Venue(venue), Performance(performance), **PerformanceSession**(performance_session), Ticket(ticket)
 
-- 2026-10-06 변경: `PerformanceSession`(공연 회차) 추가로 11개 → 12개.
-- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (신규 작성 완료). V1 12개 테이블 + V2 변경 + V3 신규 2개(구현 완료·병합 대기, 14개) + V4 예정 2개(16개)를
-  함께 그리며, 예정 부분은 노란 배경/주황 헤더로 구분한다. **V2~V4는 구현 후 현재(V1)로 승격**한다 (V2는 구현 완료·master 병합 대기 — 병합 후 승격, 지금은 예정 표기 유지)
-  (승격 시 해당 표기를 흰색으로 되돌리고 이 문서의 기준선을 갱신). V3 신규 테이블 `seat_map_revision`,
-  `seat_map_revision_item`은 **구현 완료**(2026-10-07, `feature/seatmap-edit-log`, 병합 후 현재로 승격, erd.dot은 구현 SQL 기준으로 정정됨). 예정 신규 테이블: `abuse_report`, `user_sanction`(V4, 컬럼은 확정 설계안 기준).
-  엔티티 수: V1 12 → V2 컬럼 변경만 → V3 +2 = 14 → V4 +2 = 16.
-- V1 SQL의 `performance_session` 주석("같은 회차의 티켓끼리만 교환")은 **공연 단위로 정정됨(V2 주석)**. V1 파일은 수정하지 않는다.
-- 기존 ERD.png(11개 기준)는 폐기 대상이며, graphviz `dot`이 있는 환경에서 `erd.dot`으로 재생성한다.
+- 2026-10-07 방향 전환으로 좌석표 트랙과 아직 구현하지 않은 교환·채팅·후기 테이블을 걷어내고 **새 V1 하나**(`V1__init_schema.sql`)로 기준선을 다시 만들었다. 이전 V1~V3(12개+좌석표·수정 로그 테이블)는 삭제됐고, 좌석표 코드와 이전 마이그레이션·erd.dot은 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
+- users에 `role`(USER/ADMIN), venue에 `status`(UNVERIFIED/VERIFIED)·`verified_by`·`verified_at`이 있다. `ticket`은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 가지며 `seatmap_id`는 없다. 구역·희망 범위·추가금 등 매칭용 컬럼과 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성, 5개 테이블 + 교환 도메인 '설계 예정' 주석 노드 하나). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
+- 새 V1은 빈 DB에서만 실행된다. 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운 뒤 적용한다.
 
 ## 네이밍 규칙
 - 엔티티명: PascalCase 단수형 (`Ticket`, not `Tickets`)
@@ -51,21 +46,22 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
     과거 ddl-auto update 시절의 "길이·NOT NULL·collation·컬럼 삭제 미반영 → 수동 DDL" 문제는 이제 마이그레이션 파일로 해결한다.
   - 제약 이름은 명시한다(`uk_`/`idx_`/`fk_{테이블}_{컬럼}`). V1의 FK/일부 UNIQUE 이름은 Hibernate가 만든 임의 이름
     (예: `FK6p310v5n1wwgdqry9ksyx39nf`)을 기존 DB와 일치시키려고 그대로 쓴 것이므로, 이를 DROP/변경할 때는 그 이름을 쓴다.
-  - 기존(Flyway 도입 전) DB는 `baseline-on-migrate` + `baseline-version: 1`로 V1을 적용된 것으로 간주한다.
+  - Flyway baseline 설정은 없다(새 V1은 빈 DB 전용). 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운다.
   - 이력 확인: `SELECT * FROM flyway_schema_history;` (자세한 절차는 `SeatSwap/backend/README.md` "DB 마이그레이션")
 - 상태값 컬럼은 `status`로 통일 (enum: PENDING/ACCEPTED/COMPLETED 등 문자열 저장)
 
 ## 관계 원칙
+- **[좌석표 트랙 동결·보관] 아래 `SeatMapLayout`·수정 로그·정정 신고·제재·익명화 관련 불릿은 좌석표를 다시 붙일 때를 위한 보존용 설계 기록이다. 현재 스키마에는 해당 테이블이 없고(태그 `archive/seatmap-track-20261007`에 보관), 그 설계에서 나온 일반 패턴(PENDING 한정 UNIQUE, append-only 로그, SIGNAL 가드)만 새 작업에도 참고한다.**
 - `SeatMapLayout`은 **Venue(공연장) 단위**로 저장하고 재사용한다. Performance마다 새로 만들지 않는다
   (같은 공연장이면 좌석 배치가 동일 — NFR-03 재사용성).
-  - 좌석표 상태 (2026-10-07 사용자 결정, V2 구현 완료·master 병합 대기): **DRAFT는 공연장+구역(zone)당 1개**(구역별 여러 개 허용,
+  - 좌석표 상태 (2026-10-07 사용자 결정, V2 구현·병합 후 코드 삭제, 태그 보관): **DRAFT는 공연장+구역(zone)당 1개**(구역별 여러 개 허용,
     DB 유일성은 생성 컬럼 `draft_key`), **OFFICIAL은 지금은 여러 개 허용하고 추후 공연장당 1개로 제한**(변경 예정).
     공연장 `status`(UNVERIFIED/VERIFIED)와 좌석표 OFFICIAL은 항상 함께 바뀐다(정식 등록은 좌석표 등록 시에만). 공연에는 정식 상태 없음.
-  - `seat_map_layout.image_url`은 삭제(원본 이미지 미보관). `ticket.seatmap_id`는 **NULL 허용** — 티켓은 좌석표 없이 먼저 등록하고
+  - `seat_map_layout.image_url`은 삭제(원본 이미지 미보관). `ticket.seatmap_id`는 **NULL 허용**(이후 새 V1에서 컬럼 자체가 빠짐) — 티켓은 좌석표 없이 먼저 등록하고
     교환글 등록 시 DRAFT 좌석표를 업로드한다. 서비스의 "좌석표 venue = 공연 venue" 검사는 seatmap_id가 있을 때만 한다.
   - 수정 로그(`seat_map_revision`, `seat_map_revision_item`)·정정 신고(`seat_correction`)는 좌석을 `seat_uid`(seatmap-service의 안정 식별자)로 가리킨다.
     수정 로그는 **append-only**(수정·삭제하지 않음). 신고(`abuse_report`)는 항상 로그에 남기고 관리자가 확인한다.
-  - **V3 구현 사실** (2026-10-07): `seat_map_layout.seat_count`·idx(created_by, created_at) 추가. `seat_map_revision`의 `revision_no`는 `seat_map_layout.version`과 같은 값(결번은 있어도 중복 없음), UK(seatmap_id, revision_no), action_type·layout_status는 `utf8mb4_bin`+CHECK. `seat_correction`은 1신고=1행(`vote_count` 삭제), status NOT NULL+CHECK(PENDING/APPLIED/REJECTED/SUPERSEDED).
+  - **V3 구현 사실** (2026-10-07, 이후 코드·마이그레이션 삭제, 태그 보관): `seat_map_layout.seat_count`·idx(created_by, created_at) 추가. `seat_map_revision`의 `revision_no`는 `seat_map_layout.version`과 같은 값(결번은 있어도 중복 없음), UK(seatmap_id, revision_no), action_type·layout_status는 `utf8mb4_bin`+CHECK. `seat_correction`은 1신고=1행(`vote_count` 삭제), status NOT NULL+CHECK(PENDING/APPLIED/REJECTED/SUPERSEDED).
   - **PENDING 한정 중복 방지 패턴**: 종결 뒤에는 재신고를 허용해야 하므로 `status='PENDING'`일 때만 키 문자열을 만드는 생성 컬럼(`pending_key`, STORED, 아니면 NULL)에 UNIQUE를 건다 (NULL은 UNIQUE 대상 제외, V2 `draft_key`와 같은 방식).
   - **append-only 로그 패턴**: 수정 로그는 INSERT만 한다(엔티티에 setter 없음, FK는 ON DELETE RESTRICT). 수정 로그가 있는 좌석표는 삭제할 수 없다 — 단 현재 코드는 최초 인식 로그(RECOGNIZED)만 있으면 로그째 삭제한다(미결정, soft delete는 V4 설계 후보).
   - **SIGNAL 가드 패턴**: 데이터를 이관할 수 없는 변경(예: V3의 `seat_correction` 구 스키마 행)은 파일 맨 앞에서 임시 프로시저+`SIGNAL SQLSTATE '45000'`으로 즉시 실패시킨다(MySQL은 DDL이 트랜잭션에 묶이지 않아 중간 실패 시 앞선 변경이 남기 때문). 실패 후에는 `flyway repair` 후 재시도.
@@ -89,8 +85,8 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
     OFFICIAL 좌석표(SeatMapLayout)는 회차와 무관하게 공연장(Venue) 단위로 공유한다. DRAFT 공연은 좌표 대신 본인 좌석 정보 +
     희망 좌석 범위로 매칭하며, 희망 범위에 회차를 포함할 수 있다.
     **미정**: 차액 계산 방식, 같은 회차 우선 노출 여부, 희망 범위·회차 조건의 컬럼 설계 (스키마 변경 시 db-schema-architect 경유).
-  - `Ticket.seatMapLayout.venue`는 `Ticket.performanceSession.performance.venue`와 같아야 한다 (서비스에서 검사).
-- `ExchangeRequest`는 `Ticket`과 1:1 — 티켓 하나당 교환 요청은 하나만 유효.
+  - (좌석표 보관) `Ticket.seatMapLayout.venue`는 `Ticket.performanceSession.performance.venue`와 같아야 한다 (서비스에서 검사).
+- (교환 도메인 설계 예정, 현재 테이블 없음) `ExchangeRequest`는 `Ticket`과 1:1 — 티켓 하나당 교환 요청은 하나만 유효.
 - `ExchangeMatch`는 두 개의 `ExchangeRequest`(A측/B측)를 참조하는 매칭(제안) 레코드다. 매칭은 **조건 일치 판정으로 후보를 찾고 양쪽 수락으로
   확정**하는 모델이며(2026-10-07 변경, 기존 "신청/수락 기반으로 고정"을 대체), 추천 점수·랭킹 등 **추천 알고리즘용 컬럼은 추가하지 않는다**.
   조건 일치는 쿼리로 판정하고 저장하지 않는다. 한 요청에는 진행 중인 제안이 동시에 1개만 있어야 한다 (제약 방식은 설계 시 결정).
@@ -99,33 +95,25 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review
 ## 텍스트 좌석 입력 기반 매칭 스키마 방향 (2026-10-07, 가안 — 사용자 확정 전)
 
 CLAUDE.md '확정 전 기본안'에 따른 재설계 대상이다. 아래 테이블·컬럼 이름은 **가안**이며, 설계·확정은 `db-schema-architect`가
-사용자 확인을 받아 진행한다. 기존 마이그레이션 V1~V3는 수정하지 않고 **다음 번호로 추가**한다
-(V4 예정이던 제재·신고(`abuse_report`·`user_sanction`)는 동결 — 번호를 선점하지 않으며, 새 매칭 스키마가 그 시점의 다음 번호를 쓴다).
+사용자 확인을 받아 진행한다. 적용된 V1은 수정하지 않고 **다음 번호(V2)로 추가**한다
+(이전 V4 예정이던 제재·신고(`abuse_report`·`user_sanction`)는 동결·삭제 — 번호를 선점하지 않는다).
 
 - 좌석 키는 **(공연, 구역, 열, 번)**. 좌표·seat `uid`·좌석표 `section` 번호는 키가 아니다. 새 테이블은 `seat_map_layout`에 FK를 두지 않는다
 - `venue_zone`(가칭): 공연장 단위 구역 이름 — 정규화 키(`Venue.normalizeName`과 같은 방식)와 표시명, UK(venue_id, 정규화 키). 자동완성의 출처
 - `ticket`: 구역(FK `venue_zone`)·열·번 추가, 기존 `row_label`/`col_label` 문자열의 처리는 설계 시 결정. 같은 좌석 중복 등록 정책은 미정
-- `exchange_request`: `desired_condition`(문자열)·`extra_payment`를 자식 테이블로 대체. Ticket 1:1 유지
+- `exchange_request`: 새 V1에는 아직 없는 테이블이다(이전 설계의 `desired_condition` 문자열·`extra_payment`는 삭제됨). 희망 범위·금액은 자식 테이블로 둔다. Ticket 1:1 유지
 - `exchange_want_range`(가칭): 요청 1:N. 구역, 열 범위, 번 범위, 회차 조건(같은 회차만/모든 회차/선택), **부호 있는 금액**(낼 수 있는 최대 +, 받고 싶은 최소 −)
 - `exchange_want_seat`(가칭): 범위를 펼친 개별 좌석(파생 데이터, range 1:N). 매칭 조인용 복합 인덱스(공연·구역·열·번)
 - `exchange_match`: 한 요청에 **진행 중 제안이 동시에 1개**만 가능하도록 하는 제약을 설계 시 정한다. 점수·랭킹 컬럼은 두지 않는다
 - 후보 조회는 쿼리(두 요청의 희망 좌석·소유 좌석 교차 + 금액 합 ≥ 0 + 회차 조건)로 하고 결과를 저장하지 않는다
-- `seat_map_layout.zone_name`은 좌석표 전용 값이다. 좌석표를 다시 붙일 때 `venue_zone`과 연결한다(그때 "이미지 덩어리 = 이 구역" 지정 단계가 필요)
+- (보관) 이전 설계의 `seat_map_layout.zone_name`은 좌석표 전용 값이었다. 좌석표를 다시 붙일 때 `venue_zone`과 연결한다(그때 "이미지 덩어리 = 이 구역" 지정 단계가 필요)
 
 ## 08_ERD 반영 현황
 
-`산출물/08_ERD/erd.dot` 신규 작성 완료 (아래 항목 전부 반영됨, 기록용으로 유지). ERD.png는 graphviz `dot` 미설치
-환경이라 생성하지 못했다 — `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다.
-V2~V4(예정) 변경은 구현 후 현재(V1)로 승격한다.
-- 노드 추가: `PerformanceSession` (id, performance_id FK, starts_at, created_at / UK(performance_id, starts_at))
-- 엣지 추가: Performance 1:N PerformanceSession, PerformanceSession 1:N Ticket
-- 엣지 삭제: Performance 1:N Ticket
-- Venue: name(100), normalized_name(100, UK), address, created_at
-- Performance: performance_date 삭제, title(200, NN), source_url(2048, NN), source_key(500, UK, collation utf8mb4_bin),
-  registrant_id FK → User (엣지 User 1:N Performance 추가), created_at, updated_at
-- 시각 컬럼(created_at/updated_at/starts_at)은 KST 기준이라는 범례 또는 주석 추가
-- Ticket: performance_id → performance_session_id
-- 범례/제목의 엔티티 수 11 → 12
+`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **현재 5개 테이블 새 V1 기준으로 새로 작성**했다 (users·venue·performance·performance_session·ticket, V1 SQL의 컬럼·UK·CHECK 반영).
+교환 도메인은 '설계 예정' 주석 노드 하나뿐이며, 삭제된 좌석표·수정 로그·제재 테이블은 그리지 않는다(설계는 태그 `archive/seatmap-track-20261007`의 이전 erd.dot과 마이그레이션에 보관).
+ERD.png는 graphviz `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다. 새 V 파일(교환 도메인 등)이 추가되면 erd.dot에 반영하고 이 절을 갱신한다.
+시각 컬럼(created_at/updated_at/starts_at)은 KST 기준이라는 주석을 유지한다.
 
 ## 변경 시 절차
 1. db-schema-architect가 변경안 설계
