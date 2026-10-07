@@ -28,8 +28,13 @@
 ## seatJson 형식 (seats 배열의 원소)
 
 ```json
-{ "row": 3, "col": 5, "x": 187, "y": 210, "w": 18, "h": 18 }
+{ "uid": "s0123", "row": 3, "col": 5, "x": 187, "y": 210, "w": 18, "h": 18 }
 ```
+
+- `uid`: 좌석 안정 식별자(문자열, 최대 32자). 수정 로그·정정 신고가 "어느 좌석"인지 가리키는 데 쓴다.
+  검출된 블록을 공간 순서(y, x, w, h)로 정렬한 일련번호(`s0001`부터)이며, 한 인식 결과 안에서 유일하다.
+  같은 이미지를 다시 인식하면 같은 uid가 나오고(결정적), OCR 결과·`aisleMode`·정정으로 `row`/`col`이 바뀌어도 uid는 바뀌지 않는다.
+  기존 필드(row, col, x, y, w, h)와 응답 구조는 그대로(필드 추가만).
 
 ## 엔드포인트
 
@@ -57,7 +62,7 @@
 ```json
 {
   "image": {"width": 700, "height": 400},
-  "seats": [{"row": 1, "col": 1, "x": 70, "y": 40, "w": 18, "h": 18}],
+  "seats": [{"uid": "s0001", "row": 1, "col": 1, "x": 70, "y": 40, "w": 18, "h": 18}],
   "rows": [{"row": 1, "rowSource": "ocr", "labelConfidence": 91.0, "seatCount": 16,
             "aisles": [{"afterCol": 8, "gapPx": 44, "missingSlots": 2}]}],
   "stats": {"blockCount": 208, "rowCount": 13, "ocrRowsRead": 13, "discardedComponents": 13},

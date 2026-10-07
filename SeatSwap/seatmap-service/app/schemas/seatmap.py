@@ -11,6 +11,7 @@ class _Camel(BaseModel):
 
 class SeatCoordinate(BaseModel):
     """seatJson 한 칸. 좌표는 원본 이미지 픽셀 기준."""
+    uid: str = Field(max_length=32)  # 안정 식별자(정정으로 row/col이 바뀌어도 불변)
     row: int
     col: int
     x: int

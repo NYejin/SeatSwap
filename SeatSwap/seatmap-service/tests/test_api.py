@@ -34,7 +34,7 @@ def test_recognize_upload_contract():
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"image", "seats", "rows", "stats", "warnings"}
-    assert set(body["seats"][0]) == {"row", "col", "x", "y", "w", "h"}
+    assert set(body["seats"][0]) == {"uid", "row", "col", "x", "y", "w", "h"}
     assert body["stats"]["blockCount"] == 24 and len(body["seats"]) == 24
     assert set(body["rows"][0]) == {"row", "rowSource", "labelConfidence", "seatCount", "aisles"}
 
