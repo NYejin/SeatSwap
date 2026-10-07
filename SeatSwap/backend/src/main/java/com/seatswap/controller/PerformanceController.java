@@ -45,11 +45,10 @@ public class PerformanceController {
     @GetMapping
     public PageResponse<PerformanceSummaryResponse> search(
             @RequestParam(required = false) String query,
-            @RequestParam(required = false) Long venueId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd'T'HH:mm") LocalDateTime asOf) {
-        return performanceService.search(query, venueId, page, size, asOf);
+        return performanceService.search(query, page, size, asOf);
     }
 
     /** 링크로 기존 공연 조회 — {exists, performanceId|null}. */

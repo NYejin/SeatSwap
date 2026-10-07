@@ -19,8 +19,11 @@ import java.time.LocalDateTime;
  * 서비스 계층에서 수행한 뒤 넘긴다. "공연장+제목"은 같은 공연장에서 같은 제목으로 다시 열리는 공연이
  * 있어 unique로 쓰지 않는다(서비스에서 유사 공연 안내용으로만 사용).
  *
- * 수정/삭제 정책: 등록자만. 제목·공연장 수정 가능(공연장은 티켓이 없을 때만 — 서비스에서 검사),
- * sourceUrl/sourceKey는 식별 키라 수정 불가(잘못 넣었으면 삭제 후 재등록). 삭제는 하위 회차에 티켓이
+ * 공연장은 별도 테이블 없이 공연의 텍스트 속성(venueName)이다. 등록 후 수정할 수 없다
+ * (티켓팅 링크에서 자동으로 읽어 채울 예정이라 사용자 수정을 열지 않는다).
+ *
+ * 수정/삭제 정책: 등록자만. 제목 수정 가능,
+ * sourceUrl/sourceKey/venueName은 수정 불가(잘못 넣었으면 삭제 후 재등록). 삭제는 하위 회차에 티켓이
  * 하나도 없을 때만.
  */
 @Entity
@@ -34,6 +37,7 @@ import java.time.LocalDateTime;
 public class Performance {
 
     public static final int TITLE_MAX_LENGTH = 200;
+    public static final int VENUE_NAME_MAX_LENGTH = 100;
     public static final int SOURCE_URL_MAX_LENGTH = 2048;
     public static final int SOURCE_KEY_MAX_LENGTH = 500;
 
@@ -41,12 +45,12 @@ public class Performance {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "venue_id", nullable = false)
-    private Venue venue;
-
     @Column(nullable = false, length = TITLE_MAX_LENGTH)
     private String title;
+
+    /** 공연장 이름 (텍스트, 앞뒤 공백 제거·연속 공백 한 칸). 등록 후 수정 불가. */
+    @Column(name = "venue_name", nullable = false, length = VENUE_NAME_MAX_LENGTH)
+    private String venueName;
 
     /** 사용자가 입력한 티켓팅 사이트 링크 원문 (공연 중복 판정의 기준). */
     @Column(name = "source_url", nullable = false, length = SOURCE_URL_MAX_LENGTH)
@@ -81,14 +85,14 @@ public class Performance {
      * 공연 생성. 길이·형식 검증과 sourceKey 계산은 서비스에서 먼저 수행해 400으로 응답해야 한다
      * (여기서의 IllegalArgumentException은 최후 방어선).
      */
-    public static Performance create(Venue venue, String title, String sourceUrl, String sourceKey, User registrant) {
-        requireNonNull(venue, "venue");
+    public static Performance create(String venueName, String title, String sourceUrl, String sourceKey,
+                                     User registrant) {
         requireNonNull(registrant, "registrant");
         requireText(sourceUrl, SOURCE_URL_MAX_LENGTH, "sourceUrl");
         requireText(sourceKey, SOURCE_KEY_MAX_LENGTH, "sourceKey");
 
         Performance performance = new Performance();
-        performance.venue = venue;
+        performance.venueName = cleanVenueName(venueName);
         performance.title = cleanTitle(title);
         performance.sourceUrl = sourceUrl.strip();
         performance.sourceKey = sourceKey;
@@ -101,26 +105,36 @@ public class Performance {
         this.title = cleanTitle(title);
     }
 
-    /**
-     * 공연장 수정. 회차에 등록된 티켓이 있으면 티켓의 좌석 기준(공연장)과 어긋나므로
-     * 서비스에서 "티켓 0건"을 확인한 뒤에만 호출한다.
-     */
-    public void changeVenue(Venue venue) {
-        requireNonNull(venue, "venue");
-        this.venue = venue;
-    }
-
     /** 등록자 여부. LAZY 프록시의 id만 읽으므로 추가 쿼리가 나가지 않는다. */
     public boolean isRegisteredBy(Long userId) {
         return userId != null && registrant != null && userId.equals(registrant.getId());
     }
 
     private static String cleanTitle(String title) {
-        String cleaned = Venue.cleanDisplayText(title);
+        String cleaned = cleanDisplayText(title);
         if (cleaned == null || cleaned.isEmpty() || cleaned.length() > TITLE_MAX_LENGTH) {
             throw new IllegalArgumentException("공연 제목은 1~" + TITLE_MAX_LENGTH + "자여야 합니다.");
         }
         return cleaned;
+    }
+
+    private static String cleanVenueName(String venueName) {
+        String cleaned = cleanDisplayText(venueName);
+        if (cleaned == null || cleaned.isEmpty() || cleaned.length() > VENUE_NAME_MAX_LENGTH) {
+            throw new IllegalArgumentException("공연장 이름은 1~" + VENUE_NAME_MAX_LENGTH + "자여야 합니다.");
+        }
+        return cleaned;
+    }
+
+    /**
+     * 표시용 텍스트 정리: 앞뒤 공백 제거 + 연속 공백 한 칸. null은 null.
+     * 서비스 계층 입력 검증(길이 판정)도 같은 규칙을 써야 하므로 public.
+     */
+    public static String cleanDisplayText(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replaceAll("[\\s\\p{Z}\\uFEFF]+", " ").strip();
     }
 
     private static void requireText(String value, int maxLength, String field) {

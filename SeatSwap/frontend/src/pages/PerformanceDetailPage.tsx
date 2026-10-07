@@ -12,14 +12,13 @@ import {
   normalizeLocalDateTime,
   validateSessionTimeStep,
 } from "../api/dateTime";
-import type { PerformanceDetail, PerformanceSession, Venue } from "../types/performance";
+import type { PerformanceDetail, PerformanceSession } from "../types/performance";
 import TextField from "../components/TextField";
 import SessionDateTimePicker from "../components/SessionDateTimePicker";
-import VenuePicker from "../components/VenuePicker";
 import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 상세 (보호 라우트 /performances/:id).
-// 로그인 사용자 누구나 회차 추가. 등록자(canEdit)만 제목·공연장 수정, 회차 수정·삭제, 공연 삭제.
+// 로그인 사용자 누구나 회차 추가. 등록자(canEdit)만 제목 수정, 회차 수정·삭제, 공연 삭제.
 // 티켓(교환) 영역은 이후 기능 — "준비 중" 자리만.
 // 포커스: 편집·확인 상자가 열리면 입력칸/"취소"로, 닫히면 트리거 버튼(없어졌으면 섹션 제목)으로 돌려준다.
 
@@ -172,36 +171,27 @@ export default function PerformanceDetailPage() {
   );
 }
 
-// ---- 공연 정보 (제목·공연장 수정) ----
+// ---- 공연 정보 (제목 수정. 공연장 이름은 등록 후 수정할 수 없다) ----
 
-type EditMode = "none" | "title" | "venue";
+type EditMode = "none" | "title";
 
 function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdated: (d: PerformanceDetail) => void }) {
   const [editing, setEditing] = useState<EditMode>("none");
   const [titleValue, setTitleValue] = useState(detail.title);
   const [titleError, setTitleError] = useState<string>();
-  const [venueValue, setVenueValue] = useState<Venue | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const link = parseTicketingLink(detail.sourceUrl);
 
   const titleButtonRef = useRef<HTMLButtonElement>(null);
-  const venueButtonRef = useRef<HTMLButtonElement>(null);
-  const venueHeadingRef = useRef<HTMLHeadingElement>(null);
   /** 편집을 닫은 뒤 포커스를 돌려줄 트리거 */
   const returnFocusTo = useRef<Exclude<EditMode, "none"> | null>(null);
 
   useEffect(() => {
-    if (editing === "venue") {
-      // 공연장 변경 패널이 열리면 패널 제목으로 (바로 아래 검색칸으로 이어짐)
-      venueHeadingRef.current?.focus();
-      return;
-    }
     if (editing === "none" && returnFocusTo.current) {
-      const target = returnFocusTo.current === "title" ? titleButtonRef.current : venueButtonRef.current;
       returnFocusTo.current = null;
-      target?.focus();
+      titleButtonRef.current?.focus();
     }
   }, [editing]);
 
@@ -211,7 +201,6 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
     setNotice(null);
     setTitleValue(detail.title);
     setTitleError(undefined);
-    setVenueValue(null);
   };
 
   /** 편집 닫기(취소·완료) — 트리거 버튼으로 포커스 복귀 */
@@ -220,7 +209,7 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
     setEditing("none");
   };
 
-  const save = async (payload: { title?: string; venueId?: number }, doneMessage: string) => {
+  const save = async (payload: { title: string }, doneMessage: string) => {
     setSaving(true);
     setError(null);
     try {
@@ -249,15 +238,6 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
       return;
     }
     void save({ title: t }, "제목을 수정했어요.");
-  };
-
-  const submitVenue = () => {
-    if (saving || !venueValue) return;
-    if (venueValue.id === detail.venue.id) {
-      close();
-      return;
-    }
-    void save({ venueId: venueValue.id }, "공연장을 변경했어요.");
   };
 
   return (
@@ -301,8 +281,7 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
       <dl className={cls.infoList}>
         <dt className={cls.term}>공연장</dt>
         <dd className={cls.desc}>
-          {detail.venue.name}
-          {detail.venue.address && <span className={cls.descSub}>{detail.venue.address}</span>}
+          {detail.venueName}
         </dd>
         <dt className={cls.term}>티켓팅</dt>
         <dd className={cls.desc}>
@@ -325,36 +304,10 @@ function InfoSection({ detail, onUpdated }: { detail: PerformanceDetail; onUpdat
         {/* TODO: 공연 포스터 오른쪽에 추가하기 */}
       </dl>
 
-      {editing === "venue" && (
-        <div className="flex flex-col gap-3 border-t border-gray-200 pt-4">
-          <h2 ref={venueHeadingRef} tabIndex={-1} className={`${ui.sectionTitle} ${cls.focusTarget}`}>
-            공연장 변경
-          </h2>
-          <VenuePicker idPrefix="perf-edit" selected={venueValue} onSelect={setVenueValue} />
-          <div className="flex flex-wrap justify-end gap-2">
-            <button type="button" className={button.outline} onClick={close} disabled={saving}>
-              취소
-            </button>
-            <button
-              type="button"
-              className={button.solid}
-              onClick={submitVenue}
-              disabled={saving || !venueValue}
-              aria-busy={saving}
-            >
-              {saving ? "저장 중..." : "이 공연장으로 변경"}
-            </button>
-          </div>
-        </div>
-      )}
-
       {detail.canEdit && editing === "none" && (
         <div className={cls.editRow}>
           <button ref={titleButtonRef} type="button" className={button.outline} onClick={() => open("title")}>
             제목 수정
-          </button>
-          <button ref={venueButtonRef} type="button" className={button.outline} onClick={() => open("venue")}>
-            공연장 변경
           </button>
         </div>
       )}

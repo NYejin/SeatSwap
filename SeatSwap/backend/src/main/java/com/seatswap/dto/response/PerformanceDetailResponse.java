@@ -7,13 +7,13 @@ import java.util.List;
 
 /**
  * 공연 상세. sessions는 startsAt 오름차순. canEdit = 현재 사용자가 등록자인지
- * (제목/공연장 수정, 공연 삭제, 회차 수정·삭제 버튼 노출용 — 서버도 동일하게 검사한다).
+ * (제목 수정, 공연 삭제, 회차 수정·삭제 버튼 노출용 — 서버도 동일하게 검사한다).
  */
 public record PerformanceDetailResponse(
         Long id,
         String title,
         String sourceUrl,
-        VenueResponse venue,
+        String venueName,
         Registrant registrant,
         boolean canEdit,
         List<SessionResponse> sessions,

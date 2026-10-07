@@ -3,7 +3,6 @@ package com.seatswap.service;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
-import com.seatswap.domain.Venue;
 import com.seatswap.dto.request.PerformanceCreateRequest;
 import com.seatswap.dto.request.PerformanceUpdateRequest;
 import com.seatswap.dto.response.PageResponse;
@@ -11,7 +10,6 @@ import com.seatswap.dto.response.PerformanceDetailResponse;
 import com.seatswap.dto.response.PerformanceLookupResponse;
 import com.seatswap.dto.response.PerformanceSummaryResponse;
 import com.seatswap.dto.response.SessionResponse;
-import com.seatswap.dto.response.VenueResponse;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
@@ -20,7 +18,6 @@ import com.seatswap.repository.PerformanceRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
-import com.seatswap.repository.VenueRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -57,13 +54,10 @@ public class PerformanceService {
     static final String DUPLICATE_PERFORMANCE_MESSAGE = "이미 등록된 공연입니다.";
     static final String NOT_FOUND_MESSAGE = "공연을 찾을 수 없습니다.";
     static final String FORBIDDEN_MESSAGE = "접근 권한이 없습니다.";
-    static final String VENUE_NOT_FOUND_MESSAGE = "존재하지 않는 공연장입니다.";
-    static final String VENUE_CHANGE_BLOCKED_MESSAGE = "티켓이 등록된 공연은 공연장을 변경할 수 없습니다.";
     static final String DELETE_BLOCKED_MESSAGE = "티켓이 등록된 공연은 삭제할 수 없습니다.";
 
     private final PerformanceRepository performanceRepository;
     private final PerformanceSessionRepository sessionRepository;
-    private final VenueRepository venueRepository;
     private final UserRepository userRepository;
     private final TicketRepository ticketRepository;
     private final SourceKeyResolver sourceKeyResolver;
@@ -72,7 +66,6 @@ public class PerformanceService {
 
     public PerformanceService(PerformanceRepository performanceRepository,
                               PerformanceSessionRepository sessionRepository,
-                              VenueRepository venueRepository,
                               UserRepository userRepository,
                               TicketRepository ticketRepository,
                               SourceKeyResolver sourceKeyResolver,
@@ -80,7 +73,6 @@ public class PerformanceService {
                               PlatformTransactionManager transactionManager) {
         this.performanceRepository = performanceRepository;
         this.sessionRepository = sessionRepository;
-        this.venueRepository = venueRepository;
         this.userRepository = userRepository;
         this.ticketRepository = ticketRepository;
         this.sourceKeyResolver = sourceKeyResolver;
@@ -98,15 +90,15 @@ public class PerformanceService {
     }
 
     /**
-     * 제목 부분 일치 + 공연장 필터. 다가오는 회차가 있는 공연 먼저(가까운 순). page는 0부터.
+     * 제목 부분 일치 검색. 다가오는 회차가 있는 공연 먼저(가까운 순). page는 0부터.
      * 대소문자 무시는 컬럼 collation(utf8mb4_0900_ai_ci)에 맡긴다 - lower()를 씌우지 않는다.
      * asOf: 정렬과 nextSessionStartsAt의 기준 시각. 페이지를 넘기는 동안 기준이 바뀌어 항목이 중복/누락되지
      * 않도록 프론트가 첫 페이지 시각을 고정해 넘긴다. 없으면 현재(KST).
      */
     @Transactional(readOnly = true)
-    public PageResponse<PerformanceSummaryResponse> search(String query, Long venueId, int page, int size,
+    public PageResponse<PerformanceSummaryResponse> search(String query, int page, int size,
                                                            LocalDateTime asOf) {
-        String q = Venue.cleanDisplayText(query);
+        String q = Performance.cleanDisplayText(query);
         if (q != null && q.length() > QUERY_MAX_LENGTH) {
             throw new FieldValidationException("query", "검색어는 100자 이하로 입력해주세요.");
         }
@@ -117,7 +109,6 @@ public class PerformanceService {
         LocalDateTime now = asOf != null ? PerformanceSession.truncate(asOf) : sessionTimePolicy.now();
 
         Page<Performance> result = performanceRepository.search(
-                venueId,
                 LikePatterns.contains(q),
                 now,
                 PageRequest.of(page, pageSize));
@@ -134,7 +125,7 @@ public class PerformanceService {
                     return new PerformanceSummaryResponse(
                             p.getId(),
                             p.getTitle(),
-                            new PerformanceSummaryResponse.VenueRef(p.getVenue().getId(), p.getVenue().getName()),
+                            p.getVenueName(),
                             s == null ? null : s.getNextStartsAt(),
                             s == null || s.getSessionCount() == null ? 0 : s.getSessionCount());
                 })
@@ -165,6 +156,7 @@ public class PerformanceService {
             throw duplicatePerformance(existingId);
         }
         String title = cleanTitle(request.title());
+        String venueName = cleanVenueName(request.venueName());
         List<LocalDateTime> startsAts = sessionTimePolicy.normalizeAll(request.sessions(), "sessions");
 
         try {
@@ -173,11 +165,10 @@ public class PerformanceService {
                 performanceRepository.findIdBySourceKey(sourceKey).ifPresent(id -> {
                     throw duplicatePerformance(id);
                 });
-                Venue venue = findVenue(request.venueId());
                 User registrant = requireUser(userId);
 
                 Performance performance = performanceRepository.saveAndFlush(
-                        Performance.create(venue, title, sourceUrl, sourceKey, registrant));
+                        Performance.create(venueName, title, sourceUrl, sourceKey, registrant));
                 List<PerformanceSession> sessions = new ArrayList<>();
                 for (LocalDateTime startsAt : startsAts) {
                     sessions.add(sessionRepository.save(PerformanceSession.create(performance, startsAt)));
@@ -198,27 +189,18 @@ public class PerformanceService {
     }
 
     /**
-     * 제목/공연장 수정 (등록자만). 공연장 변경은 소속 회차에 티켓이 0건일 때만(아니면 409).
-     * 공연 행을 PESSIMISTIC_WRITE로 잠가 "티켓 0건 확인 -> 변경" 사이에 다른 변경이 끼지 않게 한다.
+     * 제목 수정 (등록자만). 공연장 이름은 등록 후 수정할 수 없다.
+     * 공연 행을 PESSIMISTIC_WRITE로 잠가 다른 변경(삭제, 회차 변경)과 직렬화한다.
      */
     @Transactional
     public PerformanceDetailResponse update(Long performanceId, Long userId, PerformanceUpdateRequest request) {
         Performance performance = lockPerformance(performanceId);
         requireRegistrant(performance, userId);
 
-        if (request.title() == null && request.venueId() == null) {
+        if (request.title() == null) {
             throw new SeatSwapException("수정할 항목이 없습니다.");
         }
-        if (request.title() != null) {
-            performance.changeTitle(cleanTitle(request.title()));
-        }
-        if (request.venueId() != null && !request.venueId().equals(performance.getVenue().getId())) {
-            Venue venue = findVenue(request.venueId());
-            if (ticketRepository.countByPerformanceSession_Performance_Id(performanceId) > 0) {
-                throw new ConflictException(VENUE_CHANGE_BLOCKED_MESSAGE);
-            }
-            performance.changeVenue(venue);
-        }
+        performance.changeTitle(cleanTitle(request.title()));
         return toDetail(performance, sessionRepository.findByPerformance_IdOrderByStartsAtAsc(performanceId), userId);
     }
 
@@ -241,7 +223,7 @@ public class PerformanceService {
 
     /**
      * 공연 행 비관적 쓰기 잠금 (SELECT ... FOR UPDATE). 공연에 딸린 데이터를 바꾸는 작업
-     * (공연장 변경, 공연 삭제, 회차 추가/수정/삭제)은 모두 이 잠금을 먼저 잡아 서로 직렬화된다.
+     * (공연 삭제, 제목 수정, 회차 추가/수정/삭제)은 모두 이 잠금을 먼저 잡아 서로 직렬화된다.
      * 호출 측 트랜잭션 안에서만 의미가 있다.
      * 주의: 이후 구현할 티켓 등록도 같은 공연 행을 잠가야 "티켓 0건 확인 -> 변경" 검사가 완전해진다.
      */
@@ -263,19 +245,11 @@ public class PerformanceService {
                 performance.getId(),
                 performance.getTitle(),
                 performance.getSourceUrl(),
-                VenueResponse.from(performance.getVenue()),
+                performance.getVenueName(),
                 new PerformanceDetailResponse.Registrant(registrant.getId(), registrant.getNickname()),
                 performance.isRegisteredBy(userId),
                 sessions.stream().map(SessionResponse::from).toList(),
                 performance.getCreatedAt());
-    }
-
-    private Venue findVenue(Long venueId) {
-        if (venueId == null) {
-            throw new FieldValidationException("venueId", "공연장을 선택해주세요.");
-        }
-        return venueRepository.findById(venueId)
-                .orElseThrow(() -> new FieldValidationException("venueId", VENUE_NOT_FOUND_MESSAGE));
     }
 
     /** 토큰은 유효하나 사용자가 없는 경우 → 401 (spring-boot-conventions 예외 조항). */
@@ -285,12 +259,23 @@ public class PerformanceService {
     }
 
     private static String cleanTitle(String title) {
-        String cleaned = Venue.cleanDisplayText(title);
+        String cleaned = Performance.cleanDisplayText(title);
         if (cleaned == null || cleaned.isEmpty()) {
             throw new FieldValidationException("title", "공연 제목을 입력해주세요.");
         }
         if (cleaned.length() > Performance.TITLE_MAX_LENGTH) {
             throw new FieldValidationException("title", "공연 제목은 200자 이하로 입력해주세요.");
+        }
+        return cleaned;
+    }
+
+    private static String cleanVenueName(String venueName) {
+        String cleaned = Performance.cleanDisplayText(venueName);
+        if (cleaned == null || cleaned.isEmpty()) {
+            throw new FieldValidationException("venueName", "공연장 이름을 입력해주세요.");
+        }
+        if (cleaned.length() > Performance.VENUE_NAME_MAX_LENGTH) {
+            throw new FieldValidationException("venueName", "공연장 이름은 100자 이하로 입력해주세요.");
         }
         return cleaned;
     }

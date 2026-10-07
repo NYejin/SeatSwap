@@ -8,10 +8,8 @@ import java.time.LocalDateTime;
 public record PerformanceSummaryResponse(
         Long id,
         String title,
-        VenueRef venue,
+        String venueName,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.MINUTE)
         LocalDateTime nextSessionStartsAt,
         long sessionCount
-) {
-    public record VenueRef(Long id, String name) {}
-}
+) {}

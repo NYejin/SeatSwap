@@ -51,7 +51,7 @@ public class PerformanceSessionService {
     }
 
     /**
-     * 회차 추가 (로그인 사용자 누구나). 공연 행을 잠가(FOR UPDATE) 공연 삭제/공연장 변경과 직렬화한다 —
+     * 회차 추가 (로그인 사용자 누구나). 공연 행을 잠가(FOR UPDATE) 공연 삭제와 직렬화한다 —
      * 삭제가 먼저 커밋되면 잠금 대기 후 공연이 없어 404가 된다.
      */
     public SessionResponse add(Long performanceId, LocalDateTime requestedStartsAt) {
@@ -102,7 +102,7 @@ public class PerformanceSessionService {
 
     /**
      * 공연 행을 먼저 잠근 뒤(404) 회차를 확인한다: 404(회차 없음/다른 공연 소속) → 403(등록자 아님) → 409(티켓 있음).
-     * 잠금으로 같은 공연의 회차 변경·공연 삭제·공연장 변경이 직렬화된다.
+     * 잠금으로 같은 공연의 회차 변경·공연 삭제가 직렬화된다.
      */
     private PerformanceSession loadEditableSession(Long performanceId, Long sessionId, Long userId) {
         Performance performance = lockPerformance(performanceId);

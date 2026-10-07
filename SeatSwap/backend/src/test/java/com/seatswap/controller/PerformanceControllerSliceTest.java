@@ -7,7 +7,6 @@ import com.seatswap.dto.response.PerformanceDetailResponse;
 import com.seatswap.dto.response.PerformanceLookupResponse;
 import com.seatswap.dto.response.PerformanceSummaryResponse;
 import com.seatswap.dto.response.SessionResponse;
-import com.seatswap.dto.response.VenueResponse;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.security.AuthUserPrincipal;
@@ -82,7 +81,7 @@ class PerformanceControllerSliceTest {
 
     private static PerformanceDetailResponse detail(boolean canEdit) {
         return new PerformanceDetailResponse(100L, "두아 리파 내한", "https://tickets.interpark.com/goods/1",
-                new VenueResponse(10L, "KSPO DOME", null),
+                "KSPO DOME",
                 new PerformanceDetailResponse.Registrant(1L, "등록자"), canEdit,
                 List.of(new SessionResponse(7L, SHOW)),
                 LocalDateTime.of(2026, 10, 6, 14, 3, 21));
@@ -99,20 +98,20 @@ class PerformanceControllerSliceTest {
 
     @Test
     void listResponseShape() throws Exception {
-        when(performanceService.search(eq("두아"), eq(10L), eq(0), eq(20), eq(null))).thenReturn(new PageResponse<>(
+        when(performanceService.search(eq("두아"), eq(0), eq(20), eq(null))).thenReturn(new PageResponse<>(
                 List.of(new PerformanceSummaryResponse(100L, "두아 리파 내한",
-                        new PerformanceSummaryResponse.VenueRef(10L, "KSPO DOME"), SHOW, 2),
+                        "KSPO DOME", SHOW, 2),
                         new PerformanceSummaryResponse(101L, "지난 공연",
-                                new PerformanceSummaryResponse.VenueRef(10L, "KSPO DOME"), null, 1)),
+                                "KSPO DOME", null, 1)),
                 0, 20, 2, 1));
 
-        mockMvc.perform(auth(get("/api/performances").param("query", "두아").param("venueId", "10")))
+        mockMvc.perform(auth(get("/api/performances").param("query", "두아")))
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
                         {"content":[
-                          {"id":100,"title":"두아 리파 내한","venue":{"id":10,"name":"KSPO DOME"},
+                          {"id":100,"title":"두아 리파 내한","venueName":"KSPO DOME",
                            "nextSessionStartsAt":"2026-11-01T19:00","sessionCount":2},
-                          {"id":101,"title":"지난 공연","venue":{"id":10,"name":"KSPO DOME"},
+                          {"id":101,"title":"지난 공연","venueName":"KSPO DOME",
                            "nextSessionStartsAt":null,"sessionCount":1}],
                          "page":0,"size":20,"totalElements":2,"totalPages":1}
                         """, true));
@@ -140,7 +139,7 @@ class PerformanceControllerSliceTest {
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
                         {"id":100,"title":"두아 리파 내한","sourceUrl":"https://tickets.interpark.com/goods/1",
-                         "venue":{"id":10,"name":"KSPO DOME","address":null},
+                         "venueName":"KSPO DOME",
                          "registrant":{"id":1,"nickname":"등록자"},"canEdit":true,
                          "sessions":[{"id":7,"startsAt":"2026-11-01T19:00"}],
                          "createdAt":"2026-10-06T14:03:21"}
@@ -164,7 +163,7 @@ class PerformanceControllerSliceTest {
 
         mockMvc.perform(auth(post("/api/performances")).contentType(MediaType.APPLICATION_JSON).content("""
                         {"sourceUrl":"https://tickets.interpark.com/goods/1","title":"두아 리파 내한",
-                         "venueId":10,"sessions":["2026-11-01T19:00","2026-11-02T18:00"]}
+                         "venueName":"KSPO DOME","sessions":["2026-11-01T19:00","2026-11-02T18:00"]}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(100));
@@ -178,7 +177,7 @@ class PerformanceControllerSliceTest {
                 .thenThrow(new ConflictException("이미 등록된 공연입니다.", Map.of("performanceId", 77L)));
 
         mockMvc.perform(auth(post("/api/performances")).contentType(MediaType.APPLICATION_JSON).content("""
-                        {"sourceUrl":"https://tickets.interpark.com/goods/1","title":"t","venueId":10,
+                        {"sourceUrl":"https://tickets.interpark.com/goods/1","title":"t","venueName":"KSPO DOME",
                          "sessions":["2026-11-01T19:00"]}
                         """))
                 .andExpect(status().isConflict())
@@ -193,10 +192,10 @@ class PerformanceControllerSliceTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("""
                         {"sourceUrl":"티켓팅 링크를 입력해주세요.","title":"공연 제목을 입력해주세요.",
-                         "venueId":"공연장을 선택해주세요.","sessions":"회차를 1개 이상 입력해주세요."}
+                         "venueName":"공연장 이름을 입력해주세요.","sessions":"회차를 1개 이상 입력해주세요."}
                         """, true));
         mockMvc.perform(auth(post("/api/performances")).contentType(MediaType.APPLICATION_JSON).content("""
-                        {"sourceUrl":"https://a.com","title":"t","venueId":10,"sessions":["2026-11-01 19:00"]}
+                        {"sourceUrl":"https://a.com","title":"t","venueName":"KSPO DOME","sessions":["2026-11-01 19:00"]}
                         """))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("{\"message\":\"요청 형식이 올바르지 않습니다.\"}", true));
@@ -204,20 +203,23 @@ class PerformanceControllerSliceTest {
     }
 
     @Test
-    void updateByNonRegistrantIs403AndBlockedVenueChangeIs409() throws Exception {
+    void updateByNonRegistrantIs403() throws Exception {
         when(performanceService.update(eq(100L), eq(1L), any()))
                 .thenThrow(new AccessDeniedException("접근 권한이 없습니다."));
         mockMvc.perform(auth(patch("/api/performances/100")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"새 제목\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(content().json("{\"message\":\"접근 권한이 없습니다.\"}", true));
+    }
 
-        when(performanceService.update(eq(101L), eq(1L), any()))
-                .thenThrow(new ConflictException("티켓이 등록된 공연은 공연장을 변경할 수 없습니다."));
-        mockMvc.perform(auth(patch("/api/performances/101")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"venueId\":11}"))
-                .andExpect(status().isConflict())
-                .andExpect(content().json("{\"message\":\"티켓이 등록된 공연은 공연장을 변경할 수 없습니다.\"}", true));
+    @Test
+    void updateIgnoresUnknownFieldsAndPassesTitleOnly() throws Exception {
+        // 수정 요청 DTO에는 title만 있다. venueName·venueId 같은 알 수 없는 필드는 400 없이 무시된다.
+        when(performanceService.update(eq(100L), eq(1L), any())).thenReturn(detail(true));
+        mockMvc.perform(auth(patch("/api/performances/100")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"새 제목\",\"venueName\":\"다른 공연장\",\"venueId\":11}"))
+                .andExpect(status().isOk());
+        verify(performanceService).update(eq(100L), eq(1L), argThat(r -> "새 제목".equals(r.title())));
     }
 
     @Test
@@ -264,7 +266,7 @@ class PerformanceControllerSliceTest {
 
     @Test
     void asOfParameterIsParsedAndInvalidFormatIs400() throws Exception {
-        when(performanceService.search(eq(null), eq(null), eq(1), eq(20), eq(LocalDateTime.of(2026, 10, 6, 12, 0))))
+        when(performanceService.search(eq(null), eq(1), eq(20), eq(LocalDateTime.of(2026, 10, 6, 12, 0))))
                 .thenReturn(new PageResponse<>(List.of(), 1, 20, 0, 0));
         mockMvc.perform(auth(get("/api/performances").param("page", "1").param("asOf", "2026-10-06T12:00")))
                 .andExpect(status().isOk())

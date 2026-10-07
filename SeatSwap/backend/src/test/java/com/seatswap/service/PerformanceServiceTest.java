@@ -3,7 +3,6 @@ package com.seatswap.service;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.User;
-import com.seatswap.domain.Venue;
 import com.seatswap.dto.request.PerformanceCreateRequest;
 import com.seatswap.dto.request.PerformanceUpdateRequest;
 import com.seatswap.dto.response.PageResponse;
@@ -12,11 +11,11 @@ import com.seatswap.dto.response.PerformanceSummaryResponse;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.exception.SeatSwapException;
 import com.seatswap.repository.PerformanceRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
-import com.seatswap.repository.VenueRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -38,7 +37,6 @@ import static com.seatswap.service.PerformanceFixtures.performance;
 import static com.seatswap.service.PerformanceFixtures.session;
 import static com.seatswap.service.PerformanceFixtures.uniqueViolation;
 import static com.seatswap.service.PerformanceFixtures.user;
-import static com.seatswap.service.PerformanceFixtures.venue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -57,26 +55,23 @@ class PerformanceServiceTest {
 
     private PerformanceRepository performanceRepository;
     private PerformanceSessionRepository sessionRepository;
-    private VenueRepository venueRepository;
     private UserRepository userRepository;
     private TicketRepository ticketRepository;
     private PerformanceService service;
 
     private final User registrant = user(1L, "등록자");
-    private final Venue kspo = venue(10L, "KSPO DOME");
+    private final String kspo = "KSPO DOME";
 
     @BeforeEach
     void setUp() {
         performanceRepository = mock(PerformanceRepository.class);
         sessionRepository = mock(PerformanceSessionRepository.class);
-        venueRepository = mock(VenueRepository.class);
         userRepository = mock(UserRepository.class);
         ticketRepository = mock(TicketRepository.class);
-        service = new PerformanceService(performanceRepository, sessionRepository, venueRepository, userRepository,
+        service = new PerformanceService(performanceRepository, sessionRepository, userRepository,
                 ticketRepository, new SourceKeyResolver(), PerformanceFixtures.timePolicy(),
                 PerformanceFixtures.noopTransactionManager());
 
-        when(venueRepository.findById(10L)).thenReturn(Optional.of(kspo));
         when(userRepository.findById(1L)).thenReturn(Optional.of(registrant));
     }
 
@@ -95,7 +90,7 @@ class PerformanceServiceTest {
     }
 
     private static PerformanceCreateRequest request(List<LocalDateTime> sessions) {
-        return new PerformanceCreateRequest(URL, "  두아 리파   내한 ", 10L, sessions);
+        return new PerformanceCreateRequest(URL, "  두아 리파   내한 ", " KSPO   DOME ", sessions);
     }
 
     // ---- create ----
@@ -110,7 +105,7 @@ class PerformanceServiceTest {
         assertThat(detail.id()).isEqualTo(100L);
         assertThat(detail.title()).isEqualTo("두아 리파 내한");
         assertThat(detail.sourceUrl()).isEqualTo(URL);
-        assertThat(detail.venue().id()).isEqualTo(10L);
+        assertThat(detail.venueName()).isEqualTo("KSPO DOME");
         assertThat(detail.registrant().nickname()).isEqualTo("등록자");
         assertThat(detail.canEdit()).isTrue();
         assertThat(detail.sessions()).extracting("startsAt").containsExactly(d1, d1.plusDays(1));
@@ -154,7 +149,7 @@ class PerformanceServiceTest {
     }
 
     @Test
-    void createRejectsPastSessionsInvalidLinkTitleAndMissingVenue() {
+    void createRejectsPastSessionsInvalidLinkTitleAndVenueName() {
         assertThatThrownBy(() -> service.create(1L, request(List.of(NOW.plusDays(1), NOW.minusMinutes(10)))))
                 .isInstanceOfSatisfying(FieldValidationException.class, e -> {
                     assertThat(e.getField()).isEqualTo("sessions");
@@ -167,18 +162,25 @@ class PerformanceServiceTest {
                     assertThat(e.getMessage()).isEqualTo("회차 시각은 10분 단위로 입력해주세요.");
                 });
         assertThatThrownBy(() -> service.create(1L,
-                new PerformanceCreateRequest("ftp://x.com/a", "제목", 10L, List.of(NOW.plusDays(1)))))
+                new PerformanceCreateRequest("ftp://x.com/a", "제목", "KSPO DOME", List.of(NOW.plusDays(1)))))
                 .isInstanceOfSatisfying(FieldValidationException.class,
                         e -> assertThat(e.getField()).isEqualTo("sourceUrl"));
         assertThatThrownBy(() -> service.create(1L,
-                new PerformanceCreateRequest(URL, "가".repeat(201), 10L, List.of(NOW.plusDays(1)))))
+                new PerformanceCreateRequest(URL, "가".repeat(201), "KSPO DOME", List.of(NOW.plusDays(1)))))
                 .isInstanceOfSatisfying(FieldValidationException.class,
                         e -> assertThat(e.getField()).isEqualTo("title"));
-        when(venueRepository.findById(999L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.create(1L,
-                new PerformanceCreateRequest(URL, "제목", 999L, List.of(NOW.plusDays(1)))))
-                .isInstanceOfSatisfying(FieldValidationException.class,
-                        e -> assertThat(e.getField()).isEqualTo("venueId"));
+                new PerformanceCreateRequest(URL, "제목", "  ", List.of(NOW.plusDays(1)))))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                    assertThat(e.getField()).isEqualTo("venueName");
+                    assertThat(e.getMessage()).isEqualTo("공연장 이름을 입력해주세요.");
+                });
+        assertThatThrownBy(() -> service.create(1L,
+                new PerformanceCreateRequest(URL, "제목", "가".repeat(101), List.of(NOW.plusDays(1)))))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                    assertThat(e.getField()).isEqualTo("venueName");
+                    assertThat(e.getMessage()).isEqualTo("공연장 이름은 100자 이하로 입력해주세요.");
+                });
     }
 
     @Test
@@ -224,7 +226,7 @@ class PerformanceServiceTest {
     void searchMapsStatsAndClampsPaging() {
         Performance p1 = performance(100L, kspo, registrant);
         Performance p2 = performance(101L, kspo, registrant);
-        when(performanceRepository.search(eq(10L), eq("%두아!_리파%"), eq(NOW), any(Pageable.class)))
+        when(performanceRepository.search(eq("%두아!_리파%"), eq(NOW), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(p1, p2), PageRequest.of(0, 50), 2));
         PerformanceSessionRepository.SessionStats stats = new PerformanceSessionRepository.SessionStats() {
             public Long getPerformanceId() { return 100L; }
@@ -233,16 +235,16 @@ class PerformanceServiceTest {
         };
         when(sessionRepository.findStats(List.of(100L, 101L), NOW)).thenReturn(List.of(stats));
 
-        PageResponse<PerformanceSummaryResponse> page = service.search(" 두아_리파 ", 10L, 0, 500, null);
+        PageResponse<PerformanceSummaryResponse> page = service.search(" 두아_리파 ", 0, 500, null);
 
         assertThat(page.size()).isEqualTo(50);
         assertThat(page.totalElements()).isEqualTo(2);
         assertThat(page.content().get(0).nextSessionStartsAt()).isEqualTo(NOW.plusDays(2));
         assertThat(page.content().get(0).sessionCount()).isEqualTo(3);
-        assertThat(page.content().get(0).venue().name()).isEqualTo("KSPO DOME");
+        assertThat(page.content().get(0).venueName()).isEqualTo("KSPO DOME");
         assertThat(page.content().get(1).nextSessionStartsAt()).isNull();
         assertThat(page.content().get(1).sessionCount()).isZero();
-        assertThatThrownBy(() -> service.search(null, null, -1, 20, null)).isInstanceOf(FieldValidationException.class);
+        assertThatThrownBy(() -> service.search(null, -1, 20, null)).isInstanceOf(FieldValidationException.class);
     }
 
     // ---- update / delete ----
@@ -250,34 +252,30 @@ class PerformanceServiceTest {
     @Test
     void updateByNonRegistrantIsForbidden() {
         when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(performance(100L, kspo, registrant)));
-        assertThatThrownBy(() -> service.update(100L, 2L, new PerformanceUpdateRequest("새 제목", null)))
+        assertThatThrownBy(() -> service.update(100L, 2L, new PerformanceUpdateRequest("새 제목")))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessage("접근 권한이 없습니다.");
     }
 
     @Test
-    void updateVenueBlockedWhenTicketsExist() {
+    void updateChangesTitleOnlyAndKeepsVenueName() {
         Performance p = performance(100L, kspo, registrant);
         when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(p));
-        when(venueRepository.findById(11L)).thenReturn(Optional.of(venue(11L, "올림픽홀")));
-        when(ticketRepository.countByPerformanceSession_Performance_Id(100L)).thenReturn(1L);
+        when(sessionRepository.findByPerformance_IdOrderByStartsAtAsc(100L)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.update(100L, 1L, new PerformanceUpdateRequest(null, 11L)))
-                .isInstanceOf(ConflictException.class);
-        assertThat(p.getVenue().getId()).isEqualTo(10L);
+        PerformanceDetailResponse detail = service.update(100L, 1L, new PerformanceUpdateRequest(" 새 제목 "));
+
+        assertThat(detail.title()).isEqualTo("새 제목");
+        assertThat(detail.venueName()).isEqualTo("KSPO DOME");
+        assertThat(p.getVenueName()).isEqualTo("KSPO DOME");
     }
 
     @Test
-    void updateTitleAndVenueWhenNoTickets() {
-        Performance p = performance(100L, kspo, registrant);
-        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(p));
-        when(venueRepository.findById(11L)).thenReturn(Optional.of(venue(11L, "올림픽홀")));
-        when(sessionRepository.findByPerformance_IdOrderByStartsAtAsc(100L)).thenReturn(List.of());
-
-        PerformanceDetailResponse detail = service.update(100L, 1L, new PerformanceUpdateRequest(" 새 제목 ", 11L));
-
-        assertThat(detail.title()).isEqualTo("새 제목");
-        assertThat(detail.venue().id()).isEqualTo(11L);
+    void updateWithoutTitleIsRejected() {
+        when(performanceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(performance(100L, kspo, registrant)));
+        assertThatThrownBy(() -> service.update(100L, 1L, new PerformanceUpdateRequest(null)))
+                .isInstanceOf(SeatSwapException.class)
+                .hasMessage("수정할 항목이 없습니다.");
     }
 
     @Test
@@ -305,7 +303,7 @@ class PerformanceServiceTest {
         when(performanceRepository.findIdBySourceKey(KEY)).thenReturn(Optional.of(77L));
 
         assertThatThrownBy(() -> service.create(1L,
-                new PerformanceCreateRequest(URL, "가".repeat(300), 10L, List.of(NOW.minusDays(3)))))
+                new PerformanceCreateRequest(URL, "가".repeat(300), "KSPO DOME", List.of(NOW.minusDays(3)))))
                 .isInstanceOfSatisfying(ConflictException.class,
                         e -> assertThat(e.getDetails()).containsEntry("performanceId", 77L));
     }
@@ -314,10 +312,10 @@ class PerformanceServiceTest {
     void searchUsesAsOfTruncatedToMinuteInsteadOfNow() {
         LocalDateTime asOf = LocalDateTime.of(2026, 10, 1, 9, 30, 45);
         LocalDateTime truncated = LocalDateTime.of(2026, 10, 1, 9, 30);
-        when(performanceRepository.search(eq(null), eq("%"), eq(truncated), any(Pageable.class)))
+        when(performanceRepository.search(eq("%"), eq(truncated), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(performance(100L, kspo, registrant)), PageRequest.of(0, 20), 1));
 
-        service.search(null, null, 0, 20, asOf);
+        service.search(null, 0, 20, asOf);
 
         verify(sessionRepository).findStats(List.of(100L), truncated);
     }
@@ -325,7 +323,7 @@ class PerformanceServiceTest {
     @Test
     void updateAndDeleteLockPerformanceRowAndMissingIs404() {
         when(performanceRepository.findByIdForUpdate(404L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.update(404L, 1L, new PerformanceUpdateRequest("t", null)))
+        assertThatThrownBy(() -> service.update(404L, 1L, new PerformanceUpdateRequest("t")))
                 .isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.delete(404L, 1L)).isInstanceOf(NotFoundException.class);
         verify(performanceRepository, never()).findById(anyLong());
