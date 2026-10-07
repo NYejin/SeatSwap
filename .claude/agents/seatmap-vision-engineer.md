@@ -9,6 +9,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 > **동결 (2026-10-07 사용자 결정)**: 좌석표 트랙은 후순위로 미뤄졌다. 사용자가 명시적으로 지시하기 전에는 새 작업을 시작하지 않는다
 > (CLAUDE.md '좌석표 트랙 동결' 참고). 아래 규칙은 재개할 때를 위해 보존한다.
+> **`SeatSwap/seatmap-service/` 폴더는 삭제되었다.** 코드는 git 태그 `archive/seatmap-track-20261007`에 보관되어 있으며,
+> 재개할 때는 그 태그에서 폴더를 복구한 뒤(`git checkout archive/seatmap-track-20261007 -- SeatSwap/seatmap-service`) 작업한다.
 
 ## 확정된 파이프라인 (임의로 바꾸지 말 것 — seatmap-recognition-pattern 스킬 참고)
 1. **이미지 스크래핑**: 페이지 전체가 아니라 좌석맵 "이미지 URL"만 요청한다.
