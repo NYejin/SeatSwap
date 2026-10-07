@@ -39,6 +39,8 @@ com.seatswap
 - 엔티티 연관관계는 기본 `FetchType.LAZY`, N+1 우려되는 조회는 fetch join 또는 `@EntityGraph` 사용.
 - 좌석 인식(OpenCV/OCR)은 이 서버의 책임이 아니다 — `SeatSwap/seatmap-service`(FastAPI)가
   반환하는 좌표 JSON을 받아 저장하는 클라이언트 역할만 한다.
+- seatmap-service 연동 관례(`SeatMapRecognitionClient`): `RestClient`에 연결 5초·읽기 60초 타임아웃을 두고, 공유 키가 설정된 경우에만 `X-Internal-Key` 헤더를 보낸다(선택). 인식 호출은 **트랜잭션 밖에서** 하고 결과 저장만 트랜잭션 안에서 한다.
+  동시 인식은 전역 3건·사용자당 1건으로 제한한다(초과 시 429 `RATE_LIMITED` / 503 `BUSY`). 업스트림 오류는 `SeatMapException`의 오류 코드로 매핑하고 응답 문구는 고정 한국어로 내려 업스트림 내용을 노출하지 않는다. 인식 결과는 저장 전에 검증한다(좌석 6000 상한, 좌석 section 1~50 등).
 
 ## DB 스키마 변경 (Flyway)
 - `spring.jpa.hibernate.ddl-auto: validate` — 스키마는 Hibernate가 아니라 Flyway가 관리한다.

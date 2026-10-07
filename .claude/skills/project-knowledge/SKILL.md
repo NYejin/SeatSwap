@@ -82,6 +82,8 @@ Claude Code는 바이너리 문서를 직접 파싱하지 못하므로, 에이�
 - 좌석표 세부(2026-10-07 사용자 결정): DRAFT는 공연장 안에서 **구역(zone)별 하나**(구역별 여러 개 허용), OFFICIAL은 지금은 여러 개 허용 후 **추후 공연장당 1개로 제한 예정**. 정식 등록은 좌석표 등록 시에만 가능해 Venue VERIFIED와 좌석표 OFFICIAL은 항상 함께 바뀜(공연에는 정식 상태 없음, Venue.status UNVERIFIED/VERIFIED만).
 - 티켓은 좌석표 없이 먼저 등록(`ticket.seatmap_id` NULL 허용, `image_url` 삭제), 교환글 등록 시 DRAFT 좌석표 업로드. OFFICIAL은 사용자 직접 수정 불가(정정 신고로만), 관리자는 직접 수정 가능. 제재는 SEATMAP_EDIT(수정·신고 정지)/ACCOUNT(계정 정지) 두 종류, 신고(abuse_report)는 항상 로그, 회원탈퇴는 익명화(FK 유지)
 - 좌석맵 서비스 응답의 좌석에 안정적 식별자 `uid`(예 s0001, 검출 공간 순서 기준 결정적, 행/열 보정·aisleMode 무관, 하위 호환)를 추가 — 수정 로그·정정 신고가 좌석을 가리키는 키
+- 좌석 표기(2026-10-07): 한국 좌석 체계의 '열'(앞에서부터 1열, 뒤로 갈수록 커짐)과 '번'(한 열 안에서 왼쪽→오른쪽 1번, 2번…). 화면은 'N열 M번', 구역(층)이 둘 이상이면 '구역 N · M열 K번'(필드명 row/col 유지). 좌석에 `section`(위에서부터 1,2,3, 열 번호는 구역별 재시작)이 있고 응답에 `sections`가 추가됨(하위 호환). 백엔드는 section을 보존(없으면 1, 1~50 검증)
+- 임시 기능 TEMP-DRAFT-DELETE(테스트용, 제거 예정): `DELETE /api/seatmaps/{id}`, DRAFT만, `SEATMAP_DEV_DRAFT_DELETE`로 끔, 'TODO: 임시 기능' 주석으로 위치 표시
 - DRAFT는 확인용으로만 표시. 교환 매칭은 본인 좌석 정보 + 희망 좌석 범위로 하고, 좌표 기반 선택·매칭은 OFFICIAL에서만
 - 모든 수정은 로그(누가·언제·전후). 악의적 수정은 신고나 관리자 확인이 있을 때만 제재(자동 제재 없음). 관리자는 DB에서 ADMIN 직접 부여로 시작
 - 이미지 보관: 원본·주소 저장 안 함, 좌표는 원본 픽셀 기준, 화면은 SVG. 필요 시 핫링크/서비스 보관으로 확장(컬럼은 Flyway로 추가)
@@ -296,6 +298,13 @@ ExchangeRequest, ExchangeMatch, ChatRoom, Message, Review.
     `feature/seatmap-seat-uid`(좌석 uid, pytest 187건). erd.dot의 V2는 병합 후 현재로 승격 예정
   - 없는 것: 관리자 API/서비스, V3(수정 로그·seat_correction 개편), V4(제재·신고), 관리자 페이지. 정책 미정: 이미 OFFICIAL이 있는 공연장의 DRAFT 허용 여부. Testcontainers 미도입
   - 이슈: Docker Desktop 꺼진 채 재빌드 시 mysql이 Exited(137) → 백엔드 `UnknownHostException: mysql`, mysql 먼저 기동으로 해결
+- **2026-10-07 좌석표 등록·조회 구현과 실제 좌석표 시험 (상세는 산출물/07_작업일지/2026-10-07.md '좌석표 등록·조회 구현과 실제 좌석표 시험')**
+  - `feature/seatmap-register`(**미병합**, 코드 변경 미커밋): `POST /api/venues/{venueId}/seatmaps`(multipart file, zoneName, aisleMode) → seatmap-service `/recognize` 중계(X-Internal-Key 선택, 연결 5초·읽기 60초) → DRAFT 저장(좌표만, 이미지 미저장). `GET /api/seatmaps/{id}`, `GET /api/venues/{venueId}/seatmaps`.
+    같은 공연장+구역 DRAFT 중복 시 409(seatMapId), 동시 인식 제한(전역 3·사용자당 1 → 429 RATE_LIMITED / 503 BUSY), 인식 결과 검증(좌석 6000 상한 등), 이미지 시그니처 검사, 업스트림 오류는 고정 한국어 문구.
+    프론트: SeatMapOverlay(SVG·줌·키보드), 좌석표 조회 화면(DRAFT '확인용' 안내, 오류 신고 버튼 비활성 '준비 중'), 업로드 화면. 백엔드 테스트 254건, 프론트 tsc·build 통과. 임시 기능 TEMP-DRAFT-DELETE 포함(4절 참고)
+  - `feature/seatmap-real-image`(워크트리 dev-seatmap, 커밋 eb8104a, **미병합**): 실제 좌석표 대응 인식 개선. 사용자가 올린 3개 층 449x549 이미지 시험 — 개선 전 좌석 1619·구역 구분 없음·열 OCR 0 → 개선 후 좌석 1674·구역 3(1F 23열 974석, 2F 10열 430석, 3F 6열 270석)·열 라벨 OCR 33/39. pytest 199건, 합성 48종 100% 유지.
+    **한계**: 정답 없이 눈·격자 규칙으로 추정, 임계값은 이미지 1장 기준, 열 라벨 6/39 미판독(보간), 층 이름 미인식, 같은 색 좌석 위주 이미지·회색 좌석 8개 미만이면 실패, 이미지 안 글자(무대 표시)가 좌석으로 잡힐 수 있음
+  - 이슈/후속: DRAFT 선점·스팸 정책 미정(구역 수 상한·사용자별 제한·삭제/교체 경로·신고/제재), 목록 seatCount 미제공(seat_count는 Flyway V3 필요), 업로드 화면에 공연장 이름 없음, 좌석표 수정·오류 신고 API/UI 없음(V3 이후), 관리자 API·정식 등록·관리자 페이지 없음, 요청 본문 이중 버퍼링(요청당 최대 약 30MB), Testcontainers 미도입, OFFICIAL 있는 공연장의 DRAFT 허용 여부 미정. 백엔드 ↔ seatmap-service 연동은 이번에 완료. 링크 기반 공연정보 미리 채우기·티켓 등록(좌석표 없이)·교환글+DRAFT 업로드는 다음 단계
 - 참고: 2026-10-02 기준 저장소에 `산출물/` 03/04/05/08 원본이 없음. 원본 확보 전까지 1~6절은 이 스킬이 유일한 텍스트 출처
 - 작업일지(산출물/07): 날짜별 `YYYY-MM-DD.md` 파일, 이어지는 작업 묶음은 시작일 파일에 `## 날짜` 섹션을 추가.
   현재 `2026-07-26.md`(본문 헤더 2026-07-23, 기획 단계), `2026-10-02.md`(2026-10-02 + 2026-10-03 + 2026-10-06 섹션), `2026-10-07.md`

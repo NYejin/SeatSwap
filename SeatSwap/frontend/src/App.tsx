@@ -8,6 +8,7 @@ import PerformanceDetailPage from "./pages/PerformanceDetailPage";
 import PerformanceRegisterPage from "./pages/PerformanceRegisterPage";
 import TicketRegisterPage from "./pages/TicketRegisterPage";
 import SeatMapSelectPage from "./pages/SeatMapSelectPage";
+import SeatMapUploadPage from "./pages/SeatMapUploadPage";
 import ExchangeListPage from "./pages/ExchangeListPage";
 import ExchangeDetailPage from "./pages/ExchangeDetailPage";
 import ChatPage from "./pages/ChatPage";
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/performances/new" element={<PerformanceRegisterPage />} />
             <Route path="/performances/:id" element={<PerformanceDetailPage />} />
             <Route path="/tickets/new" element={<TicketRegisterPage />} />
+            <Route path="/venues/:venueId/seatmaps/new" element={<SeatMapUploadPage />} />
             <Route path="/seatmaps/:id/select" element={<SeatMapSelectPage />} />
             <Route path="/exchange" element={<ExchangeListPage />} />
             <Route path="/exchange/:id" element={<ExchangeDetailPage />} />

@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -24,7 +25,7 @@ import java.util.Set;
 public class GlobalExceptionHandler {
 
     private static final String SERVER_ERROR_MESSAGE = "서버 오류가 발생했습니다.";
-    static final String DATA_CONFLICT_MESSAGE = "요청이 다른 변경과 충돌했습니다. 다시 시도해주세요.";
+    public static final String DATA_CONFLICT_MESSAGE = "요청이 다른 변경과 충돌했습니다. 다시 시도해주세요.";
 
     // 한 필드에 제약이 여러 개 걸려 동시에 실패할 때(예: 빈 값 → NotBlank + Size) 어떤 메시지를
     // 보여줄지 결정적으로 고르기 위한 우선순위. 값이 작을수록 우선.
@@ -54,6 +55,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
         log.warn("Unclassified data integrity violation: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", DATA_CONFLICT_MESSAGE));
+    }
+
+    // 좌석표 등록/인식 오류 — {"code": ..., "message": ...} (seatmap-service 오류 형식과 동일)
+    @ExceptionHandler(SeatMapException.class)
+    public ResponseEntity<Map<String, String>> handleSeatMapException(SeatMapException e) {
+        return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getCode(), "message", e.getMessage()));
+    }
+
+    // multipart 업로드 크기 초과 (spring.servlet.multipart.max-file-size) — 컨트롤러에 들어오기 전에 던져진다
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, String>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("code", "IMAGE_TOO_LARGE", "message", "이미지는 10MB 이하만 올릴 수 있습니다."));
     }
 
     @ExceptionHandler(NotFoundException.class)
