@@ -157,4 +157,29 @@ class AuthServiceTest {
         assertThat(res.nickname()).isEqualTo("닉네임");
         verify(userRepository).existsByEmail("mixed@case.com");
     }
+
+    @Test
+    void signupBodyWithRoleAdminIsIgnoredAndCreatesUser() throws Exception {
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Spring Boot 기본 ObjectMapper와 같은 설정(알 수 없는 속성 무시)으로 요청 본문을 역직렬화
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                org.springframework.http.converter.json.Jackson2ObjectMapperBuilder.json().build();
+        SignupRequest request = mapper.readValue(
+                "{\"email\":\"a@b.com\",\"password\":\"password123\",\"nickname\":\"닉네임\",\"role\":\"ADMIN\"}",
+                SignupRequest.class);
+
+        UserResponse res = authService.signup(request);
+
+        assertThat(res.role()).isEqualTo(com.seatswap.domain.UserRole.USER);
+        org.mockito.ArgumentCaptor<User> saved = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getRole()).isEqualTo(com.seatswap.domain.UserRole.USER);
+    }
+
+    @Test
+    void signupAlwaysCreatesUserRole() {
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        UserResponse res = authService.signup(new SignupRequest("a@b.com", "password123", "닉네임"));
+        assertThat(res.role()).isEqualTo(com.seatswap.domain.UserRole.USER);
+    }
 }

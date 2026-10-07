@@ -15,6 +15,7 @@ import java.util.List;
 /**
  * 인증 사용자 로딩.
  * JWT 인증 경로는 {@link #loadUserById(Long)}(토큰 sub = userId)만 사용한다.
+ * 토큰에는 role을 넣지 않는다 — 매 요청 DB에서 사용자를 로드할 때 role을 읽는다(권한 변경이 즉시 반영됨).
  * UserDetailsService 구현은 유지한다 — 이 빈이 없으면 Spring Boot가 기본 in-memory 사용자
  * (generated security password)를 자동 생성하기 때문. email 기반 loadUserByUsername은
  * 현재 인증 경로에서 쓰지 않는다 (폼/Basic 로그인 미사용).
@@ -30,7 +31,7 @@ public class CustomUserDetailsService implements UserDetailsService {
     public AuthUserPrincipal loadUserById(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: id=" + userId));
-        return AuthUserPrincipal.of(user.getId(), user.getEmail());
+        return AuthUserPrincipal.of(user.getId(), user.getEmail(), user.getRole());
     }
 
     @Override
@@ -41,7 +42,7 @@ public class CustomUserDetailsService implements UserDetailsService {
         return org.springframework.security.core.userdetails.User.builder()
                 .username(user.getEmail())
                 .password(user.getPassword())
-                .authorities(List.of(new SimpleGrantedAuthority("ROLE_USER")))
+                .authorities(List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())))
                 .build();
     }
 }

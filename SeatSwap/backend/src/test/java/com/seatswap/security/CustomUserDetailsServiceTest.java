@@ -1,6 +1,7 @@
 package com.seatswap.security;
 
 import com.seatswap.domain.User;
+import com.seatswap.domain.UserRole;
 import com.seatswap.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -34,6 +35,28 @@ class CustomUserDetailsServiceTest {
         assertThat(principal.getName()).isEqualTo("7");
         assertThat(principal.authorities()).extracting("authority").containsExactly("ROLE_USER");
         verify(userRepository, never()).findByEmail(anyString());
+    }
+
+    @Test
+    void adminRoleFromDbIsReflectedInAuthorities() {
+        User admin = User.create("admin@b.com", "encoded", "관리자");
+        ReflectionTestUtils.setField(admin, "id", 1L);
+        ReflectionTestUtils.setField(admin, "role", UserRole.ADMIN); // DB에서 수동 부여한 상황
+        when(userRepository.findById(1L)).thenReturn(Optional.of(admin));
+        when(userRepository.findByEmail("admin@b.com")).thenReturn(Optional.of(admin));
+
+        assertThat(service.loadUserById(1L).authorities()).extracting("authority").containsExactly("ROLE_ADMIN");
+        assertThat(service.loadUserByUsername("admin@b.com").getAuthorities())
+                .extracting("authority").containsExactly("ROLE_ADMIN");
+    }
+
+    @Test
+    void loadUserByUsernameUsesUserRoleForNormalUser() {
+        User user = User.create("a@b.com", "encoded", "닉네임");
+        when(userRepository.findByEmail("a@b.com")).thenReturn(Optional.of(user));
+
+        assertThat(service.loadUserByUsername("a@b.com").getAuthorities())
+                .extracting("authority").containsExactly("ROLE_USER");
     }
 
     @Test

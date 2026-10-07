@@ -1,6 +1,7 @@
 package com.seatswap.service;
 
 import com.seatswap.domain.User;
+import com.seatswap.domain.UserRole;
 import com.seatswap.dto.response.UserResponse;
 import com.seatswap.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class UserServiceTest {
         assertThat(me.email()).isEqualTo("a@b.com");
         assertThat(me.nickname()).isEqualTo("닉네임");
         assertThat(me.trustScore()).isEqualTo(0.0);
+        assertThat(me.role()).isEqualTo(UserRole.USER);
     }
 
     @Test

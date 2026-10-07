@@ -1,5 +1,6 @@
 package com.seatswap.security;
 
+import com.seatswap.domain.UserRole;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
@@ -17,7 +18,12 @@ public record AuthUserPrincipal(Long userId, String email, Collection<? extends 
         implements Principal {
 
     public static AuthUserPrincipal of(Long userId, String email) {
-        return new AuthUserPrincipal(userId, email, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+        return of(userId, email, UserRole.USER);
+    }
+
+    /** DB의 role을 반영한 주체. 권한 문자열은 ROLE_{role} (hasRole("ADMIN")과 매칭). */
+    public static AuthUserPrincipal of(Long userId, String email, UserRole role) {
+        return new AuthUserPrincipal(userId, email, List.of(new SimpleGrantedAuthority("ROLE_" + role.name())));
     }
 
     /** Authentication.getName()이 반환하는 값 — 식별자인 userId 문자열 */
