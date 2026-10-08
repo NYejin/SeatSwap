@@ -85,10 +85,10 @@ function buildSessionRows(performance: PerformanceDetail, ticket: Ticket, existi
     for (const s of byTime) if (!wantedIds.has(s.id)) rows.push(make(s, false));
     return rows;
   }
-  // 새 요청: 내 회차를 1순위로, 나머지는 시간순. 마감되지 않은 회차는 모두 체크
+  // 새 요청: 내 회차를 1순위로, 나머지는 시간순. 기본 체크는 내 티켓 회차만(다른 회차는 사용자가 직접 선택)
   const mine = byTime.find((s) => s.id === ticket.sessionId);
   const rest = byTime.filter((s) => s.id !== ticket.sessionId);
-  return [...(mine ? [mine] : []), ...rest].map((s) => make(s, true));
+  return [...(mine ? [mine] : []), ...rest].map((s) => make(s, s.id === ticket.sessionId));
 }
 
 /** 서버 오류 키(ranges[0].rowFrom 등) -> 포커스할 요소 id */
