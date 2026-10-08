@@ -16,6 +16,7 @@ import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.repository.ExchangeCandidateRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
+import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.TicketRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,7 @@ class ExchangeCandidateServiceTest {
     private ExchangeRequestRepository requestRepository;
     private TicketRepository ticketRepository;
     private ExchangeCandidateRepository candidateRepository;
+    private ExchangeTicketLockRepository lockRepository;
     private ExchangeCandidateService service;
 
     private final User me = user(1L, "나");
@@ -62,8 +64,9 @@ class ExchangeCandidateServiceTest {
         requestRepository = mock(ExchangeRequestRepository.class);
         ticketRepository = mock(TicketRepository.class);
         candidateRepository = mock(ExchangeCandidateRepository.class);
+        lockRepository = mock(ExchangeTicketLockRepository.class);
         service = new ExchangeCandidateService(requestRepository, ticketRepository, candidateRepository,
-                PerformanceFixtures.timePolicy());
+                PerformanceFixtures.timePolicy(), lockRepository);
     }
 
     private ExchangeRequest stub(long requestId, User owner, PerformanceSession session, TicketStatus ticketStatus,

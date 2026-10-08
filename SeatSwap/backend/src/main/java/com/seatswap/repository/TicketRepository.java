@@ -13,6 +13,10 @@ import java.util.Optional;
 
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
+    /** 티켓 보유자 id (프록시 초기화 없이, 잠금 없음). */
+    @Query("select t.user.id from Ticket t where t.id = :id")
+    Optional<Long> findOwnerIdById(@Param("id") Long id);
+
     long countByUser_IdAndStatus(Long userId, TicketStatus status);
 
     /** 같은 회차·구역·열·번의 활성 티켓 (uk_ticket_active_seat 와 같은 키). */

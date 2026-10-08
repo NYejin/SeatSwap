@@ -16,6 +16,7 @@ import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.ExchangeWantRangeRepository;
 import com.seatswap.repository.ExchangeWantSeatRepository;
@@ -73,6 +74,11 @@ public class ExchangeRequestService {
     static final String SESSION_NOT_FOUND_MESSAGE = "존재하지 않는 회차입니다.";
     static final String SESSION_OTHER_PERFORMANCE_MESSAGE = "내 티켓과 같은 공연의 회차만 선택할 수 있습니다.";
     static final String SESSION_DUPLICATE_MESSAGE = "중복된 회차입니다.";
+    static final String ACTIVE_MATCH_CODE = "ACTIVE_MATCH_EXISTS";
+    static final String ACTIVE_MATCH_MESSAGE =
+            "진행 중인 매칭(채팅·예약)이 있어 수정하거나 삭제할 수 없습니다. 먼저 매칭을 취소해주세요.";
+    static final String MATCH_HISTORY_CODE = "MATCH_HISTORY_EXISTS";
+    static final String MATCH_HISTORY_MESSAGE = "교환이 완료된 기록이 있는 요청은 삭제할 수 없습니다.";
     static final String EXTRA_TYPE_MESSAGE = "추가금 유형은 X, ANY, POS, NEG 중 하나여야 합니다.";
 
     private final ExchangeRequestRepository requestRepository;
@@ -84,6 +90,7 @@ public class ExchangeRequestService {
     private final TransactionTemplate transactionTemplate;
     private final SessionTimePolicy timePolicy;
     private final WantSeatExpander expander;
+    private final ExchangeMatchRepository matchRepository;
 
     public ExchangeRequestService(ExchangeRequestRepository requestRepository,
                                   ExchangeWantRangeRepository rangeRepository,
@@ -91,6 +98,7 @@ public class ExchangeRequestService {
                                   ExchangeWantSeatRepository seatRepository,
                                   TicketRepository ticketRepository,
                                   PerformanceSessionRepository sessionRepository,
+                                  ExchangeMatchRepository matchRepository,
                                   PlatformTransactionManager transactionManager,
                                   SessionTimePolicy timePolicy,
                                   @Value("${exchange.want.max-seats:5000}") int maxSeats,
@@ -103,6 +111,7 @@ public class ExchangeRequestService {
         this.seatRepository = seatRepository;
         this.ticketRepository = ticketRepository;
         this.sessionRepository = sessionRepository;
+        this.matchRepository = matchRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.timePolicy = timePolicy;
         this.expander = new WantSeatExpander(maxRanges, maxSeats, maxRowNumber, maxColNumber);
@@ -216,15 +225,24 @@ public class ExchangeRequestService {
             throw new ForbiddenException(FORBIDDEN_MESSAGE);
         }
         ensureNoActiveProposal(locked);
+        // 취소된 매칭은 FK(request_a/b_id) 때문에 먼저 지운다(남길 기록 없음). 완료된 매칭은 기록이므로 삭제를 막는다.
+        if (matchRepository.existsCompletedByRequestId(locked.getId())) {
+            throw new ConflictException(MATCH_HISTORY_MESSAGE, Map.of("code", MATCH_HISTORY_CODE));
+        }
+        matchRepository.deleteCanceledByRequestId(locked.getId());
         requestRepository.delete(locked);
         requestRepository.flush();
     }
 
     /**
-     * 수정·삭제 전 '진행 중인 제안(채팅·예약)이 있는가' 검사 자리. 매칭 테이블(exchange_match 등)이 아직 없어
-     * 지금은 항상 통과한다. 매칭 구현 때 열린 매칭이 있으면 409 ConflictException 을 던지도록 이 메서드만 채운다.
+     * 수정·삭제 전 '진행 중인 제안(채팅·예약)이 있는가' 검사. 이 요청이 a측이든 b측이든 열린 매칭(CHATTING·RESERVED)이 하나라도
+     * 있으면 409 ACTIVE_MATCH_EXISTS. 요청 행 FOR UPDATE 를 잡은 뒤 호출하므로 매칭 생성(propose, 티켓->요청 순 잠금)과
+     * 직렬화된다: 수정이 먼저면 propose 가 바뀐 조건을 보고, propose 가 먼저면 여기서 409 가 난다.
      */
     void ensureNoActiveProposal(ExchangeRequest request) {
+        if (matchRepository.existsOpenByRequestId(request.getId())) {
+            throw new ConflictException(ACTIVE_MATCH_MESSAGE, Map.of("code", ACTIVE_MATCH_CODE));
+        }
     }
 
     // ---------------------------------------------------------------- 입력 검증

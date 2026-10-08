@@ -46,6 +46,8 @@ class RepositoryQueryValidationTest {
     private ExchangeWantRangeRepository exchangeWantRangeRepository;
     @Autowired
     private ExchangeWantSessionRepository exchangeWantSessionRepository;
+    @Autowired
+    private ExchangeMatchRepository exchangeMatchRepository;
 
     @Test
     void allRepositoryQueriesParse() {
@@ -56,5 +58,6 @@ class RepositoryQueryValidationTest {
         assertThat(exchangeRequestRepository).isNotNull();
         assertThat(exchangeWantRangeRepository).isNotNull();
         assertThat(exchangeWantSessionRepository).isNotNull();
+        assertThat(exchangeMatchRepository).isNotNull();
     }
 }

@@ -24,8 +24,19 @@ class ExchangeCandidateSqlGuardTest {
     }
 
     @Test
-    void emptyExclusionsAddNothing() {
-        assertThat(ExchangeCandidateRepository.additionalExclusions()).isEmpty();
+    void v5ExclusionsAreOpenPairAndTicketLockOnly() {
+        String fragment = ExchangeCandidateRepository.additionalExclusions();
+        assertThat(fragment).startsWith("\n").endsWith("\n");
+        assertThat(fragment.strip()).startsWith("AND");
+        assertThat(fragment).doesNotContain("?").contains("exchange_match").contains("open_flag = 1")
+                .contains("exchange_ticket_lock").doesNotContain("user_block");
+        // 목록과 COUNT 양쪽에 같은 조각이 붙는다
+        assertThat(ExchangeCandidateRepository.candidateSql()).contains(fragment.strip());
+        assertThat(ExchangeCandidateRepository.countSql()).contains(fragment.strip());
+    }
+
+    @Test
+    void emptyFragmentAddsNothing() {
         assertThat(ExchangeCandidateRepository.normalizeExclusions(null)).isEmpty();
         assertThat(ExchangeCandidateRepository.normalizeExclusions("  \n ")).isEmpty();
     }

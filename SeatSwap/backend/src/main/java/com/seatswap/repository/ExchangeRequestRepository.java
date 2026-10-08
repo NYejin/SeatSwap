@@ -21,6 +21,10 @@ public interface ExchangeRequestRepository extends JpaRepository<ExchangeRequest
 
     boolean existsByTicket_Id(Long ticketId);
 
+    /** 요청이 가리키는 티켓 id (프록시 초기화 없이). 요청의 티켓은 바뀌지 않아(updatable=false) 잠금 대상을 미리 알 수 있다. */
+    @Query("select r.ticket.id from ExchangeRequest r where r.id = :id")
+    Optional<Long> findTicketIdById(@Param("id") Long id);
+
     /**
      * 요청 행 잠금(SELECT ... FOR UPDATE). 수정·삭제를 직렬화한다. 티켓은 조인하지 않는다
      * (조인하면 티켓 행까지 잠가 TicketService.deactivate 와 잠금 순서가 엇갈린다).

@@ -10,7 +10,9 @@ import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
+import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
@@ -23,6 +25,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,11 +48,15 @@ public class TicketService {
     static final String SESSION_NOT_FOUND_MESSAGE = "존재하지 않는 회차입니다.";
     static final String SESSION_CLOSED_MESSAGE = "회차 당일이 지나 티켓을 등록할 수 없습니다.";
     static final String TICKET_NOT_FOUND_MESSAGE = "티켓을 찾을 수 없습니다.";
+    static final String TICKET_RESERVED_CODE = "TICKET_RESERVED";
+    static final String TICKET_RESERVED_MESSAGE = "교환이 예약된 티켓은 내릴 수 없습니다. 먼저 예약(매칭)을 취소해주세요.";
 
     private final TicketRepository ticketRepository;
     private final PerformanceSessionRepository sessionRepository;
     private final UserRepository userRepository;
     private final ExchangeRequestRepository exchangeRequestRepository;
+    private final ExchangeMatchRepository matchRepository;
+    private final ExchangeTicketLockRepository lockRepository;
     private final SessionTimePolicy sessionTimePolicy;
     private final TransactionTemplate transactionTemplate;
     private final int maxActivePerUser;
@@ -60,6 +67,8 @@ public class TicketService {
                          PerformanceSessionRepository sessionRepository,
                          UserRepository userRepository,
                          ExchangeRequestRepository exchangeRequestRepository,
+                         ExchangeMatchRepository matchRepository,
+                         ExchangeTicketLockRepository lockRepository,
                          SessionTimePolicy sessionTimePolicy,
                          PlatformTransactionManager transactionManager,
                          @Value("${ticket.max-active-per-user:20}") int maxActivePerUser,
@@ -69,6 +78,8 @@ public class TicketService {
         this.sessionRepository = sessionRepository;
         this.userRepository = userRepository;
         this.exchangeRequestRepository = exchangeRequestRepository;
+        this.matchRepository = matchRepository;
+        this.lockRepository = lockRepository;
         this.sessionTimePolicy = sessionTimePolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.maxActivePerUser = maxActivePerUser;
@@ -148,7 +159,9 @@ public class TicketService {
      * 티켓 내리기(소프트 삭제). 본인 티켓이 아니면 존재 여부를 드러내지 않도록 404.
      * 이미 INACTIVE면 그대로 성공(멱등). 내릴 수 없는 상태(예약 잠금 등) 검사는 ensureCanDeactivate 에 모은다.
      * 티켓 행을 FOR UPDATE 로 잠가(트랜잭션의 첫 쿼리) 같은 티켓의 교환 요청 등록과 직렬화하고,
-     * 그 티켓의 교환 요청은 CLOSED 로 바꾼다(설계 1.2: CLOSED = 티켓 내림). 잠금 순서는 티켓 -> 요청이다.
+     * 그 티켓의 교환 요청은 CLOSED 로 바꾸고(설계 1.2: CLOSED = 티켓 내림), 그 티켓이 참여한 CHATTING 매칭은
+     * 시스템 취소(canceled_by NULL)한다. 예약 잠금이 걸린 티켓(RESERVED)은 409 TICKET_RESERVED 로 내릴 수 없다.
+     * 잠금 순서는 티켓 -> 요청 -> 매칭이다.
      */
     @Transactional
     public void deactivate(Long userId, Long ticketId) {
@@ -160,10 +173,17 @@ public class TicketService {
         }
         ensureCanDeactivate(ticket);
         ticket.deactivate();
-        exchangeRequestRepository.closeByTicketId(ticket.getId(), sessionTimePolicy.now());
+        LocalDateTime now = sessionTimePolicy.now();
+        exchangeRequestRepository.closeByTicketId(ticket.getId(), now);
+        matchRepository.cancelChattingByTicketA(ticket.getId(), now);
+        matchRepository.cancelChattingByTicketB(ticket.getId(), now);
     }
 
+    /** 내릴 수 없는 상태 검사: 예약 잠금이 걸린 티켓은 409. 티켓 행 잠금을 잡은 뒤에 호출한다. */
     private void ensureCanDeactivate(Ticket ticket) {
+        if (lockRepository.existsByTicketId(ticket.getId())) {
+            throw new ConflictException(TICKET_RESERVED_MESSAGE, Map.of("code", TICKET_RESERVED_CODE));
+        }
     }
 
     private static ConflictException duplicateSeat(boolean mine) {

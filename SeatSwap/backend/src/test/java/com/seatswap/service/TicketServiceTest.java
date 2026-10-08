@@ -11,7 +11,9 @@ import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
+import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
@@ -48,6 +50,8 @@ class TicketServiceTest {
     private PerformanceSessionRepository sessionRepository;
     private UserRepository userRepository;
     private ExchangeRequestRepository exchangeRequestRepository;
+    private ExchangeMatchRepository matchRepository;
+    private ExchangeTicketLockRepository lockRepository;
     private TicketService service;
 
     private final User me = user(1L, "나");
@@ -64,7 +68,10 @@ class TicketServiceTest {
         sessionRepository = mock(PerformanceSessionRepository.class);
         userRepository = mock(UserRepository.class);
         exchangeRequestRepository = mock(ExchangeRequestRepository.class);
+        matchRepository = mock(ExchangeMatchRepository.class);
+        lockRepository = mock(ExchangeTicketLockRepository.class);
         service = new TicketService(ticketRepository, sessionRepository, userRepository, exchangeRequestRepository,
+                matchRepository, lockRepository,
                 PerformanceFixtures.timePolicy(), PerformanceFixtures.noopTransactionManager(), 20, 999, 999);
 
         when(userRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(me));
@@ -266,11 +273,52 @@ class TicketServiceTest {
         verify(exchangeRequestRepository).closeByTicketId(eq(500L), any());
     }
 
+    @Test
+    void 내리면_그_티켓의_CHATTING_매칭을_a측_b측_모두_시스템_취소한다() {
+        Ticket ticket = ticketOf(me, TicketStatus.ACTIVE);
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
+
+        service.deactivate(1L, 500L);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(exchangeRequestRepository, matchRepository);
+        order.verify(exchangeRequestRepository).closeByTicketId(eq(500L), any());
+        order.verify(matchRepository).cancelChattingByTicketA(eq(500L), any());
+        order.verify(matchRepository).cancelChattingByTicketB(eq(500L), any());
+    }
+
+    @Test
+    void 예약_잠금이_있는_티켓은_409이고_아무것도_바꾸지_않는다() {
+        Ticket ticket = ticketOf(me, TicketStatus.ACTIVE);
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
+        when(lockRepository.existsByTicketId(500L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.deactivate(1L, 500L))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getMessage()).isEqualTo(TicketService.TICKET_RESERVED_MESSAGE);
+                    assertThat(e.getDetails()).containsEntry("code", "TICKET_RESERVED");
+                });
+
+        assertThat(ticket.getStatus()).isEqualTo(TicketStatus.ACTIVE);
+        verify(exchangeRequestRepository, never()).closeByTicketId(anyLong(), any());
+        verify(matchRepository, never()).cancelChattingByTicketA(anyLong(), any());
+    }
+
+    @Test
+    void 이미_내린_티켓은_잠금_검사_없이_멱등으로_성공한다() {
+        Ticket ticket = ticketOf(me, TicketStatus.INACTIVE);
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
+        when(lockRepository.existsByTicketId(500L)).thenReturn(true);
+
+        service.deactivate(1L, 500L);
+
+        verify(lockRepository, never()).existsByTicketId(anyLong());
+    }
+
     private TicketService serviceAt(LocalDateTime now) {
         java.time.Clock clock = java.time.Clock.fixed(now.atZone(PerformanceFixtures.KST).toInstant(),
                 PerformanceFixtures.KST);
         return new TicketService(ticketRepository, sessionRepository, userRepository, exchangeRequestRepository,
-                new SessionTimePolicy(clock), PerformanceFixtures.noopTransactionManager(), 20, 999, 999);
+                matchRepository, lockRepository, new SessionTimePolicy(clock), PerformanceFixtures.noopTransactionManager(), 20, 999, 999);
     }
 
     @Test

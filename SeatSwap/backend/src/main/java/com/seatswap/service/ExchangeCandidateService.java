@@ -11,6 +11,7 @@ import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.repository.ExchangeCandidateRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
+import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.TicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,7 +23,9 @@ import java.util.List;
 /**
  * 매칭 후보 조회 (읽기 전용). 후보는 조건 일치 판정으로만 찾고 점수화·랭킹·신뢰도는 쓰지 않는다.
  * 잠금을 잡지 않으므로 잠금 순서 규약(티켓 -> 요청)과 충돌하지 않는다.
- * 권한: 남의 요청 403, 없는 요청 404. 내 요청이 CLOSED 이거나 내 티켓이 INACTIVE 이거나 내 티켓 회차가 마감되면 422.
+ * 권한: 남의 요청 403, 없는 요청 404. 내 요청이 CLOSED 이거나 내 티켓이 INACTIVE 이거나 내 티켓 회차가 마감되면 422,
+ * 내 티켓이 예약 잠금 상태(RESERVED)여도 422 TICKET_LOCKED (이미 교환 상대가 정해졌다).
+ * 후보에서 빠지는 것: 상대 티켓이 예약 잠금, 같은 요청 쌍의 열린 매칭이 있는 상대(차단은 user_block 테이블이 없어 미적용).
  */
 @Service
 @RequiredArgsConstructor
@@ -33,11 +36,14 @@ public class ExchangeCandidateService {
     static final String FORBIDDEN_MESSAGE = "본인의 교환 요청만 조회할 수 있습니다.";
     static final String NOT_ACTIVE_MESSAGE = "내린 티켓이나 닫힌 요청은 후보를 조회할 수 없습니다.";
     static final String SESSION_CLOSED_MESSAGE = "회차 당일이 지난 티켓은 후보를 조회할 수 없습니다.";
+    static final String TICKET_LOCKED_CODE = "TICKET_LOCKED";
+    static final String TICKET_LOCKED_MESSAGE = "이미 교환이 예약된 티켓은 후보를 조회할 수 없습니다. 예약을 취소하면 다시 조회할 수 있어요.";
 
     private final ExchangeRequestRepository requestRepository;
     private final TicketRepository ticketRepository;
     private final ExchangeCandidateRepository candidateRepository;
     private final SessionTimePolicy timePolicy;
+    private final ExchangeTicketLockRepository lockRepository;
 
     @Transactional(readOnly = true)
     public PageResponse<ExchangeCandidateResponse> findCandidates(Long userId, Long requestId, int page, int size) {
@@ -59,6 +65,9 @@ public class ExchangeCandidateService {
         LocalDateTime now = timePolicy.now();
         if (!now.isBefore(ticket.getPerformanceSession().registrationDeadline())) {
             throw new BusinessRuleException(ExchangeRequestService.TICKET_SESSION_CLOSED_CODE, SESSION_CLOSED_MESSAGE);
+        }
+        if (lockRepository.existsByTicketId(ticket.getId())) {
+            throw new BusinessRuleException(TICKET_LOCKED_CODE, TICKET_LOCKED_MESSAGE);
         }
 
         LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
