@@ -8,7 +8,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ERD 산출물 위치: `산출물/08_ERD/` (저장소 루트 기준). 엔티티 구현 위치: `SeatSwap/backend/.../domain/`.
 
 ## 현재 확정된 스키마 (새 V1 기준선, 산출물/08_ERD/erd.dot)
-User, Performance, PerformanceSession, Ticket — 4개 테이블(`users`·`performance`·`performance_session`·`ticket`, V1+V2). 나머지 엔티티는 enum `UserRole`. 공연장은 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다.
+User, Performance, PerformanceSession, Ticket — 4개 테이블(`users`·`performance`·`performance_session`·`ticket`, V1~V3, V3는 ticket 좌석 컬럼·status). 나머지 엔티티는 enum `UserRole`. 공연장은 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다.
 
 주요 관계:
 - Performance 1:N PerformanceSession

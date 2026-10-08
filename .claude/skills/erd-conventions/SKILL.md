@@ -1,17 +1,17 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 기준선 V1+V2(users·performance·performance_session·ticket 4개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 기준선 V1~V3(users·performance·performance_session·ticket 4개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
 ---
 
 # ERD 컨벤션
 
-## 기준선 (4개 테이블, V1+V2)
+## 기준선 (4개 테이블, V1~V3)
 
 User(users), Venue(venue), Performance(performance), **PerformanceSession**(performance_session), Ticket(ticket)
 
 - 2026-10-07 방향 전환으로 좌석표 트랙과 아직 구현하지 않은 교환·채팅·후기 테이블을 걷어내고 **새 V1 하나**(`V1__init_schema.sql`)로 기준선을 다시 만들었다. 이전 V1~V3(12개+좌석표·수정 로그 테이블)는 삭제됐고, 좌석표 코드와 이전 마이그레이션·erd.dot은 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
-- users에 `role`(USER/ADMIN)이 있다. 공연장은 별도 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다(V2에서 venue 테이블 삭제, 등록 후 수정 불가, 중복 판정 없음). `ticket`은 `performance_session_id`·`user_id`와 텍스트 좌석 `row_label`·`col_label`만 가지며 `seatmap_id`는 없다. 구역·희망 범위·추가금 등 매칭용 컬럼과 교환·채팅·후기 테이블은 교환 도메인 설계 후 새 V 파일로 추가한다.
-- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성·V2 반영, 4개 테이블 + 교환 도메인 '설계 예정' 주석 노드 하나). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
+- users에 `role`(USER/ADMIN)이 있다. 공연장은 별도 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다(V2에서 venue 테이블 삭제, 등록 후 수정 불가, 중복 판정 없음). `ticket`은 `performance_session_id`·`user_id`와 V3(2026-10-08 구현)의 텍스트 좌석 `zone/row/col_label+key`·`status`(ACTIVE/INACTIVE)·생성 컬럼 `active_flag`·`created_at/updated_at`를 가지며 `seatmap_id`는 없다(`uk_ticket_active_seat`, `idx_ticket_user_status`, V3는 ticket 행이 있으면 SIGNAL 가드로 실패, 적용된 V 파일은 수정 금지 — 체크섬 불일치). 희망 범위·추가금 등 매칭용 테이블과 교환·채팅 테이블은 V4로 추가한다(설계: exchange-schema-design.md).
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성·V2 반영, 4개 테이블, V3 반영으로 ticket 좌석 컬럼 포함 + 교환 도메인 V4 예정 노드). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
 - 새 V1은 빈 DB에서만 실행된다. 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운 뒤 적용한다.
 
 ## 네이밍 규칙
@@ -112,7 +112,7 @@ CLAUDE.md '확인 필요' 목록을 사용자에게 확인한 뒤 진행한다. 
 
 ## 08_ERD 반영 현황
 
-`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **새 V1 기준으로 새로 작성**했고, 2026-10-08 V2 반영으로 **현재 4개 테이블**(users·performance·performance_session·ticket)이다 (venue 노드·엣지 삭제, performance에 `venue_name VARCHAR(100) NN`).
+`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **새 V1 기준으로 새로 작성**했고, 2026-10-08 V2 반영으로 **현재 4개 테이블, V1~V3**(users·performance·performance_session·ticket; V3로 ticket에 좌석 컬럼·status·유일 제약 반영)이다 (venue 노드·엣지 삭제, performance에 `venue_name VARCHAR(100) NN`).
 교환 도메인은 '설계 예정' 주석 노드 하나뿐이며, 삭제된 좌석표·수정 로그·제재 테이블은 그리지 않는다(설계는 태그 `archive/seatmap-track-20261007`의 이전 erd.dot과 마이그레이션에 보관).
 ERD.png는 graphviz `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다. 새 V 파일(교환 도메인 등)이 추가되면 erd.dot에 반영하고 이 절을 갱신한다.
 시각 컬럼(created_at/updated_at/starts_at)은 KST 기준이라는 주석을 유지한다.
