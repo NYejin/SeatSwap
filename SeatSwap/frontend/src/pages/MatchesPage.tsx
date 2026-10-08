@@ -30,10 +30,11 @@ const STATUS_CLASS: Record<MatchStatus, string> = {
 const CANCELED_BY_LABEL = {
   ME: "내가 취소했어요.",
   COUNTERPART: "상대가 취소했어요.",
-  SYSTEM: "티켓을 내리는 등의 이유로 자동 취소됐어요.",
+  SYSTEM: "교환 조건 삭제, 티켓 내림 등의 이유로 자동 취소됐어요.",
 } as const;
 
 const TABS: { role: MatchRole; label: string }[] = [
+  { role: "ALL", label: "전체" },
   { role: "SENT", label: "보낸 제안" },
   { role: "RECEIVED", label: "받은 제안" },
 ];
@@ -48,7 +49,7 @@ export default function MatchesPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [notice] = useState(() => readNotice(location.state));
-  const [role, setRole] = useState<MatchRole>("SENT");
+  const [role, setRole] = useState<MatchRole>("ALL");
   const [announce, setAnnounce] = useState("");
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -77,7 +78,7 @@ export default function MatchesPage() {
       : announce
         ? announce
         : state.status === "success"
-          ? `${role === "SENT" ? "보낸" : "받은"} 제안 ${state.totalElements}개`
+          ? `${role === "SENT" ? "보낸 제안" : role === "RECEIVED" ? "받은 제안" : "전체 매칭"} ${state.totalElements}개`
           : "";
 
   return (
@@ -96,7 +97,7 @@ export default function MatchesPage() {
           {notice ?? ""}
         </p>
 
-        <div role="group" aria-label="제안 구분" className="grid grid-cols-2 gap-2">
+        <div role="group" aria-label="제안 구분" className="grid grid-cols-3 gap-2">
           {TABS.map((tab) => (
             <button
               key={tab.role}
@@ -112,8 +113,6 @@ export default function MatchesPage() {
             </button>
           ))}
         </div>
-
-        <p className={ui.notice}>채팅·교환 완료 기능은 준비 중이에요. 지금은 예약 동의와 취소까지 할 수 있어요.</p>
 
         <p className={liveRegionClass(statusText, ui.status)} role="status">
           {statusText}
@@ -145,12 +144,16 @@ export default function MatchesPage() {
 
         {state.status === "success" && state.items.length > 0 && (
           <>
-            <div>
-              <button type="button" className={button.outline} onClick={() => refresh()}>
-                새로고침
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+                onClick={() => refresh()}
+              >
+                <img src="/icons/refresh.svg" alt="새로고침" className="w-5 h-5 opacity-80 hover:opacity-100" />
               </button>
             </div>
-            <ul className="flex flex-col gap-3" aria-label={role === "SENT" ? "보낸 제안 목록" : "받은 제안 목록"}>
+            <ul className="flex flex-col gap-3" aria-label={role === "SENT" ? "보낸 제안 목록" : role === "RECEIVED" ? "받은 제안 목록" : "전체 매칭 목록"}>
               {state.items.map((m) => (
                 <li key={m.id}>
                   <MatchCard match={m} onChanged={refresh} onStale={() => refresh()} />
@@ -175,6 +178,16 @@ export default function MatchesPage() {
 }
 
 type Action = "accept" | "reject" | "cancel";
+
+/** '(삭제)' 표시 — 색이 아니라 글자로 알리고, 보조기기에는 긴 설명을 함께 읽어준다 */
+function DeletedTag({ label, text }: { label: string; text: string }) {
+  return (
+    <span className="ml-1.5 text-sm/[normal] font-semibold text-gray-700">
+      <span aria-hidden="true">{text}</span>
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
 
 function MatchCard({
   match: m,
@@ -232,12 +245,18 @@ function MatchCard({
   const open = m.status === "CHATTING" || m.status === "RESERVED";
   const canAccept = m.status === "CHATTING" && !m.myReservedAt;
   const canReject = m.status === "CHATTING" && m.role === "RECEIVED";
+  /** 삭제된 조건이 걸린 매칭은 회색으로 낮춰 보인다 (글자 표시를 함께 쓴다) */
+  const anyDeleted = m.counterpartRequestDeleted || m.myRequestDeleted;
 
   return (
-    <article className={`${ui.card} flex flex-col gap-3`} aria-labelledby={titleId}>
+    <article
+      className={`${ui.card} flex flex-col gap-3 ${anyDeleted ? "border-gray-300! bg-gray-100!" : ""}`}
+      aria-labelledby={titleId}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={titleId} className="text-lg/[normal] font-bold text-gray-900">
+        <h2 id={titleId} className={`text-lg/[normal] font-bold ${anyDeleted ? "text-gray-700" : "text-gray-900"}`}>
           {m.counterpartNickname}
+          {m.counterpartRequestDeleted && <DeletedTag label="상대가 교환 조건을 삭제했어요" text="(삭제)" />}
         </h2>
         <span
           className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[0.8125rem]/[normal] font-semibold ${STATUS_CLASS[m.status]}`}
@@ -246,22 +265,38 @@ function MatchCard({
         </span>
       </div>
 
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-        <dt className={ui.muted}>내 자리</dt>
-        <dd className="min-w-0 text-sm/[normal] text-gray-900">
-          <span className="font-semibold">{formatSeat(m.mySeat)}</span>
-          <span className="block text-gray-700">{formatKstDateTime(m.mySeat.startsAt)}</span>
-        </dd>
-        <dt className={ui.muted}>상대 자리</dt>
-        <dd className="min-w-0 text-sm/[normal] text-gray-900">
-          <span className="font-semibold">{formatSeat(m.counterpartSeat)}</span>
-          <span className="block text-gray-700">{formatKstDateTime(m.counterpartSeat.startsAt)}</span>
-        </dd>
-        <dt className={ui.muted}>내 추가금</dt>
-        <dd className="text-sm/[normal] text-gray-900">{formatExtra(m.myExtraType, m.myExtraAmount)}</dd>
-        <dt className={ui.muted}>상대 추가금</dt>
-        <dd className="text-sm/[normal] text-gray-900">{formatExtra(m.counterpartExtraType, m.counterpartExtraAmount)}</dd>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
+        <div>
+          <dt className={ui.badge}>내 자리</dt>
+          <dd className="ml-2 my-1 min-w-0 text-sm/[normal] text-gray-900">
+            <span className="font-semibold">{formatSeat(m.mySeat)}</span>
+            {m.myRequestDeleted && <DeletedTag label="내 교환 조건을 삭제했어요" text="(내 조건 삭제됨)" />}
+            <span className={`block text-sm/[normal] ${anyDeleted ? "text-gray-600" : "text-gray-500"}`}>{formatKstDateTime(m.mySeat.startsAt)}</span>
+          </dd>
+        </div>
+        <div>
+          <dt className={`${ui.badge}`}>상대 자리</dt>
+          <dd className="ml-2 my-1 min-w-0 text-sm/[normal] text-gray-900">
+            <span className="font-semibold">{formatSeat(m.counterpartSeat)}</span>
+            {m.counterpartRequestDeleted && <DeletedTag label="상대가 교환 조건을 삭제했어요" text="(삭제)" />}
+            <span className={`block text-sm/[normal] ${anyDeleted ? "text-gray-600" : "text-gray-500"}`}>{formatKstDateTime(m.counterpartSeat.startsAt)}</span>
+          </dd>
+        </div>
+        <div>
+          <dt className={ui.badge}>내 추가금</dt>
+          <dd className="ml-2 my-1 text-sm/[normal] text-gray-900">{formatExtra(m.myExtraType, m.myExtraAmount)}</dd>
+        </div>
+        <div>
+          <dt className={`${ui.badge}`}>상대 추가금</dt>
+          <dd className="ml-2 my-1 text-sm/[normal] text-gray-900">{formatExtra(m.counterpartExtraType, m.counterpartExtraAmount)}</dd>
+        </div>
       </dl>
+
+      {anyDeleted && (
+        <p className="text-sm/[normal] text-gray-700">
+          {m.counterpartRequestDeleted ? "상대가 교환 조건을 삭제했어요." : "내가 교환 조건을 삭제했어요."}
+        </p>
+      )}
 
       {m.status === "CHATTING" && (
         <ul className="flex flex-col gap-1 text-sm/[normal] text-gray-700" aria-label="교환 동의 현황">
@@ -273,7 +308,7 @@ function MatchCard({
         <p className={ui.notice}>두 사람 모두 동의했어요. 두 티켓이 예약되어 다른 매칭에서는 쓸 수 없어요.</p>
       )}
       {m.status === "CANCELED" && (
-        <p className={ui.muted}>{m.canceledBy ? CANCELED_BY_LABEL[m.canceledBy] : "취소됐어요."}</p>
+        <p className={anyDeleted ? "text-sm/[normal] text-gray-600" : ui.muted}>{m.canceledBy ? CANCELED_BY_LABEL[m.canceledBy] : "취소됐어요."}</p>
       )}
 
       {open && (
@@ -345,7 +380,7 @@ function MatchCard({
         </div>
       )}
 
-      {open && <p className={ui.hint}>채팅·교환 완료 기능은 준비 중이에요.</p>}
+      {open && <p className={anyDeleted ? "text-[0.8125rem]/[normal] text-gray-600" : ui.hint}>채팅·교환 완료 기능은 준비 중이에요.</p>}
     </article>
   );
 }

@@ -28,13 +28,13 @@ export const exchangeApi = {
     return data;
   },
 
-  /** PATCH /api/exchange/requests/{id} — 범위·희망 회차·추가금 전체 교체 */
+  /** PATCH /api/exchange/requests/{id} — 범위(범위별 추가금 포함)·희망 회차 전체 교체 */
   async updateRequest(id: number, payload: ExchangeRequestPayload): Promise<ExchangeRequest> {
     const { data } = await apiClient.patch<ExchangeRequest>(`/exchange/requests/${id}`, payload);
     return data;
   },
 
-  /** DELETE /api/exchange/requests/{id} → 204. 열린 매칭이 있으면 409 ACTIVE_MATCH_EXISTS */
+  /** DELETE /api/exchange/requests/{id} → 204. 요청은 소프트 삭제(채팅 단계 매칭은 자동 취소). 예약된 매칭이 있으면 409 ACTIVE_MATCH_EXISTS */
   async deleteRequest(id: number): Promise<void> {
     await apiClient.delete(`/exchange/requests/${id}`);
   },

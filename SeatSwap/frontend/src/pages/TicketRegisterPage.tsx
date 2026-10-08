@@ -352,9 +352,12 @@ function TicketForm({ performanceId, presetSessionId, canChangePerformance, onCh
         tabIndex={-1}
         className={`${ui.card} flex flex-col gap-2 outline-none`}
         disabled={submitting}
+        aria-labelledby="ticket-session-title"
         aria-describedby={sessionError ? "ticket-session-error" : undefined}
       >
-        <legend className={`${ui.sectionTitle} mb-1`}>회차 선택</legend>
+        <h2 id="ticket-session-title" className={`${ui.sectionTitle} mb-1`}>
+          회차 선택
+        </h2>
         {sessions.length === 0 ? (
           <p className={ui.body}>이 공연에는 등록된 회차가 없어요.</p>
         ) : (
@@ -395,8 +398,14 @@ function TicketForm({ performanceId, presetSessionId, canChangePerformance, onCh
         )}
       </fieldset>
 
-      <fieldset className={`${ui.card} flex flex-col gap-4`} disabled={submitting}>
-        <legend className={`${ui.sectionTitle} mb-1`}>내 좌석</legend>
+      <fieldset
+        className={`${ui.card} flex flex-col gap-4`}
+        disabled={submitting}
+        aria-labelledby="ticket-seat-title"
+      >
+        <h2 id="ticket-seat-title" className={`${ui.sectionTitle} mb-1`}>
+          내 좌석
+        </h2>
         <p className={ui.hint}>티켓에 적힌 그대로 입력해주세요. 열·번 끝의 ‘열’, ‘번’은 빼도 돼요.</p>
         <TextField
           id={FIELD_ID.zone}

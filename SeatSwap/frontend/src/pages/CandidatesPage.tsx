@@ -175,7 +175,7 @@ function CandidatesView({ requestId, validId }: { requestId: number; validId: bo
         {state.status === "success" && state.items.length > 0 && (
           <>
             <p className={ui.hint}>
-              추가금 금액은 매칭 판정에 쓰이지 않고 참고로만 보여요. ‘제안하기’를 누르면 바로 매칭(채팅 단계)이 시작되고, 두 사람이 모두 ‘이 사람과 교환할게요’를 누르면 두 티켓이 예약돼요.
+              ‘내 조건’은 내가 이 자리를 원할 때 정한 추가금, ‘상대 조건’은 상대가 내 자리를 원할 때 정한 추가금이에요. 금액은 매칭 판정에 쓰이지 않고 참고로만 보여요. ‘제안하기’를 누르면 바로 매칭(채팅 단계)이 시작되고, 두 사람이 모두 ‘이 사람과 교환할게요’를 누르면 두 티켓이 예약돼요.
             </p>
             <ul className="flex flex-col gap-3" aria-label="매칭 후보 목록">
               {state.items.map((c) => (
@@ -237,10 +237,10 @@ function CandidateCard({
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
         <dt className={ui.muted}>내 희망 회차</dt>
         <dd className="text-sm/[normal] text-gray-900">{c.wantPriority}순위</dd>
-        <dt className={ui.muted}>상대 추가금</dt>
-        <dd className="text-sm/[normal] text-gray-900">{formatExtra(c.extraType, c.extraAmount)}</dd>
-        <dt className={ui.muted}>내 추가금</dt>
+        <dt className={ui.muted}>내 조건</dt>
         <dd className="text-sm/[normal] text-gray-900">{formatExtra(c.myExtraType, c.myExtraAmount)}</dd>
+        <dt className={ui.muted}>상대 조건</dt>
+        <dd className="text-sm/[normal] text-gray-900">{formatExtra(c.extraType, c.extraAmount)}</dd>
         {c.settlementHint && (
           <>
             <dt className={ui.muted}>참고 금액</dt>
