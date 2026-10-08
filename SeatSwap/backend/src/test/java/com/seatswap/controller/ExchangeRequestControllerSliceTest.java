@@ -15,6 +15,9 @@ import com.seatswap.security.JwtAccessDeniedHandler;
 import com.seatswap.security.JwtAuthenticationEntryPoint;
 import com.seatswap.security.JwtTokenProvider;
 import com.seatswap.security.SecurityErrorResponseWriter;
+import com.seatswap.dto.response.ExchangeCandidateResponse;
+import com.seatswap.dto.response.PageResponse;
+import com.seatswap.service.ExchangeCandidateService;
 import com.seatswap.service.ExchangeRequestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,6 +63,8 @@ class ExchangeRequestControllerSliceTest {
     private CustomUserDetailsService userDetailsService;
     @MockBean
     private ExchangeRequestService exchangeRequestService;
+    @MockBean
+    private ExchangeCandidateService exchangeCandidateService;
 
     @BeforeEach
     void setUp() {
@@ -100,6 +105,63 @@ class ExchangeRequestControllerSliceTest {
              "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5"}],
              "wantSeatCount":6,"createdAt":"2026-10-06T14:03:21","updatedAt":"2026-10-06T14:03:21"}
             """;
+
+    @Test
+    void candidatesRequireLogin() throws Exception {
+        mockMvc.perform(get("/api/exchange/requests/900/candidates")).andExpect(status().isUnauthorized())
+                .andExpect(content().json("{\"message\":\"로그인이 필요합니다.\"}", true));
+    }
+
+    @Test
+    void candidatesReturnPageShapeWithDefaults() throws Exception {
+        var item = new ExchangeCandidateResponse(901L, 1001L, "B", "2", "3", 8L,
+                LocalDateTime.of(2026, 11, 2, 19, 0), "닉", 1, "NEG", -8000, "POS", 5000,
+                new ExchangeCandidateResponse.SettlementHint(5000, 8000), LocalDateTime.of(2026, 10, 5, 9, 0, 1));
+        when(exchangeCandidateService.findCandidates(1L, 900L, 0, 20))
+                .thenReturn(new PageResponse<>(List.of(item), 0, 20, 1, 1));
+
+        mockMvc.perform(auth(get("/api/exchange/requests/900/candidates")))
+                .andExpect(status().isOk())
+                .andExpect(content().json("""
+                        {"content":[{"requestId":901,"ticketId":1001,"zone":"B","row":"2","col":"3","sessionId":8,
+                          "startsAt":"2026-11-02T19:00","nickname":"닉","wantPriority":1,
+                          "extraType":"NEG","extraAmount":-8000,"myExtraType":"POS","myExtraAmount":5000,
+                          "settlementHint":{"min":5000,"max":8000},"requestedAt":"2026-10-05T09:00:01"}],
+                         "page":0,"size":20,"totalElements":1,"totalPages":1}
+                        """, true));
+    }
+
+    @Test
+    void candidatesPassPageAndSizeAndNullHint() throws Exception {
+        var item = new ExchangeCandidateResponse(901L, 1001L, "B", "2", "3", 8L,
+                LocalDateTime.of(2026, 11, 2, 19, 0), "닉", 1, "X", null, "ANY", null, null,
+                LocalDateTime.of(2026, 10, 5, 9, 0, 1));
+        when(exchangeCandidateService.findCandidates(1L, 900L, 2, 50))
+                .thenReturn(new PageResponse<>(List.of(item), 2, 50, 101, 3));
+
+        mockMvc.perform(auth(get("/api/exchange/requests/900/candidates?page=2&size=50")))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"content\":[{\"settlementHint\":null,\"extraAmount\":null}],\"page\":2,\"size\":50}"));
+        verify(exchangeCandidateService).findCandidates(1L, 900L, 2, 50);
+    }
+
+    @Test
+    void candidatesMapErrorCodes() throws Exception {
+        when(exchangeCandidateService.findCandidates(1L, 901L, 0, 20)).thenThrow(new ForbiddenException("본인"));
+        when(exchangeCandidateService.findCandidates(1L, 902L, 0, 20)).thenThrow(new NotFoundException("없음"));
+        when(exchangeCandidateService.findCandidates(1L, 903L, 0, 20))
+                .thenThrow(new BusinessRuleException("TICKET_NOT_ACTIVE", "닫힘"));
+
+        mockMvc.perform(auth(get("/api/exchange/requests/901/candidates"))).andExpect(status().isForbidden());
+        mockMvc.perform(auth(get("/api/exchange/requests/902/candidates"))).andExpect(status().isNotFound());
+        mockMvc.perform(auth(get("/api/exchange/requests/903/candidates"))).andExpect(status().isUnprocessableEntity())
+                .andExpect(content().json("{\"code\":\"TICKET_NOT_ACTIVE\",\"message\":\"닫힘\"}"));
+    }
+
+    @Test
+    void candidatesRejectNonNumericId() throws Exception {
+        mockMvc.perform(auth(get("/api/exchange/requests/abc/candidates"))).andExpect(status().isBadRequest());
+    }
 
     @Test
     void allEndpointsRequireLogin() throws Exception {

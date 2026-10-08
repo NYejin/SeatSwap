@@ -23,8 +23,8 @@
 - **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`). 공연은 회차와 함께 등록하며, 등록 후에는 아무도 제목·공연장·회차를 수정하거나 공연·회차를 삭제할 수 없다(수정은 추후 관리자 수정 제안으로만, 후속). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이다.
 - 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
 - **티켓 등록(FR-03)은 구현 완료** (`TicketController`, `TicketService`, `SeatKeyNormalizer`). 좌석 1개를 텍스트(구역 필수, 열·번은 숫자 또는 문자)로 등록한다. 같은 회차·구역·열·번의 활성 티켓은 1개(DB `uk_ticket_active_seat`), 사용자당 활성 티켓 20개 상한(`users` 행 FOR UPDATE로 직렬화), 회차 당일 끝(다음날 0시 KST)까지만 등록할 수 있다. 교환 희망 범위·매칭·예약은 아직 없다(V4 이후). 내릴 때 예약 잠금 검사는 V4 구현 시 `TicketService.ensureCanDeactivate`에 추가한다.
-- **교환 희망 조건 등록(FR-04 교환 요청)은 구현 완료** (`ExchangeRequestController`, `ExchangeRequestService`, `WantSeatExpander`, Flyway V4). 티켓 하나에 요청 1개(추가금 유형·희망 회차 우선순위·희망 좌석 범위)를 등록·조회·수정·삭제한다. 범위는 (구역, 열 from~to, 번 from~to)로 입력하면 개별 좌석으로 펼쳐 `exchange_want_seat`에 저장한다. 후보 매칭·예약·채팅·차단·이력은 아직 없다(V5 이후). 티켓을 내리면(`DELETE /api/tickets/{id}`) 그 티켓의 교환 요청은 CLOSED로 바뀐다.
-- 테스트는 254건이다.
+- **교환 희망 조건 등록(FR-04 교환 요청)은 구현 완료** (`ExchangeRequestController`, `ExchangeRequestService`, `WantSeatExpander`, Flyway V4). 티켓 하나에 요청 1개(추가금 유형·희망 회차 우선순위·희망 좌석 범위)를 등록·조회·수정·삭제한다. 범위는 (구역, 열 from~to, 번 from~to)로 입력하면 개별 좌석으로 펼쳐 `exchange_want_seat`에 저장한다. **매칭 후보 조회**(`GET /api/exchange/requests/{id}/candidates`, 읽기 전용)는 구현됐고 예약·채팅·차단·이력은 아직 없다(V5 이후). 티켓을 내리면(`DELETE /api/tickets/{id}`) 그 티켓의 교환 요청은 CLOSED로 바뀐다.
+- 기본 `./gradlew test`는 277건을 실행하고 22건을 건너뛴다(실제 MySQL이 필요한 `ExchangeCandidateQueryTest`는 `SEATSWAP_IT_JDBC_URL`이 없으면 통째로 건너뛰며 테스트 리포트에 `[SKIPPED ExchangeCandidateQueryTest]` 메시지가 남는다). 환경변수를 주면 37건이 더 돌아 314건 모두 실행된다. `SEATSWAP_IT_REQUIRED=true`(또는 `CI` 환경변수가 있으면)는 건너뛰지 않고 실패한다. 주의: Gradle은 환경변수를 입력으로 보지 않아 이전 결과를 재사용하므로 환경을 바꿔 다시 돌릴 때는 `./gradlew cleanTest test`를 쓴다. 아래 '매칭 후보 조회 검증' 참고.
 
 ## 인증 API
 
@@ -118,6 +118,37 @@
 
 동시성: 등록은 **티켓 행 `FOR UPDATE`**(트랜잭션의 첫 쿼리)로 직렬화하고 `uk_exchange_request_ticket` 위반도 같은 409로 바꾼다. 수정·삭제는 **요청 행 `FOR UPDATE`**(`PESSIMISTIC_WRITE`)로 직렬화한다. 티켓 내리기도 티켓 행을 잠가(잠금 순서 티켓 → 요청) 등록·수정과 엇갈리지 않는다. 락 대기 실패는 503 `BUSY`.
 
+## 매칭 후보 조회 API
+
+로그인 필요, 본인 요청만. 조건 일치 판정으로 후보를 찾을 뿐 **점수·랭킹·신뢰도는 없다**(우선순위는 사용자가 정한 희망 회차 priority).
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | /api/exchange/requests/{id}/candidates?page=0&size=20 | 내 요청과 서로 조건이 맞는 상대 요청 목록. size 기본 20, 최대 100(초과·0 이하는 보정), page 0부터(음수 400) |
+
+오류(403/404 구분은 같은 `/api/exchange/requests/{id}` 계열 API와 일관되게 유지한다. 티켓 API의 존재 비노출 404와는 다르다): 남의 요청 403 `{message}`, 없는 요청 404 `{message}`, 요청 CLOSED 또는 내 티켓 INACTIVE 422 `{code: TICKET_NOT_ACTIVE}`, 내 티켓 회차 마감 422 `{code: SESSION_CLOSED}`, 인증 없음 401.
+
+판정(전부 만족해야 후보):
+- 같은 공연이고, 상대 티켓의 회차 ∈ 내 희망 회차이고 내 티켓의 회차 ∈ 상대 희망 회차.
+- 상대 티켓의 (구역, 열, 번)이 내 희망 좌석에 있고, 내 티켓의 (구역, 열, 번)이 상대 희망 좌석에 있다(`exchange_want_seat` PK 점조회).
+- 추가금은 **유형만** 본다. 불성립은 POS-POS, POS-X(양방향)뿐이고 나머지(X-X, NEG-NEG 포함)는 성립이다. X-X·NEG-NEG는 사용자 미확정이라 기본값 성립이며 확인 필요. 금액은 판정에 쓰지 않는다.
+- 상대 티켓 ACTIVE, 상대 요청 OPEN, 상대 사용자는 나와 달라야 함(내 요청은 자동 제외), 상대 회차가 마감 전(회차 당일 끝=`starts_at` 다음날 0시 KST, 쿼리에서는 `starts_at >= 오늘 0시`로 같은 뜻).
+- 정렬: 내 희망 회차 priority 오름차순 -> 상대 요청 등록 최신순 -> 요청 id 내림차순. (같은 회차 우선 같은 별도 규칙 없음) 의도는 '사용자가 정한 회차 우선순위 안에서 최신 요청 우선'이다.
+
+응답 예시(`PageResponse`: content, page, size, totalElements, totalPages):
+
+```json
+{"content":[{"requestId":885,"ticketId":885,"zone":"1F","row":"10","col":"21","sessionId":1,
+  "startsAt":"2026-11-07T19:00","nickname":"nick885","wantPriority":1,
+  "extraType":"NEG","extraAmount":-8000,"myExtraType":"POS","myExtraAmount":5000,
+  "settlementHint":{"min":5000,"max":8000},"requestedAt":"2026-10-07T06:59:22"}],
+ "page":0,"size":20,"totalElements":11,"totalPages":1}
+```
+
+- `zone/row/col`은 상대가 입력한 표시용 원문, `wantPriority`는 내 희망 회차 중 상대 티켓 회차의 우선순위, `extraType/extraAmount`는 상대 것, `myExtraType/myExtraAmount`는 내 것이다. 이메일 등 개인정보와 신뢰도는 담지 않는다(닉네임만).
+- `settlementHint`는 **참고 표시용**이며 매칭 여부와 무관하다. 한쪽 POS(받아야 하는 최소 m)·다른 쪽 NEG(낼 수 있는 최대 p=-금액)이고 둘 다 금액이 있을 때 p>=m이면 `{min:m, max:p}`, p<m이거나 다른 조합이면 null이다(POS-NEG는 금액이 안 맞아도 후보가 된다). 부호: POS=받을 금액 양수, NEG=낼 수 있는 금액 음수.
+- 구현: 읽기 전용 트랜잭션, 요청·티켓 조회 2회 + 후보 SELECT 1회(닉네임·회차까지 한 번의 조인) + 총계 COUNT 1회로 후보 수와 무관한 상수 쿼리 수(N+1 없음). 잠금을 잡지 않아 잠금 순서(티켓 -> 요청)와 무관하다.
+
 그 외 모든 API는 `Authorization: Bearer {accessToken}` 헤더가 필요하다 (SecurityConfig 기준).
 
 ## DB 마이그레이션 (Flyway)
@@ -173,6 +204,34 @@ cp .env.example .env
 - 요청 목록의 `ranges` 열·번은 정규화 값이다(원문 표기 복원이 필요하면 V5에서 label 컬럼을 추가한다).
 - 알려진 한계(L4): 수정(PATCH)은 범위·좌석·회차를 전부 지우고 다시 만드는 방식이라 상한 근처(5,000석) 요청은 매번 5,000행을 다시 쓴다(약 150ms). 희망 좌석에는 회차가 없어 "같은 자리의 다른 회차만 원하고 같은 회차의 같은 자리는 원하지 않는" 구분은 할 수 없다. 두 한계 모두 현재 설계(1.3~1.5)의 결과다.
 
+## 후속 메모 (매칭 후보 조회)
+- **V5(차단·매칭·예약 잠금 테이블)를 만들 때 후보 제외 조건을 넣어야 한다.** 아직 해당 테이블이 없어 지금은 후보에서 빠지지 않는다(차단한 사용자, 이미 열린 채팅 쌍, 예약으로 잠긴 티켓이 후보에 보인다). 확장 지점은 `ExchangeCandidateRepository.additionalExclusions()` 한 곳이며, 후보 SELECT와 COUNT 양쪽에 같이 붙는다. 아래 조각을 `AND`로 이어 붙이면 된다(별칭 a=내 요청, b=상대 요청, ta=내 티켓, tb=상대 티켓, 파라미터 없음).
+
+```sql
+-- 차단 (양방향)
+AND NOT EXISTS (SELECT 1 FROM user_block ub2
+                WHERE (ub2.blocker_id = ta.user_id AND ub2.blocked_id = tb.user_id)
+                   OR (ub2.blocker_id = tb.user_id AND ub2.blocked_id = ta.user_id))
+-- 이미 같은 요청 쌍으로 열린 채팅
+AND NOT EXISTS (SELECT 1 FROM exchange_match mo
+                WHERE mo.request_low_id  = LEAST(a.id, b.id)
+                  AND mo.request_high_id = GREATEST(a.id, b.id)
+                  AND mo.open_flag = 1)
+-- 상대 티켓이 예약 잠금 (예약이 취소되면 잠금이 풀려 복귀)
+AND NOT EXISTS (SELECT 1 FROM exchange_ticket_lock l WHERE l.ticket_id = tb.id)
+```
+  주의: `users ub` 별칭이 이미 쓰이므로 차단 서브쿼리 별칭은 `ub2`다. 지시문의 '진행 중 제안이 있는 요청 제외'는 확정 설계(설계 2절)에 없다. 한 요청에 채팅이 여러 개 동시에 열릴 수 있으므로 상대 요청에 다른 채팅이 있다는 이유로는 빼지 않고, 같은 쌍의 열린 채팅과 잠금만 뺀다.
+  또 내 티켓이 예약 잠금이면 후보 조회 자체를 막는 검사(`ExchangeCandidateService`, 422)도 이때 추가한다(설계 2절 주의). 신고 연동은 신고 기능 착수 시.
+- **STRAIGHT_JOIN 유지 (근거와 트레이드오프).** 조인 순서를 내 요청 -> 내 희망 회차·좌석 -> 상대 티켓 -> 상대 요청 -> 상대 희망 회차·좌석으로 고정한다.
+  - 근거: 힌트가 없으면 요청이 적을 때(100~1,000건) 옵티마이저가 `exchange_request`(상대 요청)를 `type=ALL`로 전체 스캔하며 시작했다. 그러면 작업량이 전체 요청 수에 비례한다. 고정하면 작업량이 내 희망 좌석 수 x 희망 회차 수에 비례하고, 전체 요청 수에는 거의 영향을 받지 않는다.
+  - 트레이드오프: 희망 좌석이 아주 많은 요청은 고정 순서가 약간 느리다(희망 2,400석, 요청 1,000건: DB 시간 12ms -> 27ms). 희망 좌석이 적은 요청은 8ms -> 1ms로 빨라진다. 통계가 바뀌어도 계획이 흔들리지 않는다는 점을 택했다.
+  - EXPLAIN 요약(요청 4,001건 / 희망 좌석 200만 행 / 내 희망 5,000석): a·ta·psa const, wsa `ref`(PK), psb eq_ref, wa `ref`(PK 앞부분, Using index), tb eq_ref(`uk_ticket_active_seat`), b eq_ref(`uk_exchange_request_ticket`), wsb·wb eq_ref(PK, Using index), ub eq_ref(PK). `type=ALL` 없음. 정렬은 결과 집합의 filesort뿐.
+  - **keyset 페이징으로 바꿀 기준(재측정 후 판단):** ① 후보 요청의 서버 시간(DB)이 중앙값 300ms를 넘거나 p95가 1초를 넘을 때, ② 정상 사용자의 후보가 1만 건을 넘어 deep page(OFFSET)가 흔해질 때, ③ 희망 좌석 상한(5,000석)을 올릴 때. 전환 시 정렬 키(priority, created_at, id)를 커서로 쓰고 총계는 생략하거나 근사치로 바꾼다.
+- 인덱스는 V4로 충분하다(새 마이그레이션 불필요). 역조회 `exchange_want_seat (zone_key, row_key, col_key)`는 지금 쓰지 않는다.
+- **총계(COUNT)** 는 별도 쿼리로 한 번 더 돌린다. 결과에 영향이 없는 `users`(닉네임용, FK로 항상 존재) 조인을 뺀 `countSql()`을 쓰며 목록과 같은 판정 조인을 공유한다. `psa`는 FK로 항상 존재하지만 `psb.performance_id = psa.performance_id`(같은 공연 방어)에 쓰이므로 뺄 수 없다. 줄인 COUNT가 목록 전체 행 수와 같은지 `countMatchesListTotalAcrossMixedScenario`와 모든 개별 테스트의 count 단언으로 확인한다. 같은 읽기 전용 트랜잭션이라 목록과 총계는 한 연결을 쓴다(`listAndCountUseTheSameConnectionInsideAReadOnlyTransaction`로 확인; 서비스 전체의 트랜잭션 전파는 Spring 컨텍스트 테스트가 없어 이 메커니즘 수준의 검증이다).
+- 시각 처리: 일시는 `LocalDateTime`으로 바인딩·읽는다(`Timestamp` 변환 없음). 앱·DB 모두 KST 벽시계 값이라 서버 JVM 시간대에 의존하지 않는다.
+- 확장 조각 규칙(`additionalExclusions()`): 조각은 `AND`로 시작해야 하고 `?`(바인딩 파라미터)를 포함할 수 없다. 위반하면 `IllegalStateException`이며(`ExchangeCandidateSqlGuardTest`), 앞뒤 개행은 자동으로 붙는다.
+
 ## 수동 검증 시나리오 (임시 MySQL, 재현용)
 
 자동 통합 테스트(Testcontainers)는 두지 않고, 아래 절차로 실제 MySQL에서 확인한다. 개발 DB(3306)와 `backend/.env`를 쓰지 않도록 `bootRun`이 아니라 `bootJar` + `java -jar`로 환경변수를 직접 지정한다.
@@ -198,8 +257,65 @@ SERVER_PORT=18080 SPRING_DATASOURCE_URL=jdbc:mysql://localhost:13306/seatswap SP
 
 (마감된 회차의 422/400은 회차 등록이 지난 일시를 거부해 HTTP로 만들 수 없어 단위 테스트로만 검증한다.)
 
+## 매칭 후보 조회 검증 (2026-10-08, 임시 MySQL 8.0 컨테이너, 끝난 뒤 삭제)
+
+**SQL 테스트(실제 MySQL).** `ExchangeCandidateQueryTest`(37건: 한쪽만 일치 2, 추가금 4x4 16, 금액 불사용, 회차 판정·여러 회차·다른 공연, 좌석 키 정확도, 마감 경계(오늘 00:00 포함 / 어제 23:59 제외), 같은 사용자·내 요청, CLOSED/INACTIVE, 한 상대가 여러 회차·좌석에 동시에 일치해도 1행·count 1, 정렬(priority -> 최신, 동률이면 id DESC), 페이징, 쿼리 수=SELECT 1회, 줄인 COUNT = 목록 총계, 읽기 전용 트랜잭션에서 목록·COUNT가 같은 CONNECTION_ID)는 환경변수가 있을 때만 돈다(없으면 `[SKIPPED ...]` 메시지와 함께 건너뜀; `SEATSWAP_IT_REQUIRED=true` 또는 `CI`가 있으면 실패). 안전장치: JDBC URL을 파싱해 호스트가 localhost/127.0.0.1이고 DB 이름(쿼리스트링 제외)이 `_it`로 끝나는지, 연결 직후 `SELECT DATABASE()`도 `_it`로 끝나는지 확인한 뒤에만 Flyway clean/TRUNCATE를 한다(환경변수가 있는데 걸리면 skip이 아니라 실패). 개발 DB(`seatswap`, 3306)는 건드리지 않는다.
+
+```bash
+docker run -d --name seatswap-tmp-cand -e MYSQL_ROOT_PASSWORD=tmp -e MYSQL_DATABASE=seatswap_it -p 13307:3306 mysql:8.0 --character-set-server=utf8mb4
+SEATSWAP_IT_JDBC_URL=jdbc:mysql://localhost:13307/seatswap_it SEATSWAP_IT_USER=root SEATSWAP_IT_PASSWORD=tmp ./gradlew test --tests '*ExchangeCandidateQueryTest'
+docker rm -f seatswap-tmp-cand
+```
+
+**EXPLAIN** (요청 1,000건 / 희망 좌석 83만 행): 조인 11개 테이블 모두 const / ref / eq_ref이며 `type=ALL`(전체 스캔)이 없다. 내 희망 회차는 `exchange_want_session` PK, 내 희망 좌석은 `exchange_want_seat` PK 앞부분(`ref`), 상대 티켓은 `uk_ticket_active_seat` 점조회, 상대 요청은 `uk_exchange_request_ticket`, 상대 희망 회차·좌석은 PK 전체(`Using index`). 정렬은 결과 집합에서의 filesort뿐이다. 힌트 없이는 요청 1,000건에서도 `b`(상대 요청)가 `type=ALL`로 시작하는 계획이 나왔다(그래서 STRAIGHT_JOIN).
+
+**성능** (jar 실행, 로컬 HTTP end-to-end, 45회 중 첫 5회 제외; 같은 조건에서 가벼운 `/api/users/me`가 약 14ms). 희망 좌석은 요청당 30~2,400석(평균 약 900), 회차 3개, 구역 2 x 30열 x 40번.
+
+| 규모 | 내 요청 | 후보 수 | size | 중앙값 | p95 |
+|---|---|---|---|---|---|
+| 100건 | A (희망 100석) | 0 | 20 | 28ms | 45ms |
+| 100건 | B (희망 2,400석) | 39 | 20 / 100 | 43ms / 45ms | 68ms / 72ms |
+| 1,000건 | A (희망 100석) | 11 | 20 / 100 | 57ms / 42ms | 402ms(1건 튐) / 91ms |
+| 1,000건 | B (희망 2,400석) | 299 | 20 / 100 | 68ms / 69ms | 114ms / 94ms |
+
+DB 시간(EXPLAIN ANALYZE, 1,000건): A 약 1ms, B 약 27ms. 한계: 시드는 균일 분포 합성 데이터이고 동시 요청 부하는 재지 않았다.
+
+### 대량 수동 검증 (희망 5,000석, 후보 4,000건) — 2026-10-08 실행
+
+스크립트: `scripts/candidates-bulk-seed.sql`(시드), `scripts/candidates-bench.py`(응답 시간). 임시 MySQL 컨테이너와 `bootJar` + `java -jar`만 쓴다(개발 DB·`.env`·`bootRun` 금지). 끝나면 컨테이너를 삭제한다.
+
+```bash
+cd SeatSwap/backend && ./gradlew bootJar
+docker run -d --name seatswap-tmp-bulk -e MYSQL_ROOT_PASSWORD=tmp -e MYSQL_DATABASE=seatswap -p 13307:3306 mysql:8.0 --character-set-server=utf8mb4
+SERVER_PORT=18081 SPRING_DATASOURCE_URL=jdbc:mysql://localhost:13307/seatswap SPRING_DATASOURCE_USERNAME=root SPRING_DATASOURCE_PASSWORD=tmp \
+  JWT_SECRET=tmp-verification-secret-key-0123456789-abcdefghijklmnop java -Duser.timezone=Asia/Seoul -jar build/libs/backend-0.0.1-SNAPSHOT.jar   # 종료는 이 프로세스 PID만
+# 사용자 1명 가입 후 로그인해 토큰을 파일(tokbulk)에 저장 (id=1 이 "나"가 된다)
+curl -s -X POST localhost:18081/api/auth/signup -H 'Content-Type: application/json' -d '{"email":"bulk@t.com","password":"password123","nickname":"bulk"}'
+curl -s -X POST localhost:18081/api/auth/login  -H 'Content-Type: application/json' -d '{"email":"bulk@t.com","password":"password123"}'   # accessToken -> tokbulk
+docker exec -i seatswap-tmp-bulk mysql -uroot -ptmp seatswap < scripts/candidates-bulk-seed.sql      # 약 23초
+python scripts/candidates-bench.py tokbulk 1 20          # size 20, 첫 페이지
+python scripts/candidates-bench.py tokbulk 1 100         # size 100
+python scripts/candidates-bench.py tokbulk 1 100 39      # 마지막 페이지(OFFSET 3,900)
+# EXPLAIN: 후보 SQL(ExchangeCandidateRepository.candidateSql()/countSql())의 ? 를 값으로 바꿔 EXPLAIN ANALYZE 로 실행
+docker rm -f seatswap-tmp-bulk
+```
+
+시드: 요청 4,001건, 희망 좌석 200만 행. 내 요청은 희망 5,000석(상한) x 희망 회차 3개, 상대 4,000명이 모두 후보다(추가금 X/ANY/POS/NEG 균등, 내 유형 ANY).
+
+| 측정 | 결과 |
+|---|---|
+| 총계(totalElements) | 4,000 (totalPages 40, size 100 기준) |
+| HTTP size 20, page 0 | 중앙값 135ms, p95 205ms (최대 877ms 1회, 첫 호출 235ms) |
+| HTTP size 100, page 0 | 중앙값 148ms, p95 201ms |
+| HTTP size 100, page 39 | 중앙값 158ms, p95 245ms |
+| 기준 `/api/users/me` | 중앙값 약 17ms |
+| DB 시간(EXPLAIN ANALYZE) | 목록 LIMIT 20: 약 100ms, 줄인 COUNT: 약 56ms |
+| EXPLAIN | `type=ALL` 없음. a·ta·psa const, wsa ref, psb·tb·b·wsb·wb·ub eq_ref, wa ref(Using index) |
+
+해석: 최악 규모(5,000석 x 3회차 = 15,000번 점조회, 후보 4,000건)에서도 서버 시간 약 130ms 수준이라 keyset 전환 기준(중앙값 300ms)에 한참 못 미친다. OFFSET이 커져도 판정 조인 비용이 대부분이라 page 39와 page 0 차이가 작다. 한계: 합성 데이터, 단일 클라이언트, 동시 부하 미측정.
+
 ## 다음 단계
-1. 교환 도메인 구현 계속: (완료) V4 희망 범위·희망 좌석·희망 회차 / 남음: V5 이후 차단·매칭 후보 조회·예약 잠금·이력 마이그레이션과 엔티티 (설계안 `산출물/08_ERD/exchange-schema-design.md`)
+1. 교환 도메인 구현 계속: (완료) V4 희망 범위·희망 좌석·희망 회차, 매칭 후보 조회 / 남음: V5 이후 차단·매칭(채팅 시작)·예약 잠금·이력 마이그레이션과 엔티티, 후보 제외 조건 추가(위 후속 메모) (설계안 `산출물/08_ERD/exchange-schema-design.md`)
 2. 티켓 자동 비활성(회차 당일 끝 경과, 스케줄러)과 '내 티켓 인증'
 3. 자동 매칭 (후보 제시, 양쪽 수락으로 확정)
 4. 채팅(WebSocketConfig 구현)·후기

@@ -4,6 +4,8 @@
 
 > **구현 상태 (2026-10-08, 브랜치 `feature/ticket-register`, 미커밋)**: 1.1절 ticket 변경은 **V3로 구현 완료**(`V3__ticket_seat_columns.sql`, ticket 행이 있으면 SIGNAL 가드로 실패, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`, `idx_ticket_user_status`; 정규화 키는 서비스 `SeatKeyNormalizer`가 NFKC·공백 제거·대문자·앞 0 제거·끝의 '열'/'번' 제거로 만든다). 티켓 등록 API(`POST /api/tickets`, `GET /api/tickets/me`, `DELETE /api/tickets/{id}`)도 구현됨. V4 희망 쪽은 아래 메모대로 구현 완료다.
 >
+> **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-candidates`, 미커밋)**: **2절 후보 조회 구현 완료** — `GET /api/exchange/requests/{id}/candidates?page&size`(기본 20, 최대 100), `ExchangeCandidateRepository`(네이티브 SQL)·`ExchangeCandidateService`. 스키마 변경 없음(V4 인덱스로 충분). 2절 SQL과 다른 점은 2절 끝의 '구현 반영' 참고(STRAIGHT_JOIN, 정렬, **차단·같은 쌍 채팅·예약 잠금 제외는 V5 테이블이 없어 미적용** — 확장 지점 `additionalExclusions()`). X–X·NEG–NEG 성립은 사용자 미확정 기본값(확인 필요).
+>
 > **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-want`, 미커밋)**: **V4 희망 쪽 구현 완료** — `V4__exchange_want_tables.sql`이 `exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session` 4개 테이블을 만든다(API: `POST /api/exchange/requests`, `GET /api/exchange/requests/me`, `PATCH/DELETE /api/exchange/requests/{id}`). **매칭 쪽(차단·`exchange_match`·`exchange_ticket_lock`·`chat_message`·`exchange_history`)은 미구현이며 V5 이후**로 번호를 옮긴다(이 문서 본문의 'V4' 표기 중 매칭 쪽 테이블은 V5 이후로 읽는다). 티켓을 내리면 해당 요청이 CLOSED로 바뀌고(이후 수정 422 `TICKET_NOT_ACTIVE`), 예약 잠금 409는 매칭 구현 때 `ensureCanDeactivate`/`ensureNoActiveProposal` 훅에서 추가한다. 서버 안전 상한 5,000석·50범위(`exchange.want.*`, 초과 422 `WANT_SEAT_LIMIT_EXCEEDED`/`WANT_RANGE_LIMIT_EXCEEDED`). 리뷰 반영(테스트 254건): 자기 좌석 포함 422 `WANT_INCLUDES_OWN_SEAT`는 희망 회차가 내 티켓 회차 하나뿐일 때만이며 다른 회차가 있으면 같은 위치도 허용한다(사용자가 별도 결정 없이 추천안 채택, 이의 시 변경 가능). 상한 판정은 합집합 기준. 요청에도 지난 회차 마감 적용(422 `SESSION_CLOSED`, 희망 회차 마감은 400 `wantSessions[i].sessionId`). 열·번 부호 정수형은 400. 잠금 순서는 항상 티켓→요청. 남은 한계는 요청 응답의 열·번 범위가 정규화 값이라 원문 표기를 복원할 수 없다는 것뿐이다. V4 실제 파일에는 초안에 없던 `ck_exchange_want_range_sort`, `ck_exchange_want_session_priority`, `idx_exchange_want_range_request`, `idx_exchange_want_session_session`이 추가됐다(4.1 참고).
 기준선: V1+V2 (users, performance, performance_session, ticket 4개 테이블). 이 문서의 SQL은 초안이며 마이그레이션 파일이 아니다.
 좌석표(`SeatMapLayout`·`uid`·`section`)에 의존하지 않는다. 후기·신뢰도·신고 테이블은 만들지 않는다(신고는 8절에서 확장 여지만 언급).
@@ -236,7 +238,14 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 ```
 주의: 내 티켓이 잠겨 있거나 요청이 CLOSED면 서비스에서 후보 조회 자체를 막는다(쿼리에 넣지 않음). 점수·랭킹 없음: 정렬 키는 사용자가 정한 회차 우선순위와 일시뿐이다.
 
-### 필요한 인덱스와 실행 계획(예상 — 실제 EXPLAIN은 V3/V4 적용 후 시드 데이터로 확인 필요, 지금은 실행하지 못함)
+### 구현 반영 (2026-10-08, 위 초안 SQL과의 차이)
+- **`SELECT STRAIGHT_JOIN`**: FROM 절 순서(내 요청 -> 내 희망 회차·좌석 -> 상대 티켓 -> 상대 요청 -> 상대 희망 회차·좌석)대로 조인하도록 고정했다. 힌트가 없으면 요청 수가 적을 때 옵티마이저가 상대 요청 테이블(`exchange_request b`)을 풀스캔으로 시작해 작업량이 전체 요청 수에 비례한다(EXPLAIN으로 확인). 고정하면 작업량이 내 희망 좌석 수 x 희망 회차 수에만 비례한다.
+- **정렬**: 초안의 `wsa.priority, psb.starts_at, tb.id` 대신 구현은 `wsa.priority ASC, b.created_at DESC, b.id DESC`(내 희망 회차 priority -> 상대 요청 최신순). 점수·랭킹·신뢰도 없음, '같은 회차 우선'은 적용하지 않는다. 마감 조건은 `NOW(6) < DATE_ADD(DATE(starts_at), …)` 대신 `psb.starts_at >= 오늘 0시(KST)`로 동치 구현했다.
+- **미적용(V5 필요)**: 초안의 차단(`user_block`)·같은 쌍 열린 채팅(`exchange_match`)·예약 잠금(`exchange_ticket_lock`) `NOT EXISTS` 3개는 해당 테이블이 없어 SQL에 넣지 않았다. V5에서 `ExchangeCandidateRepository.additionalExclusions()`에 추가한다(현재 후보에 차단 사용자·잠긴 티켓이 보일 수 있다).
+- **추가금 호환**: 초안 두 줄(POS–POS, POS–X, X–POS 불성립)을 그대로 구현했고 호환표와 일치한다. X–X·NEG–NEG 성립은 사용자 미확정 기본값(확인 필요).
+- **응답**: 상대 좌석(구역·열·번)·회차·닉네임·내/상대 추가금 유형·금액·`settlementHint`(POS–NEG이고 금액 범위가 겹치면 {min,max}, 참고값). 신뢰도 필드 없음.
+
+### 필요한 인덱스와 실행 계획 (실측 반영: 요청 1,000건·희망 좌석 83만 행, 임시 MySQL 8.0)
 | 단계 | 접근 | 사용 인덱스 |
 |---|---|---|
 | a | const | `exchange_request` PK |
@@ -250,7 +259,8 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 
 - 작업량 ≈ (희망 좌석 수 n) × (희망 회차 수 s) 번의 tb 점조회. 예: 90석 × 3회차 = 270회, 각 점조회 뒤에 b/wsb/wb 점조회가 이어지므로 대부분 인덱스 룩업으로 끝난다. 사용자 대상 상한이 없으므로 n이 커지면 조회가 비례해 느려져 내부 안전 상한(확정 b, 6절)을 둔다.
 - 조인 순서를 '내 희망 좌석 -> 상대 티켓'으로 잡은 이유: 내 희망이 보통 상대 전체 티켓보다 작고, tb 접근이 전부 상수 동등 비교로 끝난다. 역방향(상대 희망에서 내 좌석 찾기)은 wb PK 점조회로 이미 처리한다.
-- 마지막 ORDER BY는 결과 집합(후보 수십~수백)에서의 filesort뿐이다. 후보가 수천을 넘으면 keyset 페이징을 고려한다.
+- **실측 EXPLAIN 요약**: 조인 11개 테이블 모두 const / ref / eq_ref이며 `type=ALL`이 없다(STRAIGHT_JOIN 적용 후). 응답시간(로컬 HTTP end-to-end, 가벼운 API 약 14ms 대비) 요청 100건 규모 중앙값 28~43ms, 1,000건 규모 42~69ms. DB 시간(EXPLAIN ANALYZE, 1,000건) 약 1~27ms. 한계: 균일 분포 합성 데이터, 동시 부하 미측정. 상세는 `SeatSwap/backend/README.md` '매칭 후보 조회 검증'.
+- 마지막 ORDER BY는 결과 집합(후보 수십~수백)에서의 filesort뿐이다. 후보가 수천을 넘으면 keyset 페이징·총계 생략이 필요하다(후속).
 - 추가 인덱스 후보(지금은 불필요): `exchange_want_seat (zone_key, row_key, col_key)` 역조회('내 좌석을 원하는 요청이 몇 건인지' 표시 기능을 넣을 때).
 
 ---
