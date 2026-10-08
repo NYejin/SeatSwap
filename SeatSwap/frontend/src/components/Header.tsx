@@ -14,6 +14,7 @@ const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
 // ---- Tailwind 클래스 조합 (모바일 우선: 기본은 햄버거 + 펼침 패널, md 이상에서 가로 배치) ----
 const cls = {
   /** 하단 경계선은 보조색(장식 용도 — 글자에는 쓰지 않음) */
+  logoImage: "h-11 w-auto",
   header: "sticky top-0 z-[100] border-b border-secondary-200 bg-white pt-[env(safe-area-inset-top)]",
   bar: "relative mx-auto flex min-h-14 max-w-[1080px] items-center gap-2 pr-2 pl-4 md:gap-4 md:px-4",
   logo:
@@ -204,7 +205,7 @@ export default function Header() {
     <header ref={headerRef} className={cls.header}>
       <div className={cls.bar}>
         <Link ref={logoRef} to="/" className={cls.logo} onClick={closeMenu}>
-          SeatSwap
+          <img src="/logo.png" alt="SeatSwap" className={cls.logoImage} />
         </Link>
 
         <button
