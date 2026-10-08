@@ -49,7 +49,7 @@ public class ExchangeRequestController {
         return exchangeRequestService.listMine(principal.userId(), ticketId);
     }
 
-    /** 범위·희망 회차·추가금 전체 교체 -> 200 + 갱신된 요청. 남의 요청 403, 없는 요청 404. */
+    /** 범위(추가금 포함)·희망 회차 전체 교체 -> 200 + 갱신된 요청. 남의 요청 403, 없는 요청 404. */
     @PatchMapping("/{id}")
     public ExchangeRequestResponse update(@PathVariable Long id,
                                           @Valid @RequestBody ExchangeRequestUpdateRequest request,
@@ -66,7 +66,7 @@ public class ExchangeRequestController {
         return exchangeCandidateService.findCandidates(principal.userId(), id, page, size);
     }
 
-    /** 하드 삭제 -> 204. 남의 요청 403, 없는 요청 404. */
+    /** 소프트 삭제(DELETED) -> 204, 이미 삭제됐으면 멱등 204. CHATTING 매칭은 시스템 취소, RESERVED 가 있으면 409. 남의 요청 403, 없는 요청 404. */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id,
                                        @AuthenticationPrincipal AuthUserPrincipal principal) {

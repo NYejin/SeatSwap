@@ -75,7 +75,7 @@ class ExchangeMatchControllerSliceTest {
                 new ExchangeMatchResponse.Seat("A구역", "3", "5", 7L, LocalDateTime.of(2026, 11, 1, 19, 0)),
                 800L, 600L,
                 new ExchangeMatchResponse.Seat("B구역", "4", "6", 8L, LocalDateTime.of(2026, 11, 2, 19, 0)),
-                "상대", "X", null, "POS", 30000,
+                "상대", "X", null, "POS", 30000, false, true,
                 LocalDateTime.of(2026, 10, 8, 12, 0, 5), null, null, null,
                 LocalDateTime.of(2026, 10, 8, 11, 0, 0), LocalDateTime.of(2026, 10, 8, 12, 0, 5));
     }
@@ -90,7 +90,7 @@ class ExchangeMatchControllerSliceTest {
              "counterpartRequestId":800,"counterpartTicketId":600,
              "counterpartSeat":{"zone":"B구역","row":"4","col":"6","sessionId":8,"startsAt":"2026-11-02T19:00"},
              "counterpartNickname":"상대","myExtraType":"X","myExtraAmount":null,
-             "counterpartExtraType":"POS","counterpartExtraAmount":30000,
+             "counterpartExtraType":"POS","counterpartExtraAmount":30000,"myRequestDeleted":false,"counterpartRequestDeleted":true,
              "myReservedAt":"2026-10-08T12:00:05","counterpartReservedAt":null,"canceledBy":null,"canceledAt":null,
              "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T12:00:05"}
             """;

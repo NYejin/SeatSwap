@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { exchangeApi } from "../api/exchange";
-import { exchangeErrorMessage, formatExtra } from "../api/exchangeMessages";
+import { exchangeErrorMessage, summarizeRangeExtras } from "../api/exchangeMessages";
 import { formatKstDateTime } from "../api/dateTime";
 import { formatSeat } from "../api/seat";
 import { ticketsApi } from "../api/tickets";
@@ -164,7 +164,7 @@ function TicketCard({
             <span className={ui.badge + " self-start"}>{open ? "교환 조건 설정됨" : "교환 조건 닫힘"}</span>
             <p className={ui.muted}>
               희망 {request.wantSeatCount.toLocaleString("ko-KR")}석 · 희망 회차 {request.wantSessions.length}개 ·{" "}
-              {formatExtra(request.extraType, request.extraAmount)}
+              {summarizeRangeExtras(request.ranges)}
             </p>
           </>
         ) : (

@@ -230,3 +230,51 @@ export function countWantSeats(ranges: RangeInput[]): { count: number; invalid: 
   }
   return { count, invalid };
 }
+
+// ---- 겹침 + 추가금 유형 충돌 미리 경고 ----
+
+/** 비교용 추가금 조건 키: submit과 같이 쉼표·공백을 제거, X/ANY는 금액 없음, 앞 0 제거 */
+export function extraKey(type: string, amountText: string): string {
+  if (type !== "POS" && type !== "NEG") return type;
+  const t = amountText.replace(/[,\s]/g, "");
+  return `${type}:${/^\d+$/.test(t) ? String(Number(t)) : t}`;
+}
+
+function axisOverlap(a: Dim, b: Dim): boolean {
+  if (a.from.kind === "num" && a.to.kind === "num" && b.from.kind === "num" && b.to.kind === "num") {
+    return a.from.n <= b.to.n && b.from.n <= a.to.n;
+  }
+  if (a.from.kind === "key" && b.from.kind === "key") return a.from.key === b.from.key;
+  return false;
+}
+
+/**
+ * 서로 겹치는데 추가금 조건(유형+금액)이 다른 범위 쌍의 인덱스([i, j], i<j)를 돌려준다.
+ * 서버 WantExtra.equals와 같은 기준이다: 유형이 같고 금액도 같아야 같은 조건 (POS 10000 vs POS 20000은 충돌).
+ * X/ANY는 금액이 없고, NEG는 부호만 반대로 전송하므로 양수 입력끼리 비교해도 같다. 조건이 같은 겹침(완전히 같은 범위 포함)은 허용이다. 입력이 올바르지 않은 범위는 건너뛴다.
+ * 서버(WANT_EXTRA_CONFLICT)가 최종 판정한다 — 미리 안내하는 용도다.
+ */
+export function findExtraConflicts(
+  items: (RangeInput & { extraType: string; extraAmount?: string })[]
+): [number, number][] {
+  const rects: ({ rect: Rect; type: string } | null)[] = items.map((raw) => {
+    const zone = raw.zone.trim();
+    if (!zone || zone.length > ZONE_MAX) return null;
+    const errors: RangeErrors = {};
+    const row = validateAxis(raw.rowFrom, raw.rowTo, "열", "rowFrom", "rowTo", errors);
+    const col = validateAxis(raw.colFrom, raw.colTo, "번", "colFrom", "colTo", errors);
+    if (!row || !col) return null;
+    return { rect: { zone: normalizeZone(zone), row, col }, type: extraKey(raw.extraType, raw.extraAmount ?? "") };
+  });
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < rects.length; i++) {
+    const a = rects[i];
+    if (!a) continue;
+    for (let j = i + 1; j < rects.length; j++) {
+      const b = rects[j];
+      if (!b || a.type === b.type || a.rect.zone !== b.rect.zone) continue;
+      if (axisOverlap(a.rect.row, b.rect.row) && axisOverlap(a.rect.col, b.rect.col)) pairs.push([i, j]);
+    }
+  }
+  return pairs;
+}

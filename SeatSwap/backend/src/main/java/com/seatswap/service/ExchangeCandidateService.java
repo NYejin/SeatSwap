@@ -6,6 +6,7 @@ import com.seatswap.domain.Ticket;
 import com.seatswap.dto.response.ExchangeCandidateResponse;
 import com.seatswap.dto.response.PageResponse;
 import com.seatswap.exception.BusinessRuleException;
+import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 매칭 후보 조회 (읽기 전용). 후보는 조건 일치 판정으로만 찾고 점수화·랭킹·신뢰도는 쓰지 않는다.
@@ -58,6 +60,10 @@ public class ExchangeCandidateService {
                 .orElseThrow(() -> new NotFoundException(ExchangeRequestService.TICKET_NOT_FOUND_MESSAGE));
         if (!ticket.isOwnedBy(userId)) {
             throw new ForbiddenException(FORBIDDEN_MESSAGE);
+        }
+        if (request.isDeleted()) {
+            throw new ConflictException(ExchangeRequestService.REQUEST_DELETED_MESSAGE,
+                    Map.of("code", ExchangeRequestService.REQUEST_DELETED_CODE));
         }
         if (!ticket.isActive() || !request.isOpen()) {
             throw new BusinessRuleException(ExchangeRequestService.TICKET_NOT_ACTIVE_CODE, NOT_ACTIVE_MESSAGE);

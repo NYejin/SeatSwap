@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * 후보 조회 네이티브 SQL을 실제 MySQL에서 검증한다 (H2 등으로는 생성 컬럼·utf8mb4_bin 동작이 달라 의미가 없다).
  * 기본(./gradlew test)에서는 환경변수가 없어 건너뛴다. 실행하려면 임시 MySQL 컨테이너를 띄우고 환경변수를 준다:
  *   SEATSWAP_IT_JDBC_URL=jdbc:mysql://localhost:13307/seatswap_it  SEATSWAP_IT_USER=root  SEATSWAP_IT_PASSWORD=tmp
- * 안전장치: DB 이름이 `_it` 로 끝나야 하며(개발 DB `seatswap` 보호) 실행할 때마다 Flyway clean 후 V1~V5를 새로 적용한다.
+ * 안전장치: DB 이름이 `_it` 로 끝나야 하며(개발 DB `seatswap` 보호) 실행할 때마다 Flyway clean 후 V1~V7을 새로 적용한다.
  */
 class ExchangeCandidateQueryTest {
 
@@ -348,8 +348,7 @@ class ExchangeCandidateQueryTest {
         // 같은 우선순위(s1)에서는 최신 등록이 먼저: p2new 가 p2old 보다 나중에 생성
         long u5 = user("p2new");
         Req p2new = request(u5, s1, "A", "2", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
-        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                a.id, "A", "2", "2");
+        insertSeat(a, "A", "2", "2");
         jdbc.update("UPDATE exchange_request SET created_at = ? WHERE id = ?", BASE.minusDays(10), p2old.id);
         jdbc.update("UPDATE exchange_request SET created_at = ? WHERE id = ?", BASE.minusDays(1), p2new.id);
 
@@ -365,8 +364,7 @@ class ExchangeCandidateQueryTest {
         long u1 = user("me");
         Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of());
         for (int col = 2; col <= 8; col++) {
-            jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                    a.id, "A", "1", String.valueOf(col));
+            insertSeat(a, "A", "1", String.valueOf(col));
             request(user("o" + col), s1, "A", "1", String.valueOf(col), "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
         }
         var p0 = repository.findCandidates(a.id, TODAY, 3, 0);
@@ -389,8 +387,7 @@ class ExchangeCandidateQueryTest {
         long u1 = user("me");
         Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1, s2), List.of());
         for (int col = 2; col <= 31; col++) {
-            jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                    a.id, "A", "1", String.valueOf(col));
+            insertSeat(a, "A", "1", String.valueOf(col));
             request(user("o" + col), col % 2 == 0 ? s1 : s2, "A", "1", String.valueOf(col), "ANY", null,
                     List.of(s1), List.of(seat("A", "1", "1")));
         }
@@ -456,8 +453,7 @@ class ExchangeCandidateQueryTest {
         long[] sessions = {s1, s2, s3};
         String[] types = {"X", "ANY", "POS", "NEG"};
         for (int col = 2; col <= 25; col++) {
-            jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                    a.id, "A", "1", String.valueOf(col));
+            insertSeat(a, "A", "1", String.valueOf(col));
             String type = types[col % 4];
             Integer amount = null;
             if (type.equals("POS")) { amount = 100; } else if (type.equals("NEG")) { amount = -100; }
@@ -506,7 +502,7 @@ class ExchangeCandidateQueryTest {
     /** a(제안자)·b 사이의 매칭 행을 직접 넣는다. CANCELED 는 CHECK 때문에 canceled_at 도 채운다. */
     private long match(Req a, Req b, String status) {
         jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, canceled_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NOW(6),NOW(6))",
+                        + "status, canceled_at, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,?,?,NOW(6),NOW(6),'ANY','ANY')",
                 a.id, b.id, a.ticketId, b.ticketId, a.userId, b.userId, status,
                 status.equals("CANCELED") ? java.sql.Timestamp.valueOf(BASE) : null);
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
@@ -638,12 +634,12 @@ class ExchangeCandidateQueryTest {
         assertThat(repository.isCandidatePair(a.id, mine.id, TODAY)).isFalse();
         // 상대 요청 CLOSED / 티켓 INACTIVE
         Req closed = request(user("cl"), s1, "A", "2", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
-        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)", a.id, "A", "2", "2");
+        insertSeat(a, "A", "2", "2");
         assertThat(repository.isCandidatePair(a.id, closed.id, TODAY)).isTrue();
         jdbc.update("UPDATE exchange_request SET status='CLOSED' WHERE id=?", closed.id);
         assertThat(repository.isCandidatePair(a.id, closed.id, TODAY)).isFalse();
         Req inactive = request(user("in"), s1, "A", "3", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
-        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)", a.id, "A", "3", "3");
+        insertSeat(a, "A", "3", "3");
         jdbc.update("UPDATE ticket SET status='INACTIVE' WHERE id=?", inactive.ticketId);
         assertThat(repository.isCandidatePair(a.id, inactive.id, TODAY)).isFalse();
         // 내 요청이 CLOSED
@@ -690,26 +686,26 @@ class ExchangeCandidateQueryTest {
         // CANCELED 인데 canceled_at 이 없음
         org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
                 jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CANCELED',NOW(6),NOW(6))",
+                        + "status, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,'CANCELED',NOW(6),NOW(6),'ANY','ANY')",
                         p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
         // 열린 매칭인데 canceled_at 이 있음
         org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
                 jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, canceled_at, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6),NOW(6))",
+                        + "status, canceled_at, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6),NOW(6),'ANY','ANY')",
                         p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
         // 상태 값 오류
         org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
                 jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CLOSED',NOW(6),NOW(6))",
+                        + "status, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,'CLOSED',NOW(6),NOW(6),'ANY','ANY')",
                         p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
         // 같은 요청·같은 티켓끼리
         org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
                 jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6))",
+                        + "status, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6),'ANY','ANY')",
                         p[0].id, p[0].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
         org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
                 jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6))",
+                        + "status, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6),'ANY','ANY')",
                         p[0].id, p[1].id, p[0].ticketId, p[0].ticketId, p[0].userId, p[1].userId));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_match", Integer.class)).isZero();
     }
@@ -735,6 +731,195 @@ class ExchangeCandidateQueryTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_ticket_lock", Integer.class)).as("매칭 삭제 시 잠금도 CASCADE").isZero();
     }
 
+    // ---------- 추가금은 범위(좌석) 단위 (V6) ----------
+
+    @Test
+    void extraIsJudgedPerSeatRangeNotPerRequest() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of());
+        insertSeat(a, "A", "1", "2", "POS", 5000);   // 이 좌석 보유자와는 POS
+        insertSeat(a, "A", "1", "3", "ANY", null);
+        insertSeat(a, "A", "1", "4", "X", null);
+        insertSeat(a, "A", "1", "5", "POS", 3000);
+
+        // b1: 내가 POS 로 원하는 좌석, 상대는 내 좌석을 X 로 원함 -> POS-X 불성립
+        Req b1 = request(user("b1"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of());
+        insertSeat(b1, "A", "1", "1", "X", null);
+        // b2: ANY-X 성립
+        Req b2 = request(user("b2"), s1, "A", "1", "3", "ANY", null, List.of(s1), List.of());
+        insertSeat(b2, "A", "1", "1", "X", null);
+        // b3: 내 쪽 X, 상대 쪽 POS -> X-POS 불성립. 상대의 다른 범위(A열 2행 2번)는 NEG 라도 이 쌍에는 무관
+        Req b3 = request(user("b3"), s1, "A", "1", "4", "ANY", null, List.of(s1), List.of());
+        insertSeat(b3, "A", "1", "1", "POS", 7000);
+        insertSeat(b3, "A", "2", "2", "NEG", -100);
+        // b4: 내 쪽 POS 3000, 상대 쪽 NEG -500 -> 성립. 상대의 다른 범위(POS 100)는 영향 없음
+        Req b4 = request(user("b4"), s1, "A", "1", "5", "ANY", null, List.of(s1), List.of());
+        insertSeat(b4, "A", "1", "1", "NEG", -500);
+        insertSeat(b4, "A", "9", "9", "POS", 100);
+
+        var rows = repository.findCandidates(a.id, TODAY, 20, 0);
+
+        assertThat(rows).extracting(ExchangeCandidateRepository.Row::requestId).containsExactlyInAnyOrder(b2.id, b4.id);
+        var r2 = rows.stream().filter(r -> r.requestId() == b2.id).findFirst().orElseThrow();
+        assertThat(r2.myExtraType()).isEqualTo("ANY");
+        assertThat(r2.extraType()).isEqualTo("X");
+        var r4 = rows.stream().filter(r -> r.requestId() == b4.id).findFirst().orElseThrow();
+        assertThat(r4.myExtraType()).isEqualTo("POS");
+        assertThat(r4.myExtraAmount()).isEqualTo(3000);
+        assertThat(r4.extraType()).isEqualTo("NEG");
+        assertThat(r4.extraAmount()).isEqualTo(-500);
+        assertThat(repository.countCandidates(a.id, TODAY)).isEqualTo(2);
+        // 같은 판정이 쌍 단위에서도 같다
+        assertThat(repository.isCandidatePair(a.id, b1.id, TODAY)).isFalse();
+        assertThat(repository.isCandidatePair(a.id, b3.id, TODAY)).isFalse();
+        assertThat(repository.isCandidatePair(a.id, b4.id, TODAY)).isTrue();
+        // 상대 입장에서도 같은 쌍은 같은 결과(대칭)
+        assertThat(candidateIds(b4)).containsExactly(a.id);
+        assertThat(candidateIds(b1)).isEmpty();
+    }
+
+    @Test
+    void findCandidatePairReturnsBothSidesExtrasForTheSnapshot() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of());
+        insertSeat(a, "A", "1", "2", "POS", 5000);
+        Req b = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of());
+        insertSeat(b, "A", "1", "1", "NEG", -2500);
+
+        var pair = repository.findCandidatePair(a.id, b.id, TODAY).orElseThrow();
+        assertThat(pair.my().type().name()).isEqualTo("POS");
+        assertThat(pair.my().amount()).isEqualTo(5000);
+        assertThat(pair.their().type().name()).isEqualTo("NEG");
+        assertThat(pair.their().amount()).isEqualTo(-2500);
+        // 반대 방향이면 my/their 가 뒤바뀐다
+        var reverse = repository.findCandidatePair(b.id, a.id, TODAY).orElseThrow();
+        assertThat(reverse.my().type().name()).isEqualTo("NEG");
+        assertThat(reverse.their().type().name()).isEqualTo("POS");
+        assertThat(repository.findCandidatePair(a.id, a.id, TODAY)).isEmpty();
+    }
+
+    // ---------- 소프트 삭제 (V7) ----------
+
+    private void softDelete(long requestId) {
+        jdbc.update("UPDATE exchange_request SET status='DELETED', deleted_at=NOW(6) WHERE id=?", requestId);
+    }
+
+    @Test
+    void deletedRequestIsNeverACandidateEvenIfItsChildRowsRemain() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        Req b = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        assertThat(candidateIds(a)).containsExactly(b.id);
+
+        softDelete(b.id);   // 서비스는 하위 행도 지우지만 SQL 은 하위 행이 남아 있어도 DELETED 를 거른다
+
+        assertThat(candidateIds(a)).isEmpty();
+        assertThat(repository.countCandidates(a.id, TODAY)).isZero();
+        assertThat(repository.isCandidatePair(a.id, b.id, TODAY)).isFalse();
+        // 내 요청이 DELETED 이면 조회 자체가 비어 있다
+        Req c = request(user("c"), s1, "A", "1", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "4")));
+        request(user("d"), s1, "A", "1", "4", "ANY", null, List.of(s1), List.of(seat("A", "1", "3")));
+        softDelete(c.id);
+        assertThat(candidateIds(c)).isEmpty();
+    }
+
+    @Test
+    void onlyTheLiveRequestOfATicketIsJoinedAfterDeleteAndRecreate() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        Req old = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        softDelete(old.id);
+        // 같은 티켓에 새 요청 (옛 요청은 DELETED 로 남아 있다)
+        jdbc.update("INSERT INTO exchange_request (ticket_id, status, created_at, updated_at) VALUES (?,'OPEN',NOW(6),NOW(6))", old.ticketId);
+        long fresh = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        jdbc.update("INSERT INTO exchange_want_session (request_id, performance_session_id, priority) VALUES (?,?,1)", fresh, s1);
+        insertSeat(new Req(fresh, old.ticketId, old.userId, "NEG", -700), "A", "1", "1", "NEG", -700);
+
+        var rows = repository.findCandidates(a.id, TODAY, 20, 0);
+
+        assertThat(rows).extracting(ExchangeCandidateRepository.Row::requestId).containsExactly(fresh);
+        assertThat(rows.get(0).extraType()).isEqualTo("NEG");
+        assertThat(repository.countCandidates(a.id, TODAY)).isEqualTo(1);
+    }
+
+    @Test
+    void liveTicketUniqueKeyAllowsOneLiveRequestPerTicketButManyDeleted() {
+        Req r = request(user("me"), s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        String insert = "INSERT INTO exchange_request (ticket_id, status, deleted_at, created_at, updated_at) VALUES (?,?,?,NOW(6),NOW(6))";
+        // 미삭제(OPEN/CLOSED) 요청이 이미 있으면 같은 티켓에 또 만들 수 없다
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class,
+                () -> jdbc.update(insert, r.ticketId(), "OPEN", null));
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class,
+                () -> jdbc.update(insert, r.ticketId(), "CLOSED", null));
+        // 삭제 행은 여러 개 허용
+        jdbc.update(insert, r.ticketId(), "DELETED", java.sql.Timestamp.valueOf(BASE));
+        jdbc.update(insert, r.ticketId(), "DELETED", java.sql.Timestamp.valueOf(BASE));
+        // 삭제하면 새 요청을 만들 수 있고, 삭제 행을 다시 OPEN 으로 되돌려 둘이 되는 것은 막힌다
+        softDelete(r.id());
+        jdbc.update(insert, r.ticketId(), "OPEN", null);
+        long deletedId = jdbc.queryForObject("SELECT id FROM exchange_request WHERE ticket_id=? AND status='DELETED' LIMIT 1", Long.class, r.ticketId());
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class,
+                () -> jdbc.update("UPDATE exchange_request SET status='OPEN', deleted_at=NULL WHERE id=?", deletedId));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_request WHERE ticket_id=? AND live_flag=1", Integer.class, r.ticketId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_request WHERE ticket_id=?", Integer.class, r.ticketId())).isEqualTo(4);
+    }
+
+    @Test
+    void liveTicketUniqueKeyStartsWithLiveFlagAndFkKeepsItsOwnIndex() {
+        // FK 인덱스 규칙: 갱신 컬럼(live_flag)이 들어간 유일 키가 ticket FK 의 인덱스가 되면 안 된다
+        assertThat(jdbc.queryForList("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
+                + "AND TABLE_NAME='exchange_request' AND INDEX_NAME='uk_exchange_request_live_ticket' ORDER BY SEQ_IN_INDEX", String.class))
+                .containsExactly("live_flag", "ticket_id");
+        assertThat(jdbc.queryForList("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
+                + "AND TABLE_NAME='exchange_request' AND INDEX_NAME='idx_exchange_request_ticket' ORDER BY SEQ_IN_INDEX", String.class))
+                .containsExactly("ticket_id");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
+                + "AND TABLE_NAME='exchange_request' AND INDEX_NAME='uk_exchange_request_ticket'", Integer.class)).isZero();
+    }
+
+    @Test
+    void v6V7CheckConstraintsRejectBadRows() {
+        Req r = request(user("me"), s1, "A", "1", "1", "ANY", null, List.of(s1), List.of());
+        String range = "INSERT INTO exchange_want_range (request_id, zone_label, zone_key, row_from, row_to, col_from, col_to, "
+                + "extra_type, extra_amount, sort_order) VALUES (?,'A','A','1','1','1','1',?,?,0)";
+        assertRejected("ck_exchange_want_range_amount", () -> jdbc.update(range, r.id(), "POS", null));
+        assertRejected("ck_exchange_want_range_amount", () -> jdbc.update(range, r.id(), "POS", -5));
+        assertRejected("ck_exchange_want_range_amount", () -> jdbc.update(range, r.id(), "NEG", 5));
+        assertRejected("ck_exchange_want_range_amount", () -> jdbc.update(range, r.id(), "X", 100));
+        // 알 수 없는 유형은 유형 CHECK 와 금액 CHECK 가 모두 걸린다(MySQL 이 어느 쪽을 먼저 보고하든 상관없다)
+        assertRejected("ck_exchange_want_range", () -> jdbc.update(range, r.id(), "FREE", null));
+        assertRejected("extra_type", () -> jdbc.update(range, r.id(), null, null));
+        jdbc.update(range, r.id(), "NEG", -5);
+
+        String seat = "INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key, extra_type, extra_amount) VALUES (?,'A','1','9',?,?)";
+        assertRejected("ck_exchange_want_seat_amount", () -> jdbc.update(seat, r.id(), "POS", 0));
+        assertRejected("ck_exchange_want_seat_amount", () -> jdbc.update(seat, r.id(), "ANY", 1));
+        assertRejected("ck_exchange_want_seat", () -> jdbc.update(seat, r.id(), "pos2", 5));
+        jdbc.update(seat, r.id(), "POS", 1);
+
+        Req other = request(user("o"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of());
+        String match = "INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, status, "
+                + "a_extra_type, a_extra_amount, b_extra_type, b_extra_amount, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',?,?,?,?,NOW(6),NOW(6))";
+        assertRejected("ck_exchange_match_a_extra", () -> jdbc.update(match, r.id(), other.id(), r.ticketId(), other.ticketId(),
+                r.userId(), other.userId(), "POS", null, "X", null));
+        assertRejected("ck_exchange_match_b_extra", () -> jdbc.update(match, r.id(), other.id(), r.ticketId(), other.ticketId(),
+                r.userId(), other.userId(), "X", null, "NEG", 3));
+        assertRejected("a_extra_type", () -> jdbc.update(match, r.id(), other.id(), r.ticketId(), other.ticketId(),
+                r.userId(), other.userId(), null, null, "X", null));
+        jdbc.update(match, r.id(), other.id(), r.ticketId(), other.ticketId(), r.userId(), other.userId(), "POS", 10, "NEG", -10);
+
+        String req = "INSERT INTO exchange_request (ticket_id, status, deleted_at, created_at, updated_at) VALUES (?,?,?,NOW(6),NOW(6))";
+        assertRejected("ck_exchange_request_status", () -> jdbc.update(req, r.ticketId(), "GONE", null));
+        assertRejected("ck_exchange_request_deleted", () -> jdbc.update(req, r.ticketId(), "DELETED", null));
+        assertRejected("ck_exchange_request_deleted", () -> jdbc.update(req, r.ticketId(), "OPEN", java.sql.Timestamp.valueOf(BASE)));
+        jdbc.update(req, r.ticketId(), "DELETED", java.sql.Timestamp.valueOf(BASE));
+    }
+
+    private static void assertRejected(String constraint, Runnable action) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(action::run)
+                .isInstanceOf(org.springframework.dao.DataAccessException.class).hasMessageContaining(constraint);
+    }
+
     // ---------- 도우미 ----------
 
     private long comSelect() {
@@ -755,7 +940,7 @@ class ExchangeCandidateQueryTest {
 
     private record Seat(String zone, String row, String col) {}
 
-    private record Req(long id, long ticketId, long userId) {}
+    private record Req(long id, long ticketId, long userId, String extraType, Integer extraAmount) {}
 
     private static Seat seat(String zone, String row, String col) {
         return new Seat(zone, row, col);
@@ -788,17 +973,27 @@ class ExchangeCandidateQueryTest {
                         + "col_label, col_key, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,'ACTIVE',NOW(6),NOW(6))",
                 sessionId, userId, zone, zone, row, row, col, col);
         long ticketId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        jdbc.update("INSERT INTO exchange_request (ticket_id, extra_type, extra_amount, status, created_at, updated_at) "
-                + "VALUES (?,?,?,'OPEN',NOW(6),NOW(6))", ticketId, extraType, extraAmount);
+        jdbc.update("INSERT INTO exchange_request (ticket_id, status, created_at, updated_at) "
+                + "VALUES (?,'OPEN',NOW(6),NOW(6))", ticketId);
         long requestId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         for (int i = 0; i < wantSessions.size(); i++) {
             jdbc.update("INSERT INTO exchange_want_session (request_id, performance_session_id, priority) VALUES (?,?,?)",
                     requestId, wantSessions.get(i), i + 1);
         }
+        Req req = new Req(requestId, ticketId, userId, extraType, extraAmount);
         for (Seat s : wantSeats) {
-            jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                    requestId, s.zone(), s.row(), s.col());
+            insertSeat(req, s.zone(), s.row(), s.col());
         }
-        return new Req(requestId, ticketId, userId);
+        return req;
+    }
+
+    /** 요청 r 의 희망 좌석 1개를 r 의 추가금(요청 단위로 만든 헬퍼의 값)으로 넣는다. */
+    private void insertSeat(Req r, String zone, String row, String col) {
+        insertSeat(r, zone, row, col, r.extraType(), r.extraAmount());
+    }
+
+    private void insertSeat(Req r, String zone, String row, String col, String extraType, Integer extraAmount) {
+        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key, extra_type, extra_amount) "
+                + "VALUES (?,?,?,?,?,?)", r.id(), zone, row, col, extraType, extraAmount);
     }
 }

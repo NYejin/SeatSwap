@@ -10,13 +10,26 @@ export interface WantSessionItem {
   startsAt: string;
 }
 
-/** 희망 범위 1건. 서버 응답의 열·번은 정규화 값(`03열` -> `3`) */
+/** 희망 범위 1건 (범위마다 추가금이 다르다). 서버 응답의 열·번은 정규화 값(`03열` -> `3`). extraAmount: POS 양수, NEG 음수, X/ANY는 null */
 export interface WantRange {
   zone: string;
   rowFrom: string;
   rowTo: string;
   colFrom: string;
   colTo: string;
+  extraType: ExtraType;
+  extraAmount: number | null;
+}
+
+/** 요청 본문의 범위 1건. extraAmount: POS 양수, NEG 음수, X/ANY는 보내지 않는다 */
+export interface WantRangePayload {
+  zone: string;
+  rowFrom: string;
+  rowTo: string;
+  colFrom: string;
+  colTo: string;
+  extraType: ExtraType;
+  extraAmount?: number;
 }
 
 /** GET /api/exchange/requests/me 항목, POST/PATCH 응답 */
@@ -25,8 +38,6 @@ export interface ExchangeRequest {
   ticketId: number;
   /** OPEN | CLOSED */
   status: string;
-  extraType: ExtraType;
-  extraAmount: number | null;
   wantSessions: WantSessionItem[];
   ranges: WantRange[];
   /** 겹침 제거 후 펼친 희망 좌석 수 */
@@ -35,12 +46,10 @@ export interface ExchangeRequest {
   updatedAt: string;
 }
 
-/** PATCH 본문 (POST는 ticketId 추가). extraAmount: POS 양수, NEG 음수, X/ANY는 보내지 않는다 */
+/** PATCH 본문 (POST는 ticketId 추가). 추가금은 요청 단위가 아니라 범위(ranges[i])마다 있다 */
 export interface ExchangeRequestPayload {
-  extraType: ExtraType;
-  extraAmount?: number;
   wantSessions: { sessionId: number; priority: number }[];
-  ranges: WantRange[];
+  ranges: WantRangePayload[];
 }
 
 export interface ExchangeRequestCreatePayload extends ExchangeRequestPayload {
@@ -65,10 +74,10 @@ export interface ExchangeCandidate {
   nickname: string;
   /** 내 희망 회차 중 상대 티켓 회차의 우선순위 (1이 가장 높음) */
   wantPriority: number;
-  /** 상대의 추가금 */
+  /** 상대 쪽 추가금: 상대 요청에서 내 좌석이 속한 범위의 추가금 */
   extraType: ExtraType;
   extraAmount: number | null;
-  /** 내 추가금 */
+  /** 내 쪽 추가금: 내 요청에서 상대 좌석이 속한 범위의 추가금 */
   myExtraType: ExtraType;
   myExtraAmount: number | null;
   settlementHint: SettlementHint | null;
@@ -78,7 +87,7 @@ export interface ExchangeCandidate {
 export type MatchStatus = "CHATTING" | "RESERVED" | "COMPLETED" | "CANCELED";
 /** A=제안한 쪽, B=제안받은 쪽 */
 export type MatchSide = "A" | "B";
-export type MatchRole = "SENT" | "RECEIVED";
+export type MatchRole = "ALL" | "SENT" | "RECEIVED";
 export type CanceledBy = "ME" | "COUNTERPART" | "SYSTEM";
 
 /** 매칭에 걸린 자리 하나 (목록 응답) */
@@ -110,6 +119,9 @@ export interface ExchangeMatch {
   myExtraAmount: number | null;
   counterpartExtraType: ExtraType;
   counterpartExtraAmount: number | null;
+  /** 요청이 소프트 삭제됐는지 (삭제되면 채팅 단계 매칭은 자동 취소된다) */
+  myRequestDeleted: boolean;
+  counterpartRequestDeleted: boolean;
   myReservedAt: string | null;
   counterpartReservedAt: string | null;
   canceledBy: CanceledBy | null;

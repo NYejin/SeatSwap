@@ -120,6 +120,41 @@ class ExchangeMatchQueryMysqlTest {
     }
 
     @Test
+    void 추가금은_매칭_스냅샷에서_읽고_요청이_삭제되어도_기록과_삭제_표시가_남는다() {
+        // 요청 r2 를 소프트 삭제하고(하위 행도 서비스처럼 정리), 매칭 m1 의 스냅샷은 그대로여야 한다
+        jdbc.update("UPDATE exchange_request SET status='DELETED', deleted_at=NOW(6) WHERE id=?", r2);
+
+        ExchangeMatchResponse mine = service.findOne(u1, m1);
+        ExchangeMatchResponse theirs = service.findOne(u2, m1);
+
+        assertThat(mine.counterpartExtraType()).isEqualTo("POS");
+        assertThat(mine.counterpartExtraAmount()).isEqualTo(30000);
+        assertThat(mine.myRequestDeleted()).isFalse();
+        assertThat(mine.counterpartRequestDeleted()).isTrue();
+        // 상대(b) 입장에서는 방향이 뒤집힌다
+        assertThat(theirs.myRequestDeleted()).isTrue();
+        assertThat(theirs.counterpartRequestDeleted()).isFalse();
+        assertThat(theirs.myExtraType()).isEqualTo("POS");
+        assertThat(theirs.counterpartExtraType()).isEqualTo("X");
+        // 내 매칭 목록에도 삭제된 요청의 매칭이 남는다
+        assertThat(ids(service.findMine(u1, "ALL", null, 0, 20))).contains(m1);
+    }
+
+    @Test
+    void 요청_행의_추가금_변화와_무관하게_스냅샷_값이_나온다() {
+        // 같은 요청의 범위를 지우고 다른 값으로 다시 만들어도(수정) 이미 만들어진 매칭의 값은 변하지 않는다
+        jdbc.update("DELETE FROM exchange_want_seat WHERE request_id IN (?,?)", r1, r2);
+        jdbc.update("DELETE FROM exchange_want_range WHERE request_id IN (?,?)", r1, r2);
+
+        ExchangeMatchResponse r = service.findOne(u1, m1);
+
+        assertThat(r.myExtraType()).isEqualTo("X");
+        assertThat(r.counterpartExtraType()).isEqualTo("POS");
+        assertThat(r.counterpartExtraAmount()).isEqualTo(30000);
+        assertThat(r.myRequestDeleted()).isFalse();
+    }
+
+    @Test
     void 받은_매칭은_내가_b측이고_양쪽_정보가_뒤집혀_나온다() {
         ExchangeMatchResponse r = service.findOne(u1, m2);
 
@@ -320,17 +355,24 @@ class ExchangeMatchQueryMysqlTest {
         return id();
     }
 
+    /** 요청별로 "그 요청이 매칭에서 쓴 추가금"을 기억해 두었다가 match() 가 스냅샷 컬럼에 넣는다(요청 행에는 추가금이 없다). */
+    private final java.util.Map<Long, Object[]> requestExtras = new java.util.HashMap<>();
+
     private long request(long ticketId, String extraType, Integer amount) {
-        jdbc.update("INSERT INTO exchange_request (ticket_id, extra_type, extra_amount, status, created_at, updated_at) "
-                + "VALUES (?, ?, ?, 'OPEN', NOW(6), NOW(6))", ticketId, extraType, amount);
-        return id();
+        jdbc.update("INSERT INTO exchange_request (ticket_id, status, created_at, updated_at) "
+                + "VALUES (?, 'OPEN', NOW(6), NOW(6))", ticketId);
+        long id = id();
+        requestExtras.put(id, new Object[]{extraType, amount});
+        return id;
     }
 
     private long match(long ra, long rb, long ta, long tb, long ua, long ub, String status, Long canceledBy, String updatedAt) {
         boolean canceled = "CANCELED".equals(status);
         jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, status, "
-                + "canceled_by_id, canceled_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?, '2026-10-08 08:00:00', ?)",
-                ra, rb, ta, tb, ua, ub, status, canceledBy, canceled ? "2026-10-08 09:00:00" : null, updatedAt);
+                + "canceled_by_id, canceled_at, created_at, updated_at, a_extra_type, a_extra_amount, b_extra_type, b_extra_amount) "
+                + "VALUES (?,?,?,?,?,?,?,?,?, '2026-10-08 08:00:00', ?, ?,?,?,?)",
+                ra, rb, ta, tb, ua, ub, status, canceledBy, canceled ? "2026-10-08 09:00:00" : null, updatedAt,
+                requestExtras.get(ra)[0], requestExtras.get(ra)[1], requestExtras.get(rb)[0], requestExtras.get(rb)[1]);
         return id();
     }
 }

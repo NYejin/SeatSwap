@@ -32,30 +32,19 @@ public interface ExchangeMatchRepository extends JpaRepository<ExchangeMatch, Lo
             """)
     List<ExchangeMatch> findOpenByPair(@Param("a") Long requestA, @Param("b") Long requestB);
 
-    /** 이 요청이 참여한 열린 매칭이 있는가 (요청 수정·삭제 차단용). */
+    /**
+     * 이 요청이 참여한 열린 매칭(CHATTING·RESERVED)의 id 를 오름차순으로 읽는다(잠금 없음). 요청 수정·삭제가 이 id 들을
+     * {@link #findByIdForUpdate} 로 하나씩 오름차순으로 잠근다. OR 조건의 FOR UPDATE 한 방 쿼리는 인덱스 병합/스캔으로
+     * 무관한 매칭 행까지 잠글 수 있어 쓰지 않는다. 요청 행 잠금을 쥔 뒤라 이 요청의 새 매칭은 생길 수 없다(제안은 요청 행을 잠근다).
+     */
     @Query("""
-            select count(m) > 0 from ExchangeMatch m
+            select m.id from ExchangeMatch m
             where (m.requestAId = :requestId or m.requestBId = :requestId)
               and m.status in (com.seatswap.domain.ExchangeMatchStatus.CHATTING,
                                com.seatswap.domain.ExchangeMatchStatus.RESERVED)
+            order by m.id asc
             """)
-    boolean existsOpenByRequestId(@Param("requestId") Long requestId);
-
-    @Query("""
-            select count(m) > 0 from ExchangeMatch m
-            where (m.requestAId = :requestId or m.requestBId = :requestId)
-              and m.status = com.seatswap.domain.ExchangeMatchStatus.COMPLETED
-            """)
-    boolean existsCompletedByRequestId(@Param("requestId") Long requestId);
-
-    /** 요청을 삭제할 때 FK 때문에 먼저 지워야 하는 취소된 매칭(사용자에게 남길 기록이 없다). 요청 행 잠금 뒤에 호출한다. */
-    @Modifying(flushAutomatically = true)
-    @Query("""
-            delete from ExchangeMatch m
-            where (m.requestAId = :requestId or m.requestBId = :requestId)
-              and m.status = com.seatswap.domain.ExchangeMatchStatus.CANCELED
-            """)
-    int deleteCanceledByRequestId(@Param("requestId") Long requestId);
+    List<Long> findOpenIdsByRequestId(@Param("requestId") Long requestId);
 
     /** 티켓을 내릴 때 그 티켓이 a측인 CHATTING 매칭을 시스템 취소(canceled_by NULL)한다. 티켓 행 잠금 뒤에 호출한다. */
     @Modifying(flushAutomatically = true)

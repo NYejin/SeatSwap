@@ -1,5 +1,7 @@
 package com.seatswap.repository;
 
+import com.seatswap.domain.ExtraType;
+import com.seatswap.domain.WantExtra;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -9,10 +11,12 @@ import java.util.List;
 /**
  * 매칭 후보 조회 (설계 exchange-schema-design.md 2절 SQL). 네이티브 SQL 한 번의 조인으로 닉네임·회차까지 읽어 N+1이 없다.
  * 접근 경로: 내 요청(PK) -> 내 희망 회차 x 내 희망 좌석(exchange_want_seat PK 앞부분) -> 상대 티켓
- * (uk_ticket_active_seat 점조회) -> 상대 요청(uk_exchange_request_ticket) -> 상대 희망 회차/좌석(PK 점조회).
+ * (uk_ticket_active_seat 점조회) -> 상대 요청(uk_exchange_request_live_ticket, live_flag = 1) -> 상대 희망 회차/좌석(PK 점조회).
  *
  * 판정: 같은 공연, 상대 티켓의 회차 ∈ 내 희망 회차, 내 티켓의 회차 ∈ 상대 희망 회차, 상대 좌석 ∈ 내 희망 좌석, 내 좌석 ∈ 상대 희망 좌석,
- * 추가금 유형 호환(불성립은 POS-POS, POS-X 뿐; 금액은 쓰지 않음), 상대 티켓 ACTIVE·상대 요청 OPEN·상대 회차 마감 전·다른 사용자.
+ * 추가금 유형 호환(불성립은 POS-POS, POS-X, X-POS 뿐; 금액은 쓰지 않음), 상대 티켓 ACTIVE·상대 요청 OPEN·상대 회차 마감 전·다른 사용자.
+ * 추가금은 범위 단위다: 좌석 행(wa, wb)이 속한 범위의 추가금을 비정규화해 가지고 있어 조인이 늘지 않는다. 좌석당 행이 하나(겹침은 같은 추가금만
+ * 허용)라 wa·wb 는 점조회이고 결과가 중복되지 않는다. wa = 내 쪽(상대 좌석을 포함한 내 범위), wb = 상대 쪽(내 좌석을 포함한 상대 범위).
  * 정렬: 내 희망 회차 우선순위 -> 상대 요청 최신 -> 요청 id 내림차순. 점수·랭킹 없음.
  */
 @Repository
@@ -23,6 +27,9 @@ public class ExchangeCandidateRepository {
                       Long sessionId, LocalDateTime startsAt, String nickname, int wantPriority,
                       String extraType, Integer extraAmount, String myExtraType, Integer myExtraAmount,
                       LocalDateTime requestedAt) {}
+
+    /** 한 요청 쌍의 양쪽 적용 추가금. my = 내(a) 쪽에서 상대 좌석을 포함한 범위, their = 상대(b) 쪽에서 내 좌석을 포함한 범위. 매칭 스냅샷으로 복사된다. */
+    public record PairExtras(WantExtra my, WantExtra their) {}
 
     /**
      * 판정에 필요한 조인. 목록과 COUNT가 공유한다(조인 순서는 STRAIGHT_JOIN 으로 고정).
@@ -41,7 +48,7 @@ public class ExchangeCandidateRepository {
                                           AND tb.row_key  = wa.row_key
                                           AND tb.col_key  = wa.col_key
                                           AND tb.active_flag = 1
-            JOIN exchange_request b        ON b.ticket_id = tb.id AND b.status = 'OPEN'
+            JOIN exchange_request b        ON b.live_flag = 1 AND b.ticket_id = tb.id AND b.status = 'OPEN'
             JOIN exchange_want_session wsb ON wsb.request_id = b.id
                                           AND wsb.performance_session_id = ta.performance_session_id
             JOIN exchange_want_seat wb     ON wb.request_id = b.id
@@ -58,8 +65,8 @@ public class ExchangeCandidateRepository {
     private static final String WHERE = """
             WHERE a.id = ? AND a.status = 'OPEN'
               AND tb.user_id <> ta.user_id
-              AND NOT (a.extra_type = 'POS' AND b.extra_type IN ('POS', 'X'))
-              AND NOT (b.extra_type = 'POS' AND a.extra_type IN ('POS', 'X'))
+              AND NOT (wa.extra_type = 'POS' AND wb.extra_type IN ('POS', 'X'))
+              AND NOT (wb.extra_type = 'POS' AND wa.extra_type IN ('POS', 'X'))
               AND psb.starts_at >= ?
             """;
 
@@ -71,7 +78,8 @@ public class ExchangeCandidateRepository {
     private static final String SELECT = """
             SELECT STRAIGHT_JOIN b.id AS request_id, tb.id AS ticket_id, tb.zone_label, tb.row_label, tb.col_label,
                    psb.id AS session_id, psb.starts_at, ub.nickname, wsa.priority AS want_priority,
-                   b.extra_type, b.extra_amount, a.extra_type AS my_extra_type, a.extra_amount AS my_extra_amount,
+                   wb.extra_type AS extra_type, wb.extra_amount AS extra_amount,
+                   wa.extra_type AS my_extra_type, wa.extra_amount AS my_extra_amount,
                    b.created_at
             """;
 
@@ -155,12 +163,21 @@ public class ExchangeCandidateRepository {
     }
 
     /**
-     * 요청 쌍 (a, b) 가 서로 후보 조건(같은 공연, 양방향 회차·좌석, 추가금 호환, 상대 티켓 ACTIVE·요청 OPEN·회차 마감 전, 다른 사용자)을
-     * 만족하는가. 후보 목록과 같은 조인·판정(FROM_CORE + WHERE)을 쌍 하나로 좁혀 재사용한다. 열린 매칭·예약 잠금 제외 조건은
+     * 요청 쌍 (a, b) 가 서로 후보 조건(같은 공연, 양방향 회차·좌석, 추가금 호환, 상대 티켓 ACTIVE·요청 OPEN(미삭제)·회차 마감 전, 다른 사용자)을
+     * 만족하는가. 후보 목록과 같은 조인·판정(FROM_CORE + WHERE)을 쌍 하나로 좁혀 재사용한다. 만족하면 양쪽 적용 추가금을 돌려준다(매칭 스냅샷용).
+     * 쌍에는 (내 회차 x 내 좌석) 점조회 행이 최대 1개라 결과는 0 또는 1행이다. 열린 매칭·예약 잠금 제외 조건은
      * 호출하는 서비스가 사유별로 따로 검사하므로 붙이지 않는다.
      */
+    public java.util.Optional<PairExtras> findCandidatePair(Long myRequestId, Long targetRequestId, LocalDateTime todayStart) {
+        String sql = "SELECT STRAIGHT_JOIN wa.extra_type AS my_type, wa.extra_amount AS my_amount, "
+                + "wb.extra_type AS their_type, wb.extra_amount AS their_amount " + FROM_CORE + WHERE + "  AND b.id = ? LIMIT 1";
+        return jdbc.query(sql, (rs, i) -> new PairExtras(
+                new WantExtra(ExtraType.valueOf(rs.getString("my_type")), (Integer) rs.getObject("my_amount")),
+                new WantExtra(ExtraType.valueOf(rs.getString("their_type")), (Integer) rs.getObject("their_amount"))),
+                myRequestId, todayStart, targetRequestId).stream().findFirst();
+    }
+
     public boolean isCandidatePair(Long myRequestId, Long targetRequestId, LocalDateTime todayStart) {
-        String sql = "SELECT STRAIGHT_JOIN 1 " + FROM_CORE + WHERE + "  AND b.id = ? LIMIT 1";
-        return !jdbc.queryForList(sql, Integer.class, myRequestId, todayStart, targetRequestId).isEmpty();
+        return findCandidatePair(myRequestId, targetRequestId, todayStart).isPresent();
     }
 }

@@ -15,7 +15,9 @@ class ExchangeMatchTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 8, 12, 0);
 
     private static ExchangeMatch match() {
-        return ExchangeMatch.propose(900L, 800L, 700L, 600L, 1L, 2L);
+        return ExchangeMatch.propose(900L, 800L, 700L, 600L, 1L, 2L,
+                new com.seatswap.domain.WantExtra(com.seatswap.domain.ExtraType.X, null),
+                new com.seatswap.domain.WantExtra(com.seatswap.domain.ExtraType.POS, 3000));
     }
 
     /** 상태 4종 x 동작 5종 = 20 조합 전부. 서비스 Javadoc의 전이 표와 같아야 한다. */
