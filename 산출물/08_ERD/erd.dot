@@ -1,16 +1,17 @@
-// SeatSwap ERD -- 현재 스키마: V1~V5 (users, performance, performance_session, ticket + 교환 희망 4개 + 매칭·잠금 2개 = 10개 테이블)
+// SeatSwap ERD -- 현재 스키마: V1~V7 (users, performance, performance_session, ticket + 교환 희망 4개 + 매칭·잠금 2개 = 10개 테이블; V6·V7은 컬럼 변경만)
 // 생성: dot -Tpng erd.dot -o ERD.png   (한글 라벨: 나눔고딕 등 한글 폰트 필요)
 // 2026-10-07 방향 전환으로 좌석표 트랙(좌석표·수정 로그·신고·제재 테이블)과 미구현 교환·채팅·후기 테이블을 제외하고 새로 작성.
 // 이전 설계(12~16개 테이블)는 git 태그 archive/seatmap-track-20261007 에 보관되어 있다.
-// 기준: SeatSwap/backend/src/main/resources/db/migration/V1__init_schema.sql + V2__drop_venue_use_venue_name.sql + V3__ticket_seat_columns.sql + V4__exchange_want_tables.sql
+// 기준: SeatSwap/backend/src/main/resources/db/migration/V1__init_schema.sql + V2__drop_venue_use_venue_name.sql + V3__ticket_seat_columns.sql + V4__exchange_want_tables.sql + V5__exchange_match_tables.sql + V6__exchange_extra_per_range.sql + V7__exchange_request_soft_delete.sql
 // 2026-10-08: V3에서 ticket에 구역·열·번(label+key)·status·시각 추가(구현 완료).
 // 2026-10-08: V4(V4__exchange_want_tables.sql)로 exchange_request·exchange_want_range·exchange_want_seat·exchange_want_session 구현 완료(현재). 차단·매칭·잠금·채팅·이력은 예정(V5 이후)
-// 2026-10-08: V5(V5__exchange_match_tables.sql)로 exchange_match·exchange_ticket_lock 구현 완료(현재). user_block·chat_message·exchange_history는 예정(V6 이후)
+// 2026-10-08: V5(V5__exchange_match_tables.sql)로 exchange_match·exchange_ticket_lock 구현 완료(현재). user_block·chat_message·exchange_history는 예정(V8 이후)
+// 2026-10-09: V6(V6__exchange_extra_per_range.sql) = 추가금을 요청에서 희망 범위(want_range)·펼친 좌석(want_seat)으로 이동하고 매칭에 추가금 스냅샷 4컬럼 추가, V7(V7__exchange_request_soft_delete.sql) = 요청 소프트 삭제(DELETED, deleted_at, live_flag 유일 키) 구현 완료(현재, 7차 답변). 예정은 노랑 본문·주황 헤더 = user_block·chat_message·exchange_history(V8 이후). 상세: exchange-schema-design.md 9절
 // 2026-10-08: V2에서 venue 테이블 삭제, 공연장은 performance.venue_name 텍스트(등록 후 수정 불가)
 // 시각 컬럼(created_at, updated_at, starts_at 등)은 모두 KST(Asia/Seoul) 벽시계 시각
 digraph SeatSwapERD {
   graph [rankdir=LR, fontname="NanumGothic,Malgun Gothic", fontsize=12, labelloc=t, nodesep=0.5, ranksep=1.2, splines=true,
-         label=<<B>SeatSwap ERD - 현재 스키마 (V1~V5, 10개 테이블)</B><BR/>시각 컬럼은 모두 KST 기준 / 교환 희망 4개는 V4, 매칭·예약 잠금 2개는 V5 적용 / 차단·채팅·이력은 V6 이후 예정>];
+         label=<<B>SeatSwap ERD - 현재 스키마 (V1~V7, 10개 테이블)</B><BR/>시각 컬럼은 모두 KST 기준 / 교환 희망 4개는 V4, 매칭·예약 잠금 2개는 V5, 범위별 추가금·요청 소프트 삭제는 V6·V7 적용 / 차단·채팅·이력은 V8 이후 예정>];
   node  [shape=plain, fontname="NanumGothic,Malgun Gothic", fontsize=10];
   edge  [fontname="NanumGothic,Malgun Gothic", fontsize=9, dir=both, arrowtail=tee, arrowhead=crow];
 
@@ -18,7 +19,7 @@ digraph SeatSwapERD {
   legend [label=<
     <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#DDDDDD"><B>범례</B></TD></TR>
-      <TR><TD BGCOLOR="#FFFFFF" WIDTH="18"> </TD><TD ALIGN="LEFT">현재 (V1~V5)</TD></TR>
+      <TR><TD BGCOLOR="#FFFFFF" WIDTH="18"> </TD><TD ALIGN="LEFT">현재 (V1~V7)</TD></TR>
       <TR><TD>PK/FK/UK</TD><TD ALIGN="LEFT">키 / 제약</TD></TR>
       <TR><TD>NN</TD><TD ALIGN="LEFT">NOT NULL</TD></TR>
       <TR><TD BGCOLOR="#FFF2CC" WIDTH="18"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">예정 (설계 초안, 미구현)</TD></TR>
@@ -83,17 +84,20 @@ digraph SeatSwapERD {
 
   // ---------- 주석 노드 ----------
   note_scope [shape=note, fontsize=10, label="교환 범위는 공연(Performance) 단위 (2026-10-07):\l같은 공연의 다른 회차 티켓끼리도 교환 가능.\lticket은 회차만 참조하고 공연은 performance_session.performance로 얻는다.\l"];
-  note_design [shape=note, fontsize=10, style=filled, fillcolor="#FFF2CC", label="노란색 = 예정 (V6 이후, 구현 전. 교환 희망 4개는 V4, 매칭·잠금 2개는 V5로 구현 완료)\l상세: 산출물/08_ERD/exchange-schema-design.md\l후기·신뢰도 테이블 없음, 신고는 후속.\l"];
+  note_design [shape=note, fontsize=10, style=filled, fillcolor="#FFF2CC", label="노랑·주황색 = 예정 (V8 이후, 구현 전. 교환 희망 4개는 V4, 매칭·잠금 2개는 V5, 범위별 추가금·소프트 삭제는 V6·V7로 구현 완료)\l상세: 산출물/08_ERD/exchange-schema-design.md\l후기·신뢰도 테이블 없음, 신고는 후속.\l"];
 
-  // ---------- 교환 도메인: 희망 4개 테이블은 현재(V4), 매칭·잠금은 현재(V5), 이하 차단·채팅·이력은 예정(V6 이후) ----------
+  // ---------- 교환 도메인: 희망 4개 테이블은 현재(V4), 매칭·잠금은 현재(V5), 이하 차단·채팅·이력은 예정(V8 이후) ----------
   exchange_request [label=<
     <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>exchange_request</B> (ExchangeRequest, V4)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">id</TD></TR>
-      <TR><TD>FK,UK</TD><TD ALIGN="LEFT">ticket_id → ticket (NN, 티켓당 1개)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">extra_type VARCHAR(10) NN (X/ANY/POS/NEG, bin + CHECK)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">extra_amount INT NULL (X/ANY=NULL, POS &gt; 0, NEG &lt; 0 CHECK, 표시용)</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">status (OPEN/CLOSED, NN, 기본 OPEN, bin + CHECK)</TD></TR>
+      <TR><TD>FK</TD><TD ALIGN="LEFT">ticket_id → ticket (NN, 미삭제 요청은 티켓당 1개)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">(extra_type, extra_amount는 V6에서 제거 — 추가금은 want_range 단위)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">status (OPEN/CLOSED/DELETED, NN, 기본 OPEN, bin + CHECK; V7)</TD></TR>
+      <TR><TD>V7</TD><TD ALIGN="LEFT">DELETED 상태 (소프트 삭제, 후보 제외, 하위 행은 삭제)</TD></TR>
+      <TR><TD>V7</TD><TD ALIGN="LEFT">deleted_at DATETIME(6) NULL (DELETED일 때만 값)</TD></TR>
+      <TR><TD>V7</TD><TD ALIGN="LEFT">live_flag TINYINT 생성 컬럼 (DELETED면 NULL, 아니면 1)</TD></TR>
+      <TR><TD>V7</TD><TD ALIGN="LEFT">uk_exchange_request_live_ticket (live_flag, ticket_id) 로 교체 + FK용 idx_exchange_request_ticket (ticket_id)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">created_at / updated_at (NN)</TD></TR>
     </TABLE>>];
 
@@ -105,6 +109,8 @@ digraph SeatSwapERD {
       <TR><TD> </TD><TD ALIGN="LEFT">zone_label VARCHAR(50) NN / zone_key VARCHAR(50) NN (bin)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">row_from, row_to, col_from, col_to VARCHAR(20) NN (bin, 정규화 키)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">sort_order SMALLINT NN (CHECK &gt;= 0)</TD></TR>
+      <TR><TD>V6</TD><TD ALIGN="LEFT">extra_type VARCHAR(10) NN (X/ANY/POS/NEG, bin + CHECK)</TD></TR>
+      <TR><TD>V6</TD><TD ALIGN="LEFT">extra_amount INT NULL (POS &gt; 0, NEG &lt; 0, 표시용)</TD></TR>
       <TR><TD COLSPAN="2" ALIGN="LEFT">idx_exchange_want_range_request (request_id, sort_order)</TD></TR>
     </TABLE>>];
 
@@ -113,6 +119,7 @@ digraph SeatSwapERD {
       <TR><TD COLSPAN="2" BGCOLOR="#BDD7EE"><B>exchange_want_seat</B> (ExchangeWantSeat, V4, 펼친 좌석)</TD></TR>
       <TR><TD>PK,FK</TD><TD ALIGN="LEFT">request_id → exchange_request (ON DELETE CASCADE)</TD></TR>
       <TR><TD>PK</TD><TD ALIGN="LEFT">zone_key VARCHAR(50), row_key VARCHAR(20), col_key VARCHAR(20) (bin)</TD></TR>
+      <TR><TD>V6</TD><TD ALIGN="LEFT">extra_type VARCHAR(10) NN, extra_amount INT NULL (좌석이 속한 범위의 추가금, PK 불변, 겹침은 서비스가 422 WANT_EXTRA_CONFLICT로 거부)</TD></TR>
     </TABLE>>];
 
   exchange_want_session [label=<
@@ -144,6 +151,7 @@ digraph SeatSwapERD {
       <TR><TD> </TD><TD ALIGN="LEFT">a/b_reserved_at, a/b_completed_at (NULL 허용)</TD></TR>
       <TR><TD>FK</TD><TD ALIGN="LEFT">canceled_by_id → users (NULL=시스템), canceled_at (ck_exchange_match_canceled)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">created_at / updated_at (NN)</TD></TR>
+      <TR><TD>V6</TD><TD ALIGN="LEFT">a_extra_type, a_extra_amount, b_extra_type, b_extra_amount (매칭 시점 적용 추가금 스냅샷)</TD></TR>
       <TR><TD>UK</TD><TD ALIGN="LEFT">uk_exchange_match_open_pair (request_low, request_high, open_flag) 생성 컬럼</TD></TR>
       <TR><TD COLSPAN="2" ALIGN="LEFT">idx: user_a_id / user_b_id (단일 컬럼 FK 인덱스), request_a / request_b, ticket_a / ticket_b</TD></TR>
     </TABLE>>];
@@ -180,12 +188,12 @@ digraph SeatSwapERD {
   users -> ticket [label="1:N 보유자"];
   users -> performance [label="1:N 등록자"];
 
-  ticket -> exchange_request [label="1:1"];
+  ticket -> exchange_request [label="1:N (미삭제 1개, V7)"];
   exchange_request -> exchange_want_range [label="1:N"];
   exchange_request -> exchange_want_seat [label="1:N 펼침"];
   exchange_request -> exchange_want_session [label="1:N"];
   performance_session -> exchange_want_session [label="1:N"];
-  // ---------- 예정 관계 (점선, V6 이후) ----------
+  // ---------- 현재 관계(실선) / 예정 관계(점선, V8 이후) ----------
   exchange_request -> exchange_match [label="1:N (a측/b측)"];
   users -> exchange_match [label="1:N (a/b)"];
   ticket -> exchange_match [label="1:N (a/b)"];

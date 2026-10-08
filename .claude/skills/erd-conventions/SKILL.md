@@ -1,19 +1,21 @@
 ---
 name: erd-conventions
-description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 기준선 V1~V5(users·performance·performance_session·ticket + 교환 희망 4개 + 매칭·잠금 2개 = 10개 테이블)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
+description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA 엔티티 작성) 시 반드시 참고. 현재 기준선 V1~V7(users·performance·performance_session·ticket + 교환 희망 4개 + 매칭·잠금 2개 = 10개 테이블; V6·V7은 범위별 추가금·요청 소프트 삭제 컬럼 변경)과 네이밍·제약 규칙을 담고 있다. 좌석표·수정 로그·제재 설계는 2026-10-07 트랙 동결로 삭제되어 태그 archive/seatmap-track-20261007에 보관된다. 기준 다이어그램은 산출물/08_ERD/erd.dot.
 ---
 
 # ERD 컨벤션
 
-## 기준선 (10개 테이블, V1~V5)
+## 기준선 (10개 테이블, V1~V7)
 
-- V4(2026-10-08, `V4__exchange_want_tables.sql`)로 `exchange_request`(ticket_id UK, extra_type X/ANY/POS/NEG CHECK, extra_amount POS>0·NEG<0·X/ANY=NULL CHECK, status OPEN/CLOSED, bin collation), `exchange_want_range`(zone_label/key, row_from/to·col_from/to 정규화 키, sort_order), `exchange_want_seat`(PK request_id+zone/row/col key), `exchange_want_session`(PK request_id+performance_session_id, priority>=1)가 추가됐다. 자식 3개는 request FK ON DELETE CASCADE. 실제 파일에는 설계 초안에 없던 `ck_exchange_want_range_sort`(sort_order>=0), `ck_exchange_want_session_priority`(priority>=1), `idx_exchange_want_range_request`(request_id, sort_order), `idx_exchange_want_session_session`(performance_session_id)이 추가돼 있다. V5(2026-10-08, `V5__exchange_match_tables.sql`)로 `exchange_match`(request_a/b·ticket_a/b·user_a/b FK, status 4종 CHECK, 시각 컬럼, canceled_by_id FK, 생성 컬럼 request_low/high·open_flag + `uk_exchange_match_open_pair`, `ck_exchange_match_distinct_tickets`·`ck_exchange_match_canceled`, 단일 컬럼 FK 인덱스 user_a/user_b/request_a/request_b/ticket_a/ticket_b)와 `exchange_ticket_lock`(PK ticket_id, match_id, 두 FK ON DELETE CASCADE)이 추가됐다. **규칙: FK 인덱스에 status 같은 갱신 컬럼을 붙이지 않는다(UPDATE 시 부모 행 S 잠금으로 교착, 실제 재현).** 차단·채팅·이력은 V6 이후 예정.
+- V4(2026-10-08, `V4__exchange_want_tables.sql`)로 `exchange_request`(ticket_id UK, extra_type X/ANY/POS/NEG CHECK, extra_amount POS>0·NEG<0·X/ANY=NULL CHECK, status OPEN/CLOSED, bin collation), `exchange_want_range`(zone_label/key, row_from/to·col_from/to 정규화 키, sort_order), `exchange_want_seat`(PK request_id+zone/row/col key), `exchange_want_session`(PK request_id+performance_session_id, priority>=1)가 추가됐다. 자식 3개는 request FK ON DELETE CASCADE. 실제 파일에는 설계 초안에 없던 `ck_exchange_want_range_sort`(sort_order>=0), `ck_exchange_want_session_priority`(priority>=1), `idx_exchange_want_range_request`(request_id, sort_order), `idx_exchange_want_session_session`(performance_session_id)이 추가돼 있다. V5(2026-10-08, `V5__exchange_match_tables.sql`)로 `exchange_match`(request_a/b·ticket_a/b·user_a/b FK, status 4종 CHECK, 시각 컬럼, canceled_by_id FK, 생성 컬럼 request_low/high·open_flag + `uk_exchange_match_open_pair`, `ck_exchange_match_distinct_tickets`·`ck_exchange_match_canceled`, 단일 컬럼 FK 인덱스 user_a/user_b/request_a/request_b/ticket_a/ticket_b)와 `exchange_ticket_lock`(PK ticket_id, match_id, 두 FK ON DELETE CASCADE)이 추가됐다. **규칙: FK 인덱스에 status 같은 갱신 컬럼을 붙이지 않는다(UPDATE 시 부모 행 S 잠금으로 교착, 실제 재현).** 
+- **V6(2026-10-09, `V6__exchange_extra_per_range.sql`, 7차 답변)**: 추가금을 요청 단위에서 희망 범위 단위로 이동. `exchange_want_range`·`exchange_want_seat`에 `extra_type VARCHAR(10) bin NN`·`extra_amount INT NULL`과 CHECK(`extra_type IN (X,ANY,POS,NEG)`, X/ANY는 금액 NULL, POS는 `extra_amount IS NOT NULL AND > 0`, NEG는 `IS NOT NULL AND < 0` — NULL이면 CHECK가 통과하는 문제를 막으려 `IS NOT NULL`을 명시), `exchange_match`에 `a_extra_type/a_extra_amount/b_extra_type/b_extra_amount` 스냅샷 4컬럼(매칭 시점 적용 추가금, 표시용), `exchange_request`의 `extra_type`·`extra_amount`와 관련 CHECK 제거. 요청 단위 값은 그 요청의 모든 범위·좌석·매칭에 복사하는 무손실 이관, 재실행 가능 프로시저(INFORMATION_SCHEMA 가드). 겹치는 범위의 추가금이 다르면 서비스가 422 `WANT_EXTRA_CONFLICT`로 거부(want_seat PK 불변).
+- **V7(2026-10-09, `V7__exchange_request_soft_delete.sql`)**: 요청 소프트 삭제. `exchange_request.status`에 `DELETED`, `deleted_at DATETIME(6) NULL`(`ck_exchange_request_deleted`: DELETED일 때만 값), 생성 컬럼 `live_flag`(DELETED면 NULL, 아니면 1), `uk_exchange_request_ticket` 대신 `uk_exchange_request_live_ticket`(live_flag, ticket_id)로 미삭제 요청만 티켓당 1개 + FK용 단일 컬럼 `idx_exchange_request_ticket`(ticket_id). DELETED 시 want_range/seat/session 행은 서비스가 삭제. 차단·채팅·이력은 V8 이후 예정.
 
 User(users), Venue(venue), Performance(performance), **PerformanceSession**(performance_session), Ticket(ticket)
 
 - 2026-10-07 방향 전환으로 좌석표 트랙과 아직 구현하지 않은 교환·채팅·후기 테이블을 걷어내고 **새 V1 하나**(`V1__init_schema.sql`)로 기준선을 다시 만들었다. 이전 V1~V3(12개+좌석표·수정 로그 테이블)는 삭제됐고, 좌석표 코드와 이전 마이그레이션·erd.dot은 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
 - users에 `role`(USER/ADMIN)이 있다. 공연장은 별도 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다(V2에서 venue 테이블 삭제, 등록 후 수정 불가, 중복 판정 없음). `ticket`은 `performance_session_id`·`user_id`와 V3(2026-10-08 구현)의 텍스트 좌석 `zone/row/col_label+key`·`status`(ACTIVE/INACTIVE)·생성 컬럼 `active_flag`·`created_at/updated_at`를 가지며 `seatmap_id`는 없다(`uk_ticket_active_seat`, `idx_ticket_user_status`, V3는 ticket 행이 있으면 SIGNAL 가드로 실패, 적용된 V 파일은 수정 금지 — 체크섬 불일치). 희망 범위·추가금 등 매칭용 테이블과 교환·채팅 테이블은 V4로 추가한다(설계: exchange-schema-design.md).
-- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성·V2 반영, V3 반영으로 ticket 좌석 컬럼 포함, V4 반영으로 교환 희망 4개 테이블이, V5 반영으로 exchange_match·exchange_ticket_lock이 현재(10개 테이블) + 차단·채팅·이력 V6 이후 예정 노드). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
+- 기준선 다이어그램은 `산출물/08_ERD/erd.dot` (2026-10-08 새로 작성·V2 반영, V3 반영으로 ticket 좌석 컬럼 포함, V4 반영으로 교환 희망 4개 테이블이, V5 반영으로 exchange_match·exchange_ticket_lock이 현재(10개 테이블), V6·V7(범위별 추가금·요청 소프트 삭제) 반영 완료 + 차단·채팅·이력 V8 이후 예정 노드). 새 V 파일이 추가되면 erd.dot도 함께 갱신한다.
 - 새 V1은 빈 DB에서만 실행된다. 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운 뒤 적용한다.
 
 ## 네이밍 규칙
@@ -83,7 +85,7 @@ User(users), Venue(venue), Performance(performance), **PerformanceSession**(perf
     성사되면 교환 후 각 티켓의 `performance_session_id`가 바뀐다 (이 변경을 이력으로 남길지 등은 미정).
     OFFICIAL 좌석표(SeatMapLayout)는 회차와 무관하게 공연장(Venue) 단위로 공유한다. DRAFT 공연은 좌표 대신 본인 좌석 정보 +
     희망 좌석 범위로 매칭하며, 희망 범위에 회차를 포함할 수 있다.
-    2026-10-08 확정: 매칭은 사용자가 원하는(희망) 회차끼리만, 후보는 사용자가 설정한 회차 우선순위로 노출. 추가금은 6차 답변으로 유형(X/ANY/POS/NEG)만 판정(POS–POS·POS–X 불성립, 나머지 성립, 합 규칙 폐기)하고 금액은 후보 목록 참고용 표시. **미정/확인 필요**: X–X·NEG–NEG 판정(기본값 성립), 희망 범위·회차 우선순위의 컬럼 설계 (스키마 변경 시 db-schema-architect 경유).
+    2026-10-08 확정: 매칭은 사용자가 원하는(희망) 회차끼리만, 후보는 사용자가 설정한 회차 우선순위로 노출. 추가금은 6차 답변으로 유형(X/ANY/POS/NEG)만 판정(POS–POS·POS–X 불성립, 나머지 성립, 합 규칙 폐기)하고 금액은 후보 목록 참고용 표시. X–X·NEG–NEG는 2026-10-09 7차 답변으로 성립 확정. **미정/확인 필요**: 신고용 최소 관리자 기능 범위. 희망 범위·회차 우선순위의 컬럼은 V4~V6으로 구현됨(참고) (스키마 변경 시 db-schema-architect 경유).
   - (좌석표 보관) `Ticket.seatMapLayout.venue`는 `Ticket.performanceSession.performance.venue`와 같아야 한다 (서비스에서 검사).
 - (V4 구현 완료) `ExchangeRequest`는 `Ticket`과 1:1 — 티켓 하나당 교환 요청은 하나만 유효.
 - `ExchangeMatch`는 두 개의 `ExchangeRequest`(A측/B측)를 참조하는 매칭(제안) 레코드다. 매칭은 **조건 일치 판정으로 후보를 찾고 양쪽 수락으로
@@ -103,19 +105,19 @@ CLAUDE.md '확인 필요' 목록을 사용자에게 확인한 뒤 진행한다. 
 - `ticket`: 구역·열·번(텍스트, 열 표기는 사용자가 입력하는 숫자/문자) 추가, 기존 `row_label`/`col_label` 문자열의 처리는 설계 시 결정.
   **같은 회차·구역·열·번의 활성 티켓은 1개만** 허용(활성 상태 조건이 있는 유일 제약 필요)하고 사용자당 활성 티켓 수 상한(예 20)은 서비스에서 검사한다. 지정석·1매 제한은 두지 않는다
 - `exchange_request`(가칭): 새 V1에는 아직 없는 테이블이다(이전 설계의 `desired_condition` 문자열·`extra_payment`는 삭제됨). 희망 범위·희망 회차는 자식 테이블로 둔다. Ticket 1:1 유지
-- `exchange_want_range`(가칭): 요청 1:N. 구역, 열 범위, 번 범위, 희망 회차와 **사용자 설정 우선순위**, 추가금(6차 답변: 유형 X/ANY/POS(>0)/NEG(<0)만 매칭 판정에 쓰고 금액은 계산하지 않음; 이전 [추가금 없음]/[제시]와 '두 값의 합 ≤ 0 성립' 규칙은 폐기 — 2026-10-08). 금액은 후보 목록 참고용 표시이며 부호는 **+ = 내가 받을 금액, − = 내가 낼 수 있는 금액**. POS–POS·POS–X 불성립, X–X·NEG–NEG는 기본값 성립(**확인 필요**)
+- `exchange_want_range`(가칭): 요청 1:N. 구역, 열 범위, 번 범위, 희망 회차와 **사용자 설정 우선순위**, 추가금(**7차 답변으로 범위 단위, V6에서 구현**; 6차 답변: 유형 X/ANY/POS(>0)/NEG(<0)만 매칭 판정에 쓰고 금액은 계산하지 않음; 이전 [추가금 없음]/[제시]와 '두 값의 합 ≤ 0 성립' 규칙은 폐기 — 2026-10-08). 금액은 후보 목록 참고용 표시이며 부호는 **+ = 내가 받을 금액, − = 내가 낼 수 있는 금액**. POS–POS·POS–X 불성립, X–X·NEG–NEG 성립(2026-10-09 확정)
 - `exchange_want_seat`(가칭): 범위를 펼친 개별 좌석(파생 데이터, range 1:N). 숫자 열·번 범위(`3~5`)는 펼치고 문자 열은 하나씩 따로 추가(3차 답변 확정). **구역은 필수 별도 입력이며 펼침 대상이 아니다**. 펼침 상한은 지금 두지 않는다(좌석표 기능과 함께 후속). 매칭 조인용 복합 인덱스(공연·구역·열·번)
 - `exchange_match`(가칭): 점수·랭킹·신뢰도 컬럼은 두지 않는다. 흐름은 매칭 → 채팅 → 각자 수락 → 확정/완료이므로 양측 수락 상태를 담는다. **후보 목록에서 사용자가 골라 채팅을 시작**하므로 한 요청(티켓)에 채팅(제안)은 여러 개 동시에 열 수 있고, **동시 '예약'만 티켓당 1개**로 제한한다(예약 정의는 확정: 양쪽 '이 사람과 교환할게요'로 두 티켓 잠금, 제약 방식은 설계 시 결정). 상태 가안: 후보 선택/채팅 → 예약 → 양도 → 각자 완료 → 완료, 또는 취소(양쪽 완료 전 누구든 가능, 상태만 복귀하며 재매칭 불가 아님 — 6차 답변; 재매칭 불가는 차단·신고 때만). 예약으로 잠긴 티켓은 후보에서 제외, 완료 시 티켓 교체는 양쪽 완료 순간 한 번에
 - `user_block`(가칭): 차단자·피차단자 (2026-10-08 새 요구). 차단하면 후보에서 제외되고 채팅 불가. 컬럼·유일 제약은 가안
 - `exchange_history`(가칭): 마이페이지 '교환 이력'용. 완료 시 `(기존 자리) -> (바꾼 자리)`를 **자리 정보 스냅샷**(공연·회차·구역·열·번 텍스트)으로 저장. 완료는 티켓팅 사이트에서 양도 후 각자 '교환 완료'. 완료 시 내 Ticket의 좌석·회차를 새 자리로 갱신하고 스냅샷도 남긴다(3차 답변 확정). 한쪽만 완료 시 알림/만료는 확인 필요(공연 시작 후 자동 마감은 없음)
 - 후기·신뢰도 테이블은 만들지 않는다. 사용자 신고 테이블은 교환 핵심 흐름 이후 설계한다
-- 후보 조회는 쿼리(두 요청의 희망 좌석·소유 좌석 교차 + 희망 회차 + 추가금 유형 조건)로 하고 결과를 저장하지 않는다. **구현 완료(2026-10-08, 스키마 변경 없음 — V4 인덱스로 충분)**: SQL에 `STRAIGHT_JOIN` 힌트를 써 상대 요청 테이블 풀스캔을 막고(요청 1,000건·희망 좌석 83만 행에서 EXPLAIN 전부 const/ref/eq_ref), 같은 쌍 열린 채팅·예약 잠금 제외는 V5에서 `ExchangeCandidateRepository.additionalExclusions()`에 적용했고, 차단 제외는 `user_block`(V6 이후)이 생기면 추가한다(현재 미적용)
+- 후보 조회는 쿼리(두 요청의 희망 좌석·소유 좌석 교차 + 희망 회차 + 추가금 유형 조건)로 하고 결과를 저장하지 않는다. **구현 완료(2026-10-08, 스키마 변경 없음 — V4 인덱스로 충분)**: SQL에 `STRAIGHT_JOIN` 힌트를 써 상대 요청 테이블 풀스캔을 막고(요청 1,000건·희망 좌석 83만 행에서 EXPLAIN 전부 const/ref/eq_ref), 같은 쌍 열린 채팅·예약 잠금 제외는 V5에서 `ExchangeCandidateRepository.additionalExclusions()`에 적용했고, 차단 제외는 `user_block`(V8 이후)이 생기면 추가한다(현재 미적용)
 - (보관) 이전 설계의 `seat_map_layout.zone_name`은 좌석표 전용 값이었다. 좌석표를 다시 붙일 때 구역 등록·자동완성과 함께 연결을 설계한다(그때 "이미지 덩어리 = 이 구역" 지정 단계가 필요)
 
 ## 08_ERD 반영 현황
 
-`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **새 V1 기준으로 새로 작성**했고, 2026-10-08 V2 반영으로 **현재 10개 테이블, V1~V5**(users·performance·performance_session·ticket·exchange_request·exchange_want_range·exchange_want_seat·exchange_want_session·exchange_match·exchange_ticket_lock; V4로 교환 희망 4개, V5로 매칭·예약 잠금 2개 추가, V3로 ticket에 좌석 컬럼·status·유일 제약 반영)이다 (venue 노드·엣지 삭제, performance에 `venue_name VARCHAR(100) NN`).
-교환 희망 4개 테이블과 매칭·잠금 2개는 현재(파란 헤더, V4·V5), 차단·채팅·이력은 예정 노드(주황 헤더, V6+)이며, 삭제된 좌석표·수정 로그·제재 테이블은 그리지 않는다(설계는 태그 `archive/seatmap-track-20261007`의 이전 erd.dot과 마이그레이션에 보관).
+`산출물/08_ERD/erd.dot`은 2026-10-08 방향 전환 후 **새 V1 기준으로 새로 작성**했고, 2026-10-08 V2 반영으로 **현재 10개 테이블, V1~V7**(users·performance·performance_session·ticket·exchange_request·exchange_want_range·exchange_want_seat·exchange_want_session·exchange_match·exchange_ticket_lock; V4로 교환 희망 4개, V5로 매칭·예약 잠금 2개 추가, V6·V7로 범위별 추가금·요청 소프트 삭제(컬럼 변경, 테이블 수 불변), V3로 ticket에 좌석 컬럼·status·유일 제약 반영)이다 (venue 노드·엣지 삭제, performance에 `venue_name VARCHAR(100) NN`).
+교환 희망 4개 테이블과 매칭·잠금 2개는 현재(파란 헤더, V4·V5), 차단·채팅·이력은 예정 노드(주황 헤더, V8+)이며, 삭제된 좌석표·수정 로그·제재 테이블은 그리지 않는다(설계는 태그 `archive/seatmap-track-20261007`의 이전 erd.dot과 마이그레이션에 보관).
 ERD.png는 graphviz `dot`이 있는 환경에서 `dot -Tpng erd.dot -o ERD.png`로 생성한다. 새 V 파일(교환 도메인 등)이 추가되면 erd.dot에 반영하고 이 절을 갱신한다.
 시각 컬럼(created_at/updated_at/starts_at)은 KST 기준이라는 주석을 유지한다.
 
