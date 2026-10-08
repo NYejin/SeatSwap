@@ -43,6 +43,14 @@ export function isPastKst(value: string, now: number = Date.now()): boolean {
   return epoch !== null && epoch < Math.floor(now / MINUTE_MS) * MINUTE_MS;
 }
 
+/**
+ * 회차 마감 여부: 회차 당일이 끝나면(다음날 0시 KST) 마감. 날짜만 비교한다.
+ * 서버(SessionTimePolicy)가 최종 판정하고, 화면은 미리 선택을 막는 용도다.
+ */
+export function isSessionClosed(startsAt: string, now: number = Date.now()): boolean {
+  return startsAt.slice(0, 10) < kstMinuteString(now).slice(0, 10);
+}
+
 /** 지금(또는 주어진 epoch)을 KST 분 단위 "yyyy-MM-ddTHH:mm"으로 (목록 기준 시각 asOf 등) */
 export function kstMinuteString(now: number = Date.now()): string {
   const d = new Date(Math.floor(now / MINUTE_MS) * MINUTE_MS + KST_OFFSET_HOURS * 3_600_000);

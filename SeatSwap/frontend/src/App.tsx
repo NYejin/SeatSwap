@@ -7,6 +7,11 @@ import HomePage from "./pages/HomePage";
 import PerformanceDetailPage from "./pages/PerformanceDetailPage";
 import PerformanceRegisterPage from "./pages/PerformanceRegisterPage";
 import MyPage from "./pages/MyPage";
+import MyTicketsPage from "./pages/MyTicketsPage";
+import TicketRegisterPage from "./pages/TicketRegisterPage";
+import ExchangeRequestFormPage from "./pages/ExchangeRequestFormPage";
+import CandidatesPage from "./pages/CandidatesPage";
+import MatchesPage from "./pages/MatchesPage";
 
 export default function App() {
   return (
@@ -23,6 +28,12 @@ export default function App() {
             <Route path="/performances/new" element={<PerformanceRegisterPage />} />
             <Route path="/performances/:id" element={<PerformanceDetailPage />} />
             <Route path="/me" element={<MyPage />} />
+            {/* 티켓·교환 (FR-03, FR-04) */}
+            <Route path="/tickets" element={<MyTicketsPage />} />
+            <Route path="/tickets/new" element={<TicketRegisterPage />} />
+            <Route path="/tickets/:ticketId/exchange" element={<ExchangeRequestFormPage />} />
+            <Route path="/exchange/requests/:requestId/candidates" element={<CandidatesPage />} />
+            <Route path="/exchange/matches" element={<MatchesPage />} />
           </Route>
         </Route>
       </Routes>
