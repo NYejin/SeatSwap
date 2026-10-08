@@ -18,6 +18,7 @@ digraph SeatSwapERD {
       <TR><TD BGCOLOR="#FFFFFF" WIDTH="18"> </TD><TD ALIGN="LEFT">현재 (V1+V2)</TD></TR>
       <TR><TD>PK/FK/UK</TD><TD ALIGN="LEFT">키 / 제약</TD></TR>
       <TR><TD>NN</TD><TD ALIGN="LEFT">NOT NULL</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC" WIDTH="18"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">예정 (설계 초안, 미구현)</TD></TR>
     </TABLE>>];
 
   // ---------- 회원 ----------
@@ -70,13 +71,118 @@ digraph SeatSwapERD {
 
   // ---------- 주석 노드 ----------
   note_scope [shape=note, fontsize=10, label="교환 범위는 공연(Performance) 단위 (2026-10-07):\l같은 공연의 다른 회차 티켓끼리도 교환 가능.\lticket은 회차만 참조하고 공연은 performance_session.performance로 얻는다.\l"];
-  note_design [shape=note, fontsize=10, label="교환 도메인은 설계 예정:\l티켓 구역 컬럼, 희망 좌석 범위·추가금, 매칭(제안), 채팅, 후기.\l확정 전 기본안은 CLAUDE.md 참고. 새 V 파일로 추가한다.\l"];
+  note_design [shape=note, fontsize=10, style=filled, fillcolor="#FFF2CC", label="노란색 = 예정 (V3~V4 설계 확정안, 구현 전)\l상세: 산출물/08_ERD/exchange-schema-design.md\l후기·신뢰도 테이블 없음, 신고는 후속.\l"];
+
+  // ---------- 예정: 교환 도메인 (V3 ticket 변경, V4 신규) ----------
+  ticket_plan [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>ticket 변경 (예정, V3)</B></TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">zone_label VARCHAR(50) NN / zone_key (bin, 정규화) NN</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">row_label, col_label VARCHAR(20) NN / row_key, col_key (bin) NN</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">status (ACTIVE/INACTIVE) + active_flag (생성 컬럼)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">created_at / updated_at</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">uk_ticket_active_seat (session, zone_key, row_key, col_key, active_flag)</TD></TR>
+    </TABLE>>];
+
+  exchange_request [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_request</B> (예정, V4)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK,UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">ticket_id → ticket (NN, 티켓당 1개)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">extra_type (X/ANY/POS/NEG)  추가금 X/상관없음/받아야만(+)/낼 의향(-)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">extra_amount INT NULL (POS/NEG일 때만, 참고 표시용, 매칭 계산 안 함)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">status (OPEN/CLOSED), created_at, updated_at</TD></TR>
+    </TABLE>>];
+
+  exchange_want_range [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_want_range</B> (예정, V4)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">request_id → exchange_request</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">zone_label/zone_key, row_from/row_to, col_from/col_to, sort_order</TD></TR>
+    </TABLE>>];
+
+  exchange_want_seat [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_want_seat</B> (예정, V4, 펼친 좌석)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK,FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">request_id → exchange_request</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">zone_key, row_key, col_key</TD></TR>
+    </TABLE>>];
+
+  exchange_want_session [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_want_session</B> (예정, V4, 희망 회차)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK,FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">request_id → exchange_request</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK,FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">performance_session_id → performance_session</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">priority SMALLINT NN (사용자 설정)</TD></TR>
+    </TABLE>>];
+
+  user_block [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>user_block</B> (예정, V4)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK,UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">blocker_id → users</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK,UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">blocked_id → users</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">created_at</TD></TR>
+    </TABLE>>];
+
+  exchange_match [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_match</B> (예정, V4)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">request_a_id, request_b_id → exchange_request</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">user_a_id, user_b_id → users</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">status (CHATTING/RESERVED/COMPLETED/CANCELED) 취소=재매칭 가능</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">a/b_reserved_at, a/b_completed_at, canceled_by_id(NULL=시스템), canceled_at</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">(request_low, request_high, open_flag) 생성 컬럼</TD></TR>
+    </TABLE>>];
+
+  exchange_ticket_lock [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_ticket_lock</B> (예정, V4, 예약 잠금)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK,FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">ticket_id → ticket (티켓당 1개)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">match_id → exchange_match</TD></TR>
+    </TABLE>>];
+
+  chat_message [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>chat_message</B> (예정, 최소안)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">match_id → exchange_match</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">sender_id → users</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">content (1000), created_at</TD></TR>
+    </TABLE>>];
+
+  exchange_history [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
+      <TR><TD COLSPAN="2" BGCOLOR="#F4B183"><B>exchange_history</B> (예정, V4, 스냅샷)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">PK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK,UK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">match_id → exchange_match, user_id → users</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">FK</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">counterpart_user_id, ticket_id, performance_id</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC"> </TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">from_/to_ starts_at, zone, row, col (스냅샷), completed_at</TD></TR>
+    </TABLE>>];
 
   // ---------- 관계 ----------
   performance -> performance_session [label="1:N"];
   performance_session -> ticket [label="1:N"];
   users -> ticket [label="1:N 보유자"];
   users -> performance [label="1:N 등록자"];
+
+  // ---------- 예정 관계 (노란색 계열 점선) ----------
+  ticket -> ticket_plan [style=dotted, arrowhead=none, arrowtail=none, color=gray, label="변경(V3)"];
+  ticket -> exchange_request [style=dashed, color="#C55A11", label="1:1"];
+  exchange_request -> exchange_want_range [style=dashed, color="#C55A11", label="1:N"];
+  exchange_request -> exchange_want_seat [style=dashed, color="#C55A11", label="1:N 펼침"];
+  exchange_request -> exchange_want_session [style=dashed, color="#C55A11", label="1:N"];
+  performance_session -> exchange_want_session [style=dashed, color="#C55A11", label="1:N"];
+  exchange_request -> exchange_match [style=dashed, color="#C55A11", label="1:N (a측/b측)"];
+  users -> exchange_match [style=dashed, color="#C55A11", label="1:N (a/b)"];
+  users -> user_block [style=dashed, color="#C55A11", label="1:N 차단자/피차단자"];
+  exchange_match -> exchange_ticket_lock [style=dashed, color="#C55A11", label="1:N (최대 2)"];
+  ticket -> exchange_ticket_lock [style=dashed, color="#C55A11", label="1:0..1"];
+  exchange_match -> chat_message [style=dashed, color="#C55A11", label="1:N"];
+  exchange_match -> exchange_history [style=dashed, color="#C55A11", label="1:N (최대 2)"];
+  users -> exchange_history [style=dashed, color="#C55A11", label="1:N"];
 
   // ---------- 배치 보조 ----------
   legend -> users [style=invis];
