@@ -40,6 +40,12 @@ class RepositoryQueryValidationTest {
     private TicketRepository ticketRepository;
     @Autowired
     private UserRepository userRepository;
+    @Autowired
+    private ExchangeRequestRepository exchangeRequestRepository;
+    @Autowired
+    private ExchangeWantRangeRepository exchangeWantRangeRepository;
+    @Autowired
+    private ExchangeWantSessionRepository exchangeWantSessionRepository;
 
     @Test
     void allRepositoryQueriesParse() {
@@ -47,5 +53,8 @@ class RepositoryQueryValidationTest {
         assertThat(performanceSessionRepository).isNotNull();
         assertThat(ticketRepository).isNotNull();
         assertThat(userRepository).isNotNull();
+        assertThat(exchangeRequestRepository).isNotNull();
+        assertThat(exchangeWantRangeRepository).isNotNull();
+        assertThat(exchangeWantSessionRepository).isNotNull();
     }
 }

@@ -11,6 +11,7 @@ import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
@@ -46,6 +47,7 @@ class TicketServiceTest {
     private TicketRepository ticketRepository;
     private PerformanceSessionRepository sessionRepository;
     private UserRepository userRepository;
+    private ExchangeRequestRepository exchangeRequestRepository;
     private TicketService service;
 
     private final User me = user(1L, "나");
@@ -61,7 +63,8 @@ class TicketServiceTest {
         ticketRepository = mock(TicketRepository.class);
         sessionRepository = mock(PerformanceSessionRepository.class);
         userRepository = mock(UserRepository.class);
-        service = new TicketService(ticketRepository, sessionRepository, userRepository,
+        exchangeRequestRepository = mock(ExchangeRequestRepository.class);
+        service = new TicketService(ticketRepository, sessionRepository, userRepository, exchangeRequestRepository,
                 PerformanceFixtures.timePolicy(), PerformanceFixtures.noopTransactionManager(), 20, 999, 999);
 
         when(userRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(me));
@@ -225,7 +228,7 @@ class TicketServiceTest {
     @Test
     void 내리기는_본인_티켓을_INACTIVE로_바꾼다() {
         Ticket ticket = ticketOf(me, TicketStatus.ACTIVE);
-        when(ticketRepository.findOwned(500L, 1L)).thenReturn(Optional.of(ticket));
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
 
         service.deactivate(1L, 500L);
 
@@ -235,7 +238,7 @@ class TicketServiceTest {
     @Test
     void 이미_내린_티켓은_멱등으로_성공한다() {
         Ticket ticket = ticketOf(me, TicketStatus.INACTIVE);
-        when(ticketRepository.findOwned(500L, 1L)).thenReturn(Optional.of(ticket));
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
 
         service.deactivate(1L, 500L);
 
@@ -244,16 +247,29 @@ class TicketServiceTest {
 
     @Test
     void 남의_티켓이나_없는_티켓은_404() {
-        when(ticketRepository.findOwned(eq(500L), eq(2L))).thenReturn(Optional.empty());
-
+        // 남의 티켓(보유자 1, 요청자 2)은 존재 여부를 드러내지 않도록 없는 티켓과 같은 404
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticketOf(me, TicketStatus.ACTIVE)));
         assertThatThrownBy(() -> service.deactivate(2L, 500L)).isInstanceOf(NotFoundException.class)
                 .hasMessage(TicketService.TICKET_NOT_FOUND_MESSAGE);
+        when(ticketRepository.findByIdForUpdate(501L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.deactivate(1L, 501L)).isInstanceOf(NotFoundException.class);
+        verify(exchangeRequestRepository, never()).closeByTicketId(anyLong(), any());
+    }
+
+    @Test
+    void 내리면_그_티켓의_교환_요청도_닫는다() {
+        Ticket ticket = ticketOf(me, TicketStatus.ACTIVE);
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
+
+        service.deactivate(1L, 500L);
+
+        verify(exchangeRequestRepository).closeByTicketId(eq(500L), any());
     }
 
     private TicketService serviceAt(LocalDateTime now) {
         java.time.Clock clock = java.time.Clock.fixed(now.atZone(PerformanceFixtures.KST).toInstant(),
                 PerformanceFixtures.KST);
-        return new TicketService(ticketRepository, sessionRepository, userRepository,
+        return new TicketService(ticketRepository, sessionRepository, userRepository, exchangeRequestRepository,
                 new SessionTimePolicy(clock), PerformanceFixtures.noopTransactionManager(), 20, 999, 999);
     }
 

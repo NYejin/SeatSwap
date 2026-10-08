@@ -84,11 +84,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
     }
 
-    // 422 — {"code": ..., "message": ...} (예: 활성 티켓 상한 초과)
+    // 422 — {"code": ..., "message": ..., ...details} (예: 활성 티켓 상한 초과, 희망 좌석 상한 초과의 count/limit)
     @ExceptionHandler(BusinessRuleException.class)
-    public ResponseEntity<Map<String, String>> handleBusinessRuleException(BusinessRuleException e) {
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
-                .body(Map.of("code", e.getCode(), "message", e.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleBusinessRuleException(BusinessRuleException e) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", e.getCode());
+        body.put("message", e.getMessage());
+        e.getDetails().forEach(body::putIfAbsent);
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
     }
 
     @ExceptionHandler(SeatSwapException.class)

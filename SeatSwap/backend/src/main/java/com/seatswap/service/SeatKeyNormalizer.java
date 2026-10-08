@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
  * - 제어·서식·제로폭·사설·미할당 문자(\p{C})와 변이 선택자는 제거하지 않고 '사용할 수 없는 문자'로 거부한다(label·key 공통).
  * - 숫자(Nd, 아랍-인도 숫자 등)는 NFKC 뒤 ASCII 0-9로 바꿔 key를 만든다.
  *   정책: 숫자와 문자가 섞인 값(03A)은 그대로 허용하며 앞 0 제거는 순수 숫자일 때만 한다.
+ *   부호 붙은 정수형(-3, +3, U+2212)은 문자로 취급하지 않고 400으로 거부한다.
  * 오류는 필드(zone/row/col)에 귀속된 FieldValidationException(400)으로 던진다.
  */
 public final class SeatKeyNormalizer {
@@ -28,6 +29,8 @@ public final class SeatKeyNormalizer {
     private static final Pattern WHITESPACE = Pattern.compile("[\\s\\p{Z}\\uFEFF]+");
     private static final String FORBIDDEN_SUFFIX = "에 사용할 수 없는 문자가 있습니다.";
     private static final Pattern DIGITS = Pattern.compile("[0-9]+");
+    /** 부호 붙은 정수형(-3, +3, U+2212 마이너스 포함). NFKC 로 전각 부호(－, ＋)는 이미 ASCII 가 된 뒤에 검사한다. */
+    private static final Pattern SIGNED_INTEGER = Pattern.compile("^[-+\u2212][0-9]+$");
     private static final Pattern LEADING_ZEROS = Pattern.compile("^0+(?=[0-9])");
     private static final int MAX_NUMBER_DIGITS = 9;
 
@@ -129,6 +132,10 @@ public final class SeatKeyNormalizer {
             if (key.isEmpty()) {
                 throw new FieldValidationException(field, name + "을 입력해주세요.");
             }
+        }
+        if (SIGNED_INTEGER.matcher(key).matches()) {
+            // 문자 열·번으로 흘러 들어가 범위·좌석 비교가 어긋나는 것을 막는다(티켓 좌석·희망 범위 공통 정책).
+            throw new FieldValidationException(field, name + "은 부호 없는 숫자(1 이상)로 입력해주세요.");
         }
         if (DIGITS.matcher(key).matches()) {
             String digits = LEADING_ZEROS.matcher(key).replaceFirst("");

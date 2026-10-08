@@ -34,3 +34,9 @@ ticket:
   max-active-per-user: ${TICKET_MAX_ACTIVE_PER_USER:20}
   max-row-number: ${TICKET_MAX_ROW_NUMBER:999}
   max-col-number: ${TICKET_MAX_COL_NUMBER:999}
+
+exchange:
+  want:
+    # 교환 희망 조건 서버 안전 상한 (사용자 대상 상한이 아니라 DoS 방어용). 초과하면 422
+    max-seats: ${EXCHANGE_WANT_MAX_SEATS:5000}
+    max-ranges: ${EXCHANGE_WANT_MAX_RANGES:50}
