@@ -1,9 +1,10 @@
 package com.seatswap.service;
 
+import com.seatswap.domain.ExchangeMatch;
+import com.seatswap.domain.ExchangeMatchStatus;
 import com.seatswap.domain.ExchangeRequest;
 import com.seatswap.domain.ExchangeWantRange;
 import com.seatswap.domain.ExchangeWantSession;
-import com.seatswap.domain.ExtraType;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.SeatKey;
 import com.seatswap.domain.Ticket;
@@ -31,26 +32,29 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 교환 희망 조건 등록·조회·수정·삭제 (설계 1.2~1.5). 모두 로그인 사용자 본인 기준이다.
- * - 티켓당 요청 1개: 등록은 티켓 행 FOR UPDATE 로 직렬화한 뒤 사전 조회로 409, 그래도 새는 동시 요청은
- *   uk_exchange_request_ticket 위반을 같은 409 로 바꾼다.
+ * 교환 희망 조건 등록·조회·수정·삭제 (설계 1.2~1.5, 9절). 모두 로그인 사용자 본인 기준이다.
+ * - 티켓당 미삭제(OPEN·CLOSED) 요청 1개: 등록은 티켓 행 FOR UPDATE 로 직렬화한 뒤 사전 조회로 409, 그래도 새는 동시 요청은
+ *   uk_exchange_request_live_ticket 위반을 같은 409 로 바꾼다. 삭제는 소프트 삭제(DELETED)라 삭제 후 같은 티켓에 새 요청을 만들 수 있다.
  * - 수정·삭제는 요청 행 FOR UPDATE 로 직렬화한다. 요청 행 잠금이 트랜잭션의 첫 쿼리여야 한다
  *   (MySQL REPEATABLE READ 는 첫 일관 읽기에서 스냅샷이 고정된다).
- * - 수정은 범위·희망 좌석·희망 회차를 전부 지우고 다시 만든다(한 트랜잭션). 겹치는 범위는 합집합이다.
+ * - 수정은 범위·희망 좌석·희망 회차를 전부 지우고 다시 만든다(한 트랜잭션). 추가금은 범위마다 있고, 겹치는 범위는 합집합이며
+ *   겹치는 좌석의 추가금이 다르면 422 WANT_EXTRA_CONFLICT 다.
+ * - 수정·삭제 시 이 요청의 CHATTING 매칭은 시스템 취소(canceled_by NULL)하고, RESERVED 매칭이 있으면 409 ACTIVE_MATCH_EXISTS 다.
+ *   매칭 행은 id 오름차순으로 잠근다. 삭제는 요청 행을 DELETED 로 두고 범위·좌석·회차 행만 지운다(완료된 매칭이 있어도 허용, 이미 삭제됐으면 멱등).
  * - 권한: 남의 티켓/요청은 403, 없는 id는 404.
- * - 잠금 순서는 항상 티켓 -> 요청이다(TicketService.deactivate 와 같은 순서). 요청 행만 잠그는 경로(update·delete)에서는
+ * - 잠금 순서는 항상 티켓 -> 요청 -> 매칭이다(TicketService.deactivate 와 같은 순서). 요청 행만 잠그는 경로(update·delete)에서는
  *   티켓 행을 잠그지 않는다(티켓은 잠금 없는 일반 읽기). 이 규칙을 깨면 deactivate 와 교착이 난다.
  * - 시계는 SessionTimePolicy(Clock 하나) 만 쓴다. 마감(회차 당일 끝) 정책도 티켓 등록과 같다.
  */
@@ -63,6 +67,8 @@ public class ExchangeRequestService {
     static final String FORBIDDEN_MESSAGE = "본인의 티켓과 교환 요청만 다룰 수 있습니다.";
     static final String REQUEST_ALREADY_EXISTS_CODE = "REQUEST_ALREADY_EXISTS";
     static final String REQUEST_ALREADY_EXISTS_MESSAGE = "이 티켓에는 이미 교환 요청이 있습니다. 기존 요청을 수정해주세요.";
+    static final String REQUEST_DELETED_CODE = "REQUEST_DELETED";
+    static final String REQUEST_DELETED_MESSAGE = "삭제된 교환 요청입니다.";
     static final String TICKET_NOT_ACTIVE_CODE = "TICKET_NOT_ACTIVE";
     static final String TICKET_NOT_ACTIVE_MESSAGE = "내린 티켓에는 교환 요청을 등록하거나 수정할 수 없습니다.";
     static final String OWN_SEAT_CODE = "WANT_INCLUDES_OWN_SEAT";
@@ -76,10 +82,7 @@ public class ExchangeRequestService {
     static final String SESSION_DUPLICATE_MESSAGE = "중복된 회차입니다.";
     static final String ACTIVE_MATCH_CODE = "ACTIVE_MATCH_EXISTS";
     static final String ACTIVE_MATCH_MESSAGE =
-            "진행 중인 매칭(채팅·예약)이 있어 수정하거나 삭제할 수 없습니다. 먼저 매칭을 취소해주세요.";
-    static final String MATCH_HISTORY_CODE = "MATCH_HISTORY_EXISTS";
-    static final String MATCH_HISTORY_MESSAGE = "교환이 완료된 기록이 있는 요청은 삭제할 수 없습니다.";
-    static final String EXTRA_TYPE_MESSAGE = "추가금 유형은 X, ANY, POS, NEG 중 하나여야 합니다.";
+            "예약된 매칭이 있어 수정하거나 삭제할 수 없습니다. 먼저 예약을 취소해주세요.";
 
     private final ExchangeRequestRepository requestRepository;
     private final ExchangeWantRangeRepository rangeRepository;
@@ -118,8 +121,7 @@ public class ExchangeRequestService {
     }
 
     /** 입력 검증(DB 불필요)을 마친 값. */
-    private record Parsed(ExtraType extraType, Integer extraAmount, WantSeatExpander.Result expanded,
-                          List<WantSessionInput> wantSessions) {}
+    private record Parsed(WantSeatExpander.Result expanded, List<WantSessionInput> wantSessions) {}
 
     private record SessionPlan(PerformanceSession session, int priority) {}
 
@@ -136,7 +138,7 @@ public class ExchangeRequestService {
                 if (!locked.isActive()) {
                     throw new BusinessRuleException(TICKET_NOT_ACTIVE_CODE, TICKET_NOT_ACTIVE_MESSAGE);
                 }
-                if (requestRepository.existsByTicket_Id(locked.getId())) {
+                if (requestRepository.existsLiveByTicketId(locked.getId())) {
                     throw requestAlreadyExists();
                 }
                 Ticket ticket = ticketRepository.findWithSessionById(locked.getId()).orElse(locked);
@@ -144,8 +146,7 @@ public class ExchangeRequestService {
                 List<SessionPlan> sessions = resolveSessions(ticket, parsed.wantSessions());
                 ensureNotOwnSeat(ticket, parsed.expanded(), sessions);
 
-                ExchangeRequest saved = requestRepository.saveAndFlush(
-                        ExchangeRequest.create(ticket, parsed.extraType(), parsed.extraAmount()));
+                ExchangeRequest saved = requestRepository.saveAndFlush(ExchangeRequest.create(ticket));
                 return writeChildren(saved, parsed, sessions);
             });
         } catch (DataIntegrityViolationException e) {
@@ -157,7 +158,7 @@ public class ExchangeRequestService {
         }
     }
 
-    /** 내 요청 목록. ticketId 가 있으면 그 티켓의 요청만(내 티켓이 아니면 빈 목록). */
+    /** 내 요청 목록(삭제된 요청 제외). ticketId 가 있으면 그 티켓의 요청만(내 티켓이 아니면 빈 목록). */
     @Transactional(readOnly = true)
     public List<ExchangeRequestResponse> listMine(Long userId, Long ticketId) {
         List<ExchangeRequest> requests = ticketId == null
@@ -187,7 +188,7 @@ public class ExchangeRequestService {
         return result;
     }
 
-    /** 범위·희망 회차·추가금을 통째로 교체한다. 요청 행 FOR UPDATE 로 같은 요청의 동시 수정을 직렬화한다. */
+    /** 범위(추가금 포함)·희망 회차를 통째로 교체한다. 요청 행 FOR UPDATE 로 같은 요청의 동시 수정을 직렬화한다. */
     @Transactional
     public ExchangeRequestResponse update(Long userId, Long requestId, ExchangeRequestUpdateRequest request) {
         Parsed parsed = parse(request);
@@ -199,24 +200,31 @@ public class ExchangeRequestService {
         if (!ticket.isOwnedBy(userId)) {
             throw new ForbiddenException(FORBIDDEN_MESSAGE);
         }
+        if (locked.isDeleted()) {
+            throw new ConflictException(REQUEST_DELETED_MESSAGE, Map.of("code", REQUEST_DELETED_CODE));
+        }
         if (!ticket.isActive() || !locked.isOpen()) {
             throw new BusinessRuleException(TICKET_NOT_ACTIVE_CODE, TICKET_NOT_ACTIVE_MESSAGE);
         }
-        ensureNoActiveProposal(locked);
         ensureTicketSessionOpen(ticket);
         List<SessionPlan> sessions = resolveSessions(ticket, parsed.wantSessions());
         ensureNotOwnSeat(ticket, parsed.expanded(), sessions);
 
+        // 모든 검증이 끝난 뒤에 채팅을 취소한다(검증 실패 시 매칭은 그대로). 예외가 나면 트랜잭션 전체가 롤백된다.
+        LocalDateTime now = timePolicy.now();
+        cancelChattingOrRejectReserved(locked, now);
         seatRepository.deleteByRequestId(locked.getId());
         rangeRepository.deleteByRequestId(locked.getId());
         wantSessionRepository.deleteByRequestId(locked.getId());
-        locked.applyExtra(parsed.extraType(), parsed.extraAmount());
-        locked.touch(timePolicy.now());
+        locked.touch(now);
         requestRepository.saveAndFlush(locked);
         return writeChildren(locked, parsed, sessions);
     }
 
-    /** 하드 삭제. 파생 테이블(range·seat·session)은 DB ON DELETE CASCADE 로 함께 지워진다. */
+    /**
+     * 소프트 삭제: 요청을 DELETED 로 바꾸고 범위·희망 좌석·희망 회차 행을 지운다. 이미 삭제됐다면 멱등으로 아무 일도 하지 않는다(204).
+     * CHATTING 매칭은 시스템 취소하고 RESERVED 매칭이 있으면 409. 완료(COMPLETED)된 매칭이 있어도 삭제할 수 있다(매칭 행·스냅샷은 남는다).
+     */
     @Transactional
     public void delete(Long userId, Long requestId) {
         ExchangeRequest locked = requestRepository.findByIdForUpdate(requestId)
@@ -224,74 +232,44 @@ public class ExchangeRequestService {
         if (!locked.getTicket().isOwnedBy(userId)) {
             throw new ForbiddenException(FORBIDDEN_MESSAGE);
         }
-        ensureNoActiveProposal(locked);
-        // 취소된 매칭은 FK(request_a/b_id) 때문에 먼저 지운다(남길 기록 없음). 완료된 매칭은 기록이므로 삭제를 막는다.
-        if (matchRepository.existsCompletedByRequestId(locked.getId())) {
-            throw new ConflictException(MATCH_HISTORY_MESSAGE, Map.of("code", MATCH_HISTORY_CODE));
+        if (locked.isDeleted()) {
+            return;
         }
-        matchRepository.deleteCanceledByRequestId(locked.getId());
-        requestRepository.delete(locked);
-        requestRepository.flush();
+        LocalDateTime now = timePolicy.now();
+        cancelChattingOrRejectReserved(locked, now);
+        seatRepository.deleteByRequestId(locked.getId());
+        rangeRepository.deleteByRequestId(locked.getId());
+        wantSessionRepository.deleteByRequestId(locked.getId());
+        locked.markDeleted(now);
+        requestRepository.saveAndFlush(locked);
     }
 
     /**
-     * 수정·삭제 전 '진행 중인 제안(채팅·예약)이 있는가' 검사. 이 요청이 a측이든 b측이든 열린 매칭(CHATTING·RESERVED)이 하나라도
-     * 있으면 409 ACTIVE_MATCH_EXISTS. 요청 행 FOR UPDATE 를 잡은 뒤 호출하므로 매칭 생성(propose, 티켓->요청 순 잠금)과
-     * 직렬화된다: 수정이 먼저면 propose 가 바뀐 조건을 보고, propose 가 먼저면 여기서 409 가 난다.
+     * 수정·삭제 전 '진행 중인 매칭' 처리. 이 요청이 a측이든 b측이든 열린 매칭을 id 오름차순으로 잠근 뒤,
+     * RESERVED 가 하나라도 있으면 409 ACTIVE_MATCH_EXISTS, 아니면 CHATTING 을 모두 시스템 취소한다(canceled_by NULL, 예약 잠금은 없다).
+     * 요청 행 FOR UPDATE 를 잡은 뒤 호출하므로 매칭 생성(propose, 티켓->요청 순 잠금)·예약과 직렬화된다: 수정이 먼저면 예약이
+     * 취소된 매칭을 보고 409 MATCH_STATE_CONFLICT, 예약이 먼저면 여기서 409 가 난다. 티켓 행은 잠그지 않는다(잠금 순서 규칙).
      */
-    void ensureNoActiveProposal(ExchangeRequest request) {
-        if (matchRepository.existsOpenByRequestId(request.getId())) {
+    void cancelChattingOrRejectReserved(ExchangeRequest request, LocalDateTime now) {
+        // id 오름차순으로 하나씩 잠그고(PK 점잠금), 잠근 뒤 상태를 다시 확인한다(그 사이 취소·거절됐을 수 있다).
+        List<ExchangeMatch> open = new ArrayList<>();
+        for (Long matchId : matchRepository.findOpenIdsByRequestId(request.getId())) {
+            matchRepository.findByIdForUpdate(matchId).filter(ExchangeMatch::isOpen).ifPresent(open::add);
+        }
+        if (open.stream().anyMatch(m -> m.getStatus() == ExchangeMatchStatus.RESERVED)) {
             throw new ConflictException(ACTIVE_MATCH_MESSAGE, Map.of("code", ACTIVE_MATCH_CODE));
+        }
+        for (ExchangeMatch m : open) {
+            m.cancel(null, now);
+            matchRepository.saveAndFlush(m);
         }
     }
 
     // ---------------------------------------------------------------- 입력 검증
 
+    /** 범위·추가금 검증 오류(ranges[i].*)는 expander 가 모아서 한 번에 던진다. */
     private Parsed parse(ExchangeRequestUpdateRequest request) {
-        Map<String, String> errors = new LinkedHashMap<>();
-        ExtraType type = parseExtraType(errors, request.extraType(), request.extraAmount());
-        if (!errors.isEmpty()) {
-            // 추가금 오류가 있어도 범위 오류를 함께 보여주기 위해 범위 검증을 이어서 한다.
-            try {
-                expander.expand(request.ranges());
-            } catch (FieldValidationException e) {
-                errors.putAll(e.getErrors());
-            }
-            throw FieldValidationException.ofAll(errors);
-        }
-        WantSeatExpander.Result expanded = expander.expand(request.ranges());
-        return new Parsed(type, request.extraAmount(), expanded, request.wantSessions());
-    }
-
-    private static ExtraType parseExtraType(Map<String, String> errors, String raw, Integer amount) {
-        ExtraType type;
-        try {
-            type = raw == null ? null : ExtraType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            type = null;
-        }
-        if (type == null) {
-            errors.put("extraType", EXTRA_TYPE_MESSAGE);
-            return null;
-        }
-        switch (type) {
-            case X, ANY -> {
-                if (amount != null) {
-                    errors.put("extraAmount", "추가금 X/상관없음에서는 금액을 입력할 수 없습니다.");
-                }
-            }
-            case POS -> {
-                if (amount == null || amount <= 0) {
-                    errors.put("extraAmount", "받을 금액은 0보다 큰 금액을 입력해주세요.");
-                }
-            }
-            case NEG -> {
-                if (amount == null || amount >= 0) {
-                    errors.put("extraAmount", "낼 금액은 0보다 작은 금액(예: -10000)을 입력해주세요.");
-                }
-            }
-        }
-        return type;
+        return new Parsed(expander.expand(request.ranges()), request.wantSessions());
     }
 
     /** 희망 회차: 존재해야 하고, 내 티켓과 같은 공연이어야 하며, 중복이 없어야 한다 (본인 티켓의 회차도 가능). */
@@ -341,7 +319,7 @@ public class ExchangeRequestService {
         boolean onlyMySession = sessions.size() == 1
                 && sessions.get(0).session().getId().equals(ticket.getPerformanceSession().getId());
         if (onlyMySession
-                && expanded.seats().contains(new SeatKey(ticket.getZoneKey(), ticket.getRowKey(), ticket.getColKey()))) {
+                && expanded.seats().containsKey(new SeatKey(ticket.getZoneKey(), ticket.getRowKey(), ticket.getColKey()))) {
             throw new BusinessRuleException(OWN_SEAT_CODE, OWN_SEAT_MESSAGE);
         }
     }
@@ -355,7 +333,7 @@ public class ExchangeRequestService {
         int order = 0;
         for (WantSeatExpander.Range r : parsed.expanded().ranges()) {
             ranges.add(ExchangeWantRange.create(requestId, r.zoneLabel(), r.zoneKey(),
-                    r.rowFrom(), r.rowTo(), r.colFrom(), r.colTo(), order++));
+                    r.rowFrom(), r.rowTo(), r.colFrom(), r.colTo(), r.extra(), order++));
         }
         rangeRepository.saveAll(ranges);
         wantSessionRepository.saveAll(sessions.stream()
@@ -381,11 +359,10 @@ public class ExchangeRequestService {
                 r.getId(),
                 r.getTicket().getId(),
                 r.getStatus().name(),
-                r.getExtraType().name(),
-                r.getExtraAmount(),
                 sessions,
                 ranges.stream().map(w -> new ExchangeRequestResponse.WantRangeItem(
-                        w.getZoneLabel(), w.getRowFrom(), w.getRowTo(), w.getColFrom(), w.getColTo())).toList(),
+                        w.getZoneLabel(), w.getRowFrom(), w.getRowTo(), w.getColFrom(), w.getColTo(),
+                        w.getExtraType().name(), w.getExtraAmount())).toList(),
                 seatCount,
                 r.getCreatedAt(),
                 r.getUpdatedAt());

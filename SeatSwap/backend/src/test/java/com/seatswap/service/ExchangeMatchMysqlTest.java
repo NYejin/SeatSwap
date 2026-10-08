@@ -172,7 +172,7 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 취소된_매칭이_있어도_요청을_삭제할_수_있다() {
+    void 취소된_매칭이_있어도_요청을_삭제할_수_있고_매칭_기록과_스냅샷은_남는다() {
         Party p = party(1, "Z1");
         Party q = party(2, "Z1");
         mutual(p, q);
@@ -181,8 +181,84 @@ class ExchangeMatchMysqlTest {
 
         requestService.delete(p.userId, p.requestId);
 
-        assertThat(count("SELECT COUNT(*) FROM exchange_match")).isZero();
-        assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE id = " + p.requestId)).isZero();
+        assertThat(count("SELECT COUNT(*) FROM exchange_match")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT a_extra_type FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("ANY");
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_request WHERE id=?", String.class, p.requestId)).isEqualTo("DELETED");
+        assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE id = " + p.requestId + " AND deleted_at IS NOT NULL AND live_flag IS NULL"))
+                .isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM exchange_want_seat WHERE request_id = " + p.requestId)).isZero();
+        // 삭제 멱등
+        requestService.delete(p.userId, p.requestId);
+    }
+
+    @Test
+    void 삭제하면_CHATTING_매칭은_시스템_취소되고_완료_매칭이_있어도_삭제된다() {
+        Party p = party(1, "Z1");
+        Party q = party(2, "Z1");
+        mutual(p, q);
+        long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+
+        requestService.delete(q.userId, q.requestId);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject("SELECT canceled_by_id FROM exchange_match WHERE id=?", Long.class, m)).isNull();
+        // COMPLETED 매칭(교환 완료 기능 전이므로 직접 상태를 만든다)이 있어도 p 의 요청 삭제는 허용된다
+        jdbc.update("UPDATE exchange_match SET status='COMPLETED', canceled_at=NULL, canceled_by_id=NULL WHERE id=?", m);
+        requestService.delete(p.userId, p.requestId);
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_request WHERE id=?", String.class, p.requestId)).isEqualTo("DELETED");
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void 삭제한_뒤_같은_티켓에_새_요청을_만들_수_있고_삭제된_요청은_후보에서_빠진다() {
+        Party p = party(1, "Z1");
+        Party q = party(2, "Z1");
+        mutual(p, q);
+        requestService.delete(q.userId, q.requestId);
+
+        assertThatThrownBy(() -> matchService.propose(p.userId, p.requestId, q.requestId)).isInstanceOf(BusinessRuleException.class);
+
+        var created = requestService.create(q.userId, new com.seatswap.dto.request.ExchangeRequestCreateRequest(q.ticketId,
+                List.of(new WantSessionInput(session1, 1)),
+                List.of(new WantRangeInput("Z1", "1", "1", "1", "1", "NEG", -1000))));
+        assertThat(created.id()).isNotEqualTo(q.requestId);
+        assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE ticket_id = " + q.ticketId)).isEqualTo(2);
+        assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE ticket_id = " + q.ticketId + " AND live_flag = 1")).isEqualTo(1);
+        assertThat(requestService.listMine(q.userId, q.ticketId)).extracting(r -> r.id()).containsExactly(created.id());
+    }
+
+    @Test
+    void 티켓을_내려도_삭제된_요청은_CLOSED로_되살아나지_않는다() {
+        Party p = party(1, "Z1");
+        requestService.delete(p.userId, p.requestId);
+
+        ticketService.deactivate(p.userId, p.ticketId);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_request WHERE id=?", String.class, p.requestId)).isEqualTo("DELETED");
+    }
+
+    @Test
+    void 요청_수정이_범위별_추가금을_범위와_좌석에_싣는다() {
+        Party p = party(1, "Z1");
+        requestService.update(p.userId, p.requestId, new ExchangeRequestUpdateRequest(
+                List.of(new WantSessionInput(session1, 1)),
+                List.of(new WantRangeInput("Z1", "1", "1", "2", "3", "POS", 5000),
+                        new WantRangeInput("Z1", "1", "1", "5", "5", "NEG", -2000))));
+
+        assertThat(jdbc.queryForList("SELECT col_key, extra_type, extra_amount FROM exchange_want_seat WHERE request_id = ? ORDER BY col_key",
+                p.requestId)).extracting(r -> r.get("col_key") + ":" + r.get("extra_type") + ":" + r.get("extra_amount"))
+                .containsExactly("2:POS:5000", "3:POS:5000", "5:NEG:-2000");
+        assertThat(jdbc.queryForList("SELECT extra_type, extra_amount FROM exchange_want_range WHERE request_id = ? ORDER BY sort_order",
+                p.requestId)).extracting(r -> r.get("extra_type") + ":" + r.get("extra_amount"))
+                .containsExactly("POS:5000", "NEG:-2000");
+
+        // 겹치는 좌석의 추가금이 다르면 422 이고 기존 데이터는 그대로
+        assertThatThrownBy(() -> requestService.update(p.userId, p.requestId, new ExchangeRequestUpdateRequest(
+                List.of(new WantSessionInput(session1, 1)),
+                List.of(new WantRangeInput("Z1", "1", "1", "2", "3", "POS", 5000),
+                        new WantRangeInput("Z1", "1", "1", "3", "4", "X", null)))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> assertThat(e.getCode()).isEqualTo("WANT_EXTRA_CONFLICT"));
+        assertThat(count("SELECT COUNT(*) FROM exchange_want_seat WHERE request_id = " + p.requestId)).isEqualTo(3);
     }
 
     // ------------------------------------------------------------------ 경쟁
@@ -303,63 +379,207 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 요청_수정과_제안이_동시에_와도_열린_매칭이_있는_요청은_수정되지_않는다() throws Exception {
+    void 요청_수정과_제안이_동시에_와도_수정은_항상_성공하고_열린_매칭이_남지_않는다() throws Exception {
+        int proposedThenCanceled = 0;
+        int updatedFirst = 0;
         for (int round = 0; round < ROUNDS; round++) {
+            final int finalRound = round;
             Party p = party(1, "Z" + (++zoneSeq));
             Party q = party(2, "Z" + zoneSeq);
             mutual(p, q);
-            ExchangeRequestUpdateRequest patch = new ExchangeRequestUpdateRequest("ANY", null,
+            ExchangeRequestUpdateRequest patch = new ExchangeRequestUpdateRequest(
                     List.of(new WantSessionInput(session1, 1)),
-                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "9", "9")));   // p 의 좌석(1번)을 더 이상 원하지 않는다
+                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "9", "9", "ANY", null)));   // p 의 좌석(1번)을 더 이상 원하지 않는다
             List<Callable<Object>> calls = new ArrayList<>(List.of(
                     () -> matchService.propose(p.userId, p.requestId, q.requestId),
-                    () -> requestService.update(q.userId, q.requestId, patch)));
+                    () -> {
+                        Thread.sleep((long) (finalRound % 5) * 10);   // 고정 지연: 제안이 먼저인 라운드와 수정이 먼저인 라운드가 모두 나온다
+                        return requestService.update(q.userId, q.requestId, patch);
+                    }));
+            Collections.shuffle(calls);
+            List<Object> results = runConcurrently(calls);
+
+            assertThat(results).as("round " + round).allSatisfy(res -> assertThat(
+                    res instanceof ExchangeMatchResponse || res instanceof BusinessRuleException
+                            || res instanceof com.seatswap.dto.response.ExchangeRequestResponse)
+                    .as(String.valueOf(res)).isTrue());
+            assertThat(results).as("수정은 CHATTING 만 있으면 항상 성공한다 " + results)
+                    .anyMatch(x -> x instanceof com.seatswap.dto.response.ExchangeRequestResponse);
+            boolean proposed = results.stream().anyMatch(x -> x instanceof ExchangeMatchResponse);
+            assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE open_flag = 1")).as("round " + round).isZero();
+            if (proposed) {
+                proposedThenCanceled++;
+                assertThat(jdbc.queryForObject("SELECT status FROM exchange_match", String.class)).isEqualTo("CANCELED");
+                assertThat(jdbc.queryForObject("SELECT canceled_by_id FROM exchange_match", Long.class)).as("시스템 취소").isNull();
+            } else {
+                updatedFirst++;
+                assertThat(results).anyMatch(x -> x instanceof BusinessRuleException);
+                assertThat(count("SELECT COUNT(*) FROM exchange_match")).isZero();
+            }
+            jdbc.update("DELETE FROM exchange_match");
+        }
+        System.out.println("[update-vs-propose] proposedThenCanceled=" + proposedThenCanceled + " updatedFirst=" + updatedFirst);
+        assertThat(proposedThenCanceled).as("제안이 먼저 이기는 라운드가 있어야 한다").isPositive();
+        assertThat(updatedFirst).as("수정이 먼저 이기는 라운드가 있어야 한다").isPositive();
+        assertInvariants();
+    }
+
+    @Test
+    void 요청_수정과_양쪽_수락이_동시에_와도_예약된_매칭의_요청은_수정되지_않는다() throws Exception {
+        int reservedWins = 0;
+        int updateWins = 0;
+        for (int round = 0; round < DEACTIVATE_ROUNDS; round++) {
+            final int finalRound = round;
+            Party p = party(1, "Z" + (++zoneSeq));
+            Party q = party(2, "Z" + zoneSeq);
+            mutual(p, q);
+            long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+            ExchangeRequestUpdateRequest patch = new ExchangeRequestUpdateRequest(
+                    List.of(new WantSessionInput(session1, 1)),
+                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "1", "1", "NEG", -500)));
+            List<Callable<Object>> calls = new ArrayList<>(List.of(
+                    () -> matchService.accept(p.userId, m), () -> matchService.accept(q.userId, m),
+                    () -> {
+                        Thread.sleep((long) (finalRound % 8) * 6);   // 고정 지연 0~42ms: 양쪽 승부가 모두 나온다
+                        return requestService.update(q.userId, q.requestId, patch);
+                    }));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
 
             assertThat(results).as("round " + round).allSatisfy(res -> assertThat(
                     res instanceof ExchangeMatchResponse || res instanceof ConflictException
-                            || res instanceof BusinessRuleException || res instanceof com.seatswap.dto.response.ExchangeRequestResponse)
+                            || res instanceof com.seatswap.dto.response.ExchangeRequestResponse)
                     .as(String.valueOf(res)).isTrue());
-            boolean proposed = results.stream().anyMatch(x -> x instanceof ExchangeMatchResponse);
             boolean updated = results.stream().anyMatch(x -> x instanceof com.seatswap.dto.response.ExchangeRequestResponse);
-            // 수정이 이기면 제안은 후보 조건 불충족 422, 제안이 이기면 수정은 409. 둘 다 성공하는 일은 없어야 한다.
-            assertThat(proposed ^ updated).as("round " + round + " 제안 성공과 수정 성공은 동시에 일어나지 않는다 " + results).isTrue();
-            assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE open_flag = 1")).isEqualTo(proposed ? 1 : 0);
+            String status = jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m);
             if (updated) {
-                assertThat(results).anyMatch(x -> x instanceof BusinessRuleException);
+                updateWins++;
+                assertThat(status).as("round " + round + " 수정이 성공했다면 매칭은 취소 " + results).isEqualTo("CANCELED");
+                assertThat(locks()).isZero();
             } else {
-                assertThat(results).anyMatch(x -> x instanceof ConflictException);
+                reservedWins++;
+                assertThat(status).as("round " + round + " 수정이 409 였다면 매칭은 예약 " + results).isEqualTo("RESERVED");
+                assertThat(results).anyMatch(x -> x instanceof ConflictException c && "ACTIVE_MATCH_EXISTS".equals(c.getDetails().get("code")));
+                assertThat(locks()).isEqualTo(2);
+            }
+            jdbc.update("DELETE FROM exchange_ticket_lock");
+            jdbc.update("DELETE FROM exchange_match");
+        }
+        System.out.println("[update-vs-accept] updateWins=" + updateWins + " reservedWins=" + reservedWins);
+        assertThat(updateWins).as("수정이 이기는 라운드가 있어야 한다").isPositive();
+        assertThat(reservedWins).as("예약이 이기는 라운드가 있어야 한다").isPositive();
+        assertInvariants();
+    }
+
+    @Test
+    void 같은_매칭을_건드리는_양쪽_요청의_동시_수정과_삭제도_교착없이_한번만_취소한다() throws Exception {
+        for (int round = 0; round < ROUNDS * 2; round++) {
+            Party p = party(1, "Z" + (++zoneSeq));
+            Party q = party(2, "Z" + zoneSeq);
+            mutual(p, q);
+            long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+            ExchangeRequestUpdateRequest pPatch = new ExchangeRequestUpdateRequest(List.of(new WantSessionInput(session1, 1)),
+                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "8", "8", "NEG", -100)));
+            ExchangeRequestUpdateRequest qPatch = new ExchangeRequestUpdateRequest(List.of(new WantSessionInput(session1, 1)),
+                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "9", "9", "POS", 100)));
+            Callable<Object> pCall;
+            Callable<Object> qCall;
+            switch (round % 3) {
+                case 0 -> {   // 양쪽 수정
+                    pCall = () -> requestService.update(p.userId, p.requestId, pPatch);
+                    qCall = () -> requestService.update(q.userId, q.requestId, qPatch);
+                }
+                case 1 -> {   // 양쪽 삭제
+                    pCall = () -> { requestService.delete(p.userId, p.requestId); return "deleted"; };
+                    qCall = () -> { requestService.delete(q.userId, q.requestId); return "deleted"; };
+                }
+                default -> {  // 한쪽 수정, 한쪽 삭제
+                    pCall = () -> requestService.update(p.userId, p.requestId, pPatch);
+                    qCall = () -> { requestService.delete(q.userId, q.requestId); return "deleted"; };
+                }
+            }
+            List<Callable<Object>> calls = new ArrayList<>(List.of(pCall, qCall));
+            Collections.shuffle(calls);
+            List<Object> results = runConcurrently(calls);
+
+            assertThat(results).as("round " + round).allSatisfy(res -> assertThat(
+                    "deleted".equals(res) || res instanceof com.seatswap.dto.response.ExchangeRequestResponse)
+                    .as(String.valueOf(res)).isTrue());
+            assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("CANCELED");
+            assertThat(jdbc.queryForObject("SELECT canceled_by_id FROM exchange_match WHERE id=?", Long.class, m)).isNull();
+            assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE open_flag = 1")).isZero();
+            assertThat(locks()).isZero();
+            if (round % 3 != 0) {
+                assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE status = 'DELETED' AND id IN ("
+                        + p.requestId + "," + q.requestId + ")")).isEqualTo(round % 3 == 1 ? 2 : 1);
             }
         }
         assertInvariants();
     }
 
+    @Test
+    void 삭제와_새_요청_생성이_동시에_와도_미삭제_요청은_티켓당_하나이고_교착이_없다() throws Exception {
+        for (int round = 0; round < ROUNDS; round++) {
+            Party p = party(1, "Z" + (++zoneSeq));
+            var createBody = new com.seatswap.dto.request.ExchangeRequestCreateRequest(p.ticketId,
+                    List.of(new WantSessionInput(session1, 1)),
+                    List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "8", "8", "X", null)));
+            List<Callable<Object>> calls = new ArrayList<>(List.of(
+                    () -> { requestService.delete(p.userId, p.requestId); return "deleted"; },
+                    () -> requestService.create(p.userId, createBody),
+                    () -> requestService.create(p.userId, createBody)));
+            Collections.shuffle(calls);
+            List<Object> results = runConcurrently(calls);
+
+            assertThat(results).as("round " + round).allSatisfy(res -> assertThat(
+                    "deleted".equals(res) || res instanceof com.seatswap.dto.response.ExchangeRequestResponse
+                            || res instanceof ConflictException).as(String.valueOf(res)).isTrue());
+            assertThat(results).contains("deleted");
+            assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE ticket_id = " + p.ticketId + " AND live_flag = 1"))
+                    .as("round " + round + " " + results).isLessThanOrEqualTo(1);
+            long created = results.stream().filter(x -> x instanceof com.seatswap.dto.response.ExchangeRequestResponse).count();
+            assertThat(created).as("round " + round).isLessThanOrEqualTo(1);
+            assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE ticket_id = " + p.ticketId)).isEqualTo(1 + created);
+        }
+        assertInvariants();
+    }
 
     @Test
-    void 제안과_상대의_요청_삭제가_동시에_와도_둘_중_하나만_성공하고_FK_오류가_없다() throws Exception {
+    void 제안과_상대의_요청_삭제가_동시에_와도_삭제는_항상_성공하고_열린_매칭이_남지_않는다() throws Exception {
+        int proposedThenCanceled = 0;
+        int deletedFirst = 0;
         for (int round = 0; round < ROUNDS; round++) {
+            final int finalRound = round;
             Party p = party(1, "Z" + (++zoneSeq));
             Party q = party(2, "Z" + zoneSeq);
             mutual(p, q);
             List<Callable<Object>> calls = new ArrayList<>(List.of(
                     () -> matchService.propose(p.userId, p.requestId, q.requestId),
-                    () -> { requestService.delete(q.userId, q.requestId); return "deleted"; }));
+                    () -> {
+                        Thread.sleep((long) (finalRound % 5) * 10);   // 고정 지연 0~40ms
+                        requestService.delete(q.userId, q.requestId);
+                        return "deleted";
+                    }));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
 
+            assertThat(results).contains("deleted");
+            assertThat(jdbc.queryForObject("SELECT status FROM exchange_request WHERE id=?", String.class, q.requestId)).isEqualTo("DELETED");
+            assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE open_flag = 1")).as("round " + round + " " + results).isZero();
             boolean proposed = results.stream().anyMatch(x -> x instanceof ExchangeMatchResponse);
-            boolean deleted = results.contains("deleted");
-            assertThat(proposed ^ deleted).as("round " + round + " " + results).isTrue();
-            assertThat(count("SELECT COUNT(*) FROM exchange_request WHERE id = " + q.requestId)).isEqualTo(deleted ? 0 : 1);
-            assertThat(count("SELECT COUNT(*) FROM exchange_match")).isEqualTo(proposed ? 1 : 0);
-            if (deleted) {
-                assertThat(results).anyMatch(x -> x instanceof NotFoundException);
+            if (proposed) {
+                proposedThenCanceled++;
+                assertThat(jdbc.queryForObject("SELECT status FROM exchange_match", String.class)).isEqualTo("CANCELED");
+                assertThat(jdbc.queryForObject("SELECT canceled_by_id FROM exchange_match", Long.class)).isNull();
             } else {
-                assertThat(results).anyMatch(x -> x instanceof ConflictException);
+                deletedFirst++;
+                assertThat(results).anyMatch(x -> x instanceof BusinessRuleException);
             }
             jdbc.update("DELETE FROM exchange_match");
         }
+        System.out.println("[propose-vs-delete] proposedThenCanceled=" + proposedThenCanceled + " deletedFirst=" + deletedFirst);
+        assertThat(proposedThenCanceled).as("제안이 먼저 이기는 라운드가 있어야 한다").isPositive();
+        assertThat(deletedFirst).as("삭제가 먼저 이기는 라운드가 있어야 한다").isPositive();
         assertInvariants();
     }
 
@@ -464,11 +684,12 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void V5_제약을_직접_INSERT로_위반하면_제약_이름과_함께_거부된다() {
+    void V5_V6_제약을_직접_INSERT로_위반하면_제약_이름과_함께_거부된다() {
         Party p = party(1, "Z1");
         Party q = party(2, "Z1");
-        String cols = "(request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, status, canceled_at, canceled_by_id, created_at, updated_at)";
-        String vals = "VALUES (?,?,?,?,?,?,?,?,?,NOW(6),NOW(6))";
+        String cols = "(request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, status, canceled_at, canceled_by_id, "
+                + "created_at, updated_at, a_extra_type, b_extra_type)";
+        String vals = "VALUES (?,?,?,?,?,?,?,?,?,NOW(6),NOW(6),'ANY','ANY')";
         // 상태 값
         assertRejected("ck_exchange_match_status", () -> jdbc.update("INSERT INTO exchange_match " + cols + " " + vals,
                 p.requestId, q.requestId, p.ticketId, q.ticketId, p.userId, q.userId, "CLOSED", null, null));
@@ -586,8 +807,8 @@ class ExchangeMatchMysqlTest {
                 + "col_label, col_key, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,'ACTIVE',NOW(6),NOW(6))",
                 session1, userId, zone, zone, "1", "1", col, col);
         long ticketId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        jdbc.update("INSERT INTO exchange_request (ticket_id, extra_type, extra_amount, status, created_at, updated_at) "
-                + "VALUES (?, 'ANY', NULL, 'OPEN', NOW(6), NOW(6))", ticketId);
+        jdbc.update("INSERT INTO exchange_request (ticket_id, status, created_at, updated_at) "
+                + "VALUES (?, 'OPEN', NOW(6), NOW(6))", ticketId);
         long requestId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         jdbc.update("INSERT INTO exchange_want_session (request_id, performance_session_id, priority) VALUES (?,?,1)", requestId, session1);
         return new Party(userId, ticketId, requestId, zone, "1", col);
@@ -596,8 +817,8 @@ class ExchangeMatchMysqlTest {
     /** a 가 원하는 좌석 = 주어진 상대들의 좌석 전부. */
     private void wants(Party a, Party... others) {
         for (Party o : others) {
-            jdbc.update("INSERT IGNORE INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
-                    a.requestId, o.zone, o.row, o.col);
+            jdbc.update("INSERT IGNORE INTO exchange_want_seat (request_id, zone_key, row_key, col_key, extra_type, extra_amount) "
+                    + "VALUES (?,?,?,?,'ANY',NULL)", a.requestId, o.zone, o.row, o.col);
         }
     }
 

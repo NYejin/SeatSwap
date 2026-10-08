@@ -1,6 +1,8 @@
 package com.seatswap.service;
 
+import com.seatswap.domain.ExtraType;
 import com.seatswap.domain.SeatKey;
+import com.seatswap.domain.WantExtra;
 import com.seatswap.dto.request.WantRangeInput;
 import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.FieldValidationException;
@@ -17,7 +19,12 @@ class WantSeatExpanderTest {
     private final WantSeatExpander expander = new WantSeatExpander(50, 5000, 999, 999);
 
     private static WantRangeInput range(String zone, String rowFrom, String rowTo, String colFrom, String colTo) {
-        return new WantRangeInput(zone, rowFrom, rowTo, colFrom, colTo);
+        return new WantRangeInput(zone, rowFrom, rowTo, colFrom, colTo, "X", null);
+    }
+
+    private static WantRangeInput range(String zone, String rowFrom, String rowTo, String colFrom, String colTo,
+                                        String extraType, Integer extraAmount) {
+        return new WantRangeInput(zone, rowFrom, rowTo, colFrom, colTo, extraType, extraAmount);
     }
 
     private static FieldValidationException fieldError(WantSeatExpander expander, WantRangeInput... ranges) {
@@ -33,7 +40,7 @@ class WantSeatExpanderTest {
     void 한_칸_범위는_좌석_1개() {
         WantSeatExpander.Result result = expander.expand(List.of(range("A", "3", "3", "5", "5")));
 
-        assertThat(result.seats()).containsExactly(new SeatKey("A", "3", "5"));
+        assertThat(result.seats().keySet()).containsExactly(new SeatKey("A", "3", "5"));
         assertThat(result.ranges()).hasSize(1);
     }
 
@@ -41,7 +48,7 @@ class WantSeatExpanderTest {
     void 열과_번_범위를_직사각형으로_펼친다() {
         WantSeatExpander.Result result = expander.expand(List.of(range("A", "3", "4", "3", "5")));
 
-        assertThat(result.seats()).hasSize(6).contains(
+        assertThat(result.seats().keySet()).hasSize(6).contains(
                 new SeatKey("A", "3", "3"), new SeatKey("A", "3", "5"),
                 new SeatKey("A", "4", "3"), new SeatKey("A", "4", "5"));
     }
@@ -50,7 +57,7 @@ class WantSeatExpanderTest {
     void 정규화를_거친_키로_펼친다_구역_공백_제거_대문자_앞0_제거_접미사_제거() {
         WantSeatExpander.Result result = expander.expand(List.of(range(" 1층  a ", "03열", "4열", "7번", "07번")));
 
-        assertThat(result.seats()).containsExactly(new SeatKey("1층A", "3", "7"), new SeatKey("1층A", "4", "7"));
+        assertThat(result.seats().keySet()).containsExactly(new SeatKey("1층A", "3", "7"), new SeatKey("1층A", "4", "7"));
         assertThat(result.ranges().get(0).zoneLabel()).isEqualTo("1층 a");
         assertThat(result.ranges().get(0).rowFrom()).isEqualTo("3");
     }
@@ -59,7 +66,7 @@ class WantSeatExpanderTest {
     void 문자_열은_하나씩_번은_범위로_펼친다() {
         WantSeatExpander.Result result = expander.expand(List.of(range("B", "a열", "A", "1", "3")));
 
-        assertThat(result.seats()).containsExactly(
+        assertThat(result.seats().keySet()).containsExactly(
                 new SeatKey("B", "A", "1"), new SeatKey("B", "A", "2"), new SeatKey("B", "A", "3"));
     }
 
@@ -196,5 +203,144 @@ class WantSeatExpanderTest {
             assertThat(e.getCode()).isEqualTo("WANT_RANGE_LIMIT_EXCEEDED");
             assertThat(e.getDetails()).containsEntry("count", 51L).containsEntry("limit", 50L);
         });
+    }
+
+    // ------------------------------------------------------------ 범위별 추가금 (V6)
+
+    @Test
+    void 추가금은_범위마다_좌석에_실린다() {
+        WantSeatExpander.Result result = expander.expand(List.of(
+                range("A", "1", "1", "1", "2", "POS", 5000),
+                range("A", "2", "2", "1", "1", "neg", -3000),
+                range("B", "1", "1", "1", "1", " any ", null)));
+
+        assertThat(result.seats()).containsEntry(new SeatKey("A", "1", "1"), new WantExtra(ExtraType.POS, 5000))
+                .containsEntry(new SeatKey("A", "1", "2"), new WantExtra(ExtraType.POS, 5000))
+                .containsEntry(new SeatKey("A", "2", "1"), new WantExtra(ExtraType.NEG, -3000))
+                .containsEntry(new SeatKey("B", "1", "1"), new WantExtra(ExtraType.ANY, null));
+        assertThat(result.ranges()).extracting(r -> r.extra().type())
+                .containsExactly(ExtraType.POS, ExtraType.NEG, ExtraType.ANY);
+    }
+
+    @Test
+    void 유형별_금액_규칙_오류는_범위_인덱스_키로_모아서_나온다() {
+        FieldValidationException e = fieldError(expander,
+                range("A", "1", "1", "1", "1", "X", 100),
+                range("A", "2", "2", "1", "1", "POS", null),
+                range("A", "3", "3", "1", "1", "POS", -5),
+                range("A", "4", "4", "1", "1", "NEG", 5),
+                range("A", "5", "5", "1", "1", "ANY", 0),
+                range("A", "6", "6", "1", "1", "FREE", null),
+                range("A", "7", "7", "1", "1", "POS", 1000));
+
+        assertThat(e.getErrors()).containsKeys("ranges[0].extraAmount", "ranges[1].extraAmount", "ranges[2].extraAmount",
+                        "ranges[3].extraAmount", "ranges[4].extraAmount", "ranges[5].extraType")
+                .doesNotContainKeys("ranges[6].extraType", "ranges[6].extraAmount");
+        assertThat(e.getErrors().get("ranges[1].extraAmount")).isEqualTo("받을 금액은 0보다 큰 금액을 입력해주세요.");
+        assertThat(e.getErrors().get("ranges[3].extraAmount")).isEqualTo("낼 금액은 0보다 작은 금액(예: -10000)을 입력해주세요.");
+        assertThat(e.getErrors().get("ranges[5].extraType")).isEqualTo("추가금 유형은 X, ANY, POS, NEG 중 하나여야 합니다.");
+    }
+
+    @Test
+    void 추가금_오류와_좌석_오류를_함께_모은다() {
+        FieldValidationException e = fieldError(expander, range("A", "5", "3", "1", "1", "POS", null));
+
+        assertThat(e.getErrors()).containsKeys("ranges[0].rowTo", "ranges[0].extraAmount");
+    }
+
+    @Test
+    void 겹치는_좌석의_추가금이_완전히_같으면_허용하고_좌석은_한_번만_담긴다() {
+        WantSeatExpander.Result result = expander.expand(List.of(
+                range("A", "1", "1", "1", "3", "POS", 5000),
+                range("A", "1", "1", "3", "5", "POS", 5000)));
+
+        assertThat(result.seats()).hasSize(5);
+        assertThat(result.seats().values()).containsOnly(new WantExtra(ExtraType.POS, 5000));
+    }
+
+    @Test
+    void 겹치는_좌석의_유형이_다르면_422_충돌과_범위_인덱스_쌍() {
+        assertThatThrownBy(() -> expander.expand(List.of(
+                range("A", "1", "1", "1", "3", "X", null),
+                range("B", "1", "1", "1", "1", "X", null),
+                range("A", "1", "1", "3", "5", "ANY", null))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("WANT_EXTRA_CONFLICT");
+                    assertThat(e.getDetails()).containsEntry("conflicts", List.of(List.of(0, 2)));
+                });
+    }
+
+    @Test
+    void 유형이_같아도_금액이_다르면_충돌() {
+        assertThatThrownBy(() -> expander.expand(List.of(
+                range("A", "1", "1", "1", "3", "POS", 5000),
+                range("A", "1", "1", "2", "2", "POS", 6000))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("WANT_EXTRA_CONFLICT");
+                    assertThat(e.getDetails()).containsEntry("conflicts", List.of(List.of(0, 1)));
+                });
+    }
+
+    @Test
+    void 구역이_다르거나_겹치지_않으면_추가금이_달라도_충돌이_아니다() {
+        WantSeatExpander.Result result = expander.expand(List.of(
+                range("A", "1", "1", "1", "2", "POS", 5000),
+                range("A", "1", "1", "3", "4", "NEG", -1000),
+                range("B", "1", "1", "1", "2", "X", null)));
+
+        assertThat(result.seats()).hasSize(6);
+    }
+
+    @Test
+    void 세_범위가_한_좌석에서_겹치면_처음_범위와의_충돌_쌍을_모두_알려준다() {
+        assertThatThrownBy(() -> expander.expand(List.of(
+                range("A", "1", "1", "1", "3", "X", null),
+                range("A", "1", "1", "3", "5", "ANY", null),
+                range("A", "1", "1", "3", "3", "POS", 100))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e ->
+                        assertThat(e.getDetails()).containsEntry("conflicts", List.of(List.of(0, 1), List.of(0, 2))));
+    }
+
+    @Test
+    void 충돌_쌍은_최대_20개까지만_담는다() {
+        assertThatThrownBy(() -> expander.expand(List.of(
+                range("A", "1", "1", "1", "30", "X", null),
+                range("A", "1", "1", "1", "30", "ANY", null))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("WANT_EXTRA_CONFLICT");
+                    // 30개 좌석이 모두 충돌하지만 같은 범위 쌍은 한 번만 담긴다
+                    assertThat(e.getDetails().get("conflicts")).isEqualTo(List.of(List.of(0, 1)));
+                });
+        // 서로 다른 범위 쌍 25개가 충돌하면 20쌍에서 멈춘다
+        List<WantRangeInput> many = new ArrayList<>();
+        many.add(range("A", "1", "1", "1", "1", "X", null));
+        for (int i = 0; i < 25; i++) {
+            many.add(range("A", "1", "1", "1", "1", "ANY", null));
+        }
+        assertThatThrownBy(() -> expander.expand(many)).isInstanceOfSatisfying(BusinessRuleException.class, e -> {
+            assertThat((List<?>) e.getDetails().get("conflicts")).hasSize(WantSeatExpander.MAX_CONFLICT_PAIRS);
+        });
+    }
+
+    @Test
+    void 문자_열이_섞여도_충돌을_판정한다() {
+        assertThatThrownBy(() -> expander.expand(List.of(
+                range("A", "a열", "A", "1", "3", "X", null),
+                range("A", "B", "B", "1", "3", "X", null),
+                range("A", "A", "A", "2", "2", "POS", 500))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e ->
+                        assertThat(e.getDetails()).containsEntry("conflicts", List.of(List.of(0, 2))));
+    }
+
+    @Test
+    void 상한_초과와_충돌이_동시면_상한이_먼저_거부한다_의도된_동작() {
+        WantSeatExpander small = new WantSeatExpander(50, 100, 999, 999);
+        // 합집합 101석(10x10 + 1) 이면서 앞의 두 범위는 추가금이 충돌한다
+        assertThatThrownBy(() -> small.expand(List.of(
+                range("A", "1", "10", "1", "10", "X", null),
+                range("A", "1", "10", "1", "10", "ANY", null),
+                range("B", "1", "1", "1", "1", "X", null))))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e ->
+                        assertThat(e.getCode()).isEqualTo("WANT_SEAT_LIMIT_EXCEEDED"));
     }
 }

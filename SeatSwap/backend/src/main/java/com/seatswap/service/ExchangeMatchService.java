@@ -47,10 +47,11 @@ import java.util.Map;
  *
  * <h3>동작과 오류</h3>
  * <ul>
- *   <li>propose: 내 요청에서 후보를 골라 CHATTING 매칭을 만든다(201). 남의 요청 403, 없는 요청 404, 내 요청이 닫힘/내린 티켓
+ *   <li>propose: 내 요청에서 후보를 골라 CHATTING 매칭을 만든다(201). 남의 요청 403, 없는 요청 404, 내 요청이 삭제됐으면 409 REQUEST_DELETED, 내 요청이 닫힘/내린 티켓
  *       422 TICKET_NOT_ACTIVE, 내 회차 마감 422 SESSION_CLOSED, 후보 조건 불충족
- *       (자기 자신·같은 사용자·상대 요청 닫힘·좌석/회차/추가금 불일치) 422 NOT_A_CANDIDATE. 검증 순서는 후보 판정이 먼저이고 그 뒤 잠금 검사다:
- *       내 티켓이 예약 잠금이면 422 TICKET_LOCKED, 상대 티켓이 잠겼으면 후보에서 빠진 것과 같게 NOT_A_CANDIDATE(상대 티켓의 예약 상태를 노출하지 않는다). 제안 시점에 후보 SQL과 같은 판정을 쌍 단위로 다시 한다.</li>
+ *       (자기 자신·같은 사용자·상대 요청 닫힘/삭제·좌석/회차/추가금 불일치) 422 NOT_A_CANDIDATE. 검증 순서는 후보 판정이 먼저이고 그 뒤 잠금 검사다:
+ *       내 티켓이 예약 잠금이면 422 TICKET_LOCKED, 상대 티켓이 잠겼으면 후보에서 빠진 것과 같게 NOT_A_CANDIDATE(상대 티켓의 예약 상태를 노출하지 않는다). 제안 시점에 후보 SQL과 같은 판정을 쌍 단위로 다시 하고,
+ *       그때 읽은 양쪽 적용 추가금(범위 단위)을 매칭 행의 스냅샷(a/b_extra_type·amount)으로 복사한다.</li>
  *   <li>accept: 호출자 쪽 예약 동의. 한쪽만 누르면 CHATTING 유지(누른 시각 a/b_reserved_at), 양쪽이 누르면 RESERVED 로 바뀌고
  *       두 티켓에 exchange_ticket_lock 을 한 트랜잭션에서 INSERT 한다. 이미 눌렀다면 멱등 200. 어느 티켓이든 이미 다른 매칭에서
  *       잠겼으면 409 TICKET_ALREADY_RESERVED (같은 티켓의 두 매칭이 동시에 완료하려 하면 하나만 RESERVED).</li>
@@ -155,6 +156,11 @@ public class ExchangeMatchService {
                     throw new ConflictException(MATCH_ALREADY_OPEN_MESSAGE,
                             Map.of("code", MATCH_ALREADY_OPEN_CODE, "matchId", open.get(0).getId()));
                 }
+                // 내 요청이 삭제됐으면 후보 조회·수정과 같은 409 REQUEST_DELETED (상대 요청이 삭제됐으면 아래에서 NOT_A_CANDIDATE)
+                if (myRequest.isDeleted()) {
+                    throw new ConflictException(ExchangeRequestService.REQUEST_DELETED_MESSAGE,
+                            Map.of("code", ExchangeRequestService.REQUEST_DELETED_CODE));
+                }
                 if (!myTicket.isActive() || !myRequest.isOpen()) {
                     throw new BusinessRuleException(NOT_ACTIVE_CODE, NOT_ACTIVE_MESSAGE);
                 }
@@ -164,8 +170,11 @@ public class ExchangeMatchService {
                     throw new BusinessRuleException(SESSION_CLOSED_CODE, SESSION_CLOSED_MESSAGE);
                 }
                 // 후보 판정이 먼저다: 후보가 아닌 상대의 티켓 예약 상태는 어떤 응답으로도 드러내지 않는다.
-                if (!target.isOpen() || !targetTicket.isActive()
-                        || !candidateRepository.isCandidatePair(myRequestId, targetRequestId, now.toLocalDate().atStartOfDay())) {
+                ExchangeCandidateRepository.PairExtras extras = (!target.isOpen() || !targetTicket.isActive())
+                        ? null
+                        : candidateRepository.findCandidatePair(myRequestId, targetRequestId, now.toLocalDate().atStartOfDay())
+                                .orElse(null);
+                if (extras == null) {
                     throw new BusinessRuleException(NOT_A_CANDIDATE_CODE, NOT_A_CANDIDATE_MESSAGE);
                 }
                 // 내 티켓이 잠긴 경우만 TICKET_LOCKED 로 구분한다. 상대 티켓이 잠겼으면 후보에서 빠진 것과 같게 NOT_A_CANDIDATE.
@@ -176,7 +185,8 @@ public class ExchangeMatchService {
                     throw new BusinessRuleException(NOT_A_CANDIDATE_CODE, NOT_A_CANDIDATE_MESSAGE);
                 }
                 ExchangeMatch saved = matchRepository.saveAndFlush(ExchangeMatch.propose(myRequestId, targetRequestId,
-                        myTicketId, targetTicketId, myTicket.getUser().getId(), targetTicket.getUser().getId()));
+                        myTicketId, targetTicketId, myTicket.getUser().getId(), targetTicket.getUser().getId(),
+                        extras.my(), extras.their()));
                 return view(saved.getId(), userId);
             });
         } catch (DataIntegrityViolationException e) {

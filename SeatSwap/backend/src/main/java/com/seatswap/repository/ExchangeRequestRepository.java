@@ -19,7 +19,10 @@ import java.util.Optional;
  */
 public interface ExchangeRequestRepository extends JpaRepository<ExchangeRequest, Long> {
 
-    boolean existsByTicket_Id(Long ticketId);
+    /** 티켓에 미삭제(OPEN·CLOSED) 요청이 있는가. DB 백스톱은 uk_exchange_request_live_ticket. */
+    @Query("select count(r) > 0 from ExchangeRequest r where r.ticket.id = :ticketId "
+            + "and r.status <> com.seatswap.domain.ExchangeRequestStatus.DELETED")
+    boolean existsLiveByTicketId(@Param("ticketId") Long ticketId);
 
     /** 요청이 가리키는 티켓 id (프록시 초기화 없이). 요청의 티켓은 바뀌지 않아(updatable=false) 잠금 대상을 미리 알 수 있다. */
     @Query("select r.ticket.id from ExchangeRequest r where r.id = :id")
@@ -36,7 +39,7 @@ public interface ExchangeRequestRepository extends JpaRepository<ExchangeRequest
 
     @Query("""
             select r from ExchangeRequest r join fetch r.ticket t
-            where t.user.id = :userId
+            where t.user.id = :userId and r.status <> com.seatswap.domain.ExchangeRequestStatus.DELETED
             order by r.id asc
             """)
     List<ExchangeRequest> findByOwner(@Param("userId") Long userId);
@@ -44,11 +47,15 @@ public interface ExchangeRequestRepository extends JpaRepository<ExchangeRequest
     @Query("""
             select r from ExchangeRequest r join fetch r.ticket t
             where t.user.id = :userId and t.id = :ticketId
+              and r.status <> com.seatswap.domain.ExchangeRequestStatus.DELETED
             order by r.id asc
             """)
     List<ExchangeRequest> findByOwnerAndTicket(@Param("userId") Long userId, @Param("ticketId") Long ticketId);
 
-    /** 티켓을 내릴 때 그 티켓의 요청을 CLOSED 로 바꾼다(요청 행 잠금은 UPDATE 가 잡는다). */
+    /**
+     * 티켓을 내릴 때 그 티켓의 요청을 CLOSED 로 바꾼다(요청 행 잠금은 UPDATE 가 잡는다).
+     * status = OPEN 조건을 반드시 유지한다: 없으면 DELETED 요청을 CLOSED 로 되살려 live_flag 가 1 이 되고 유일 키를 위반할 수 있다.
+     */
     @Modifying(flushAutomatically = true)
     @Query("""
             update ExchangeRequest r

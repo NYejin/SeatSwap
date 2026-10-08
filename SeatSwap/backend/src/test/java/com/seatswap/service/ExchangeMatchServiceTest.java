@@ -6,6 +6,7 @@ import com.seatswap.domain.ExchangeMatchStatus;
 import com.seatswap.domain.ExchangeRequest;
 import com.seatswap.domain.ExchangeRequestStatus;
 import com.seatswap.domain.ExtraType;
+import com.seatswap.domain.WantExtra;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.Ticket;
@@ -60,6 +61,8 @@ class ExchangeMatchServiceTest {
     private static final long MY_TICKET = 700L;
     private static final long THEIR_TICKET = 600L;
     private static final long MATCH = 50L;
+    private static final WantExtra EXTRA_MY = new WantExtra(ExtraType.POS, 5000);
+    private static final WantExtra EXTRA_THEIR = new WantExtra(ExtraType.NEG, -3000);
 
     private ExchangeMatchRepository matchRepository;
     private ExchangeRequestRepository requestRepository;
@@ -107,7 +110,8 @@ class ExchangeMatchServiceTest {
         when(ticketRepository.findWithSessionById(MY_TICKET)).thenReturn(Optional.of(myTicket));
         when(requestRepository.findByIdForUpdate(MY_REQ)).thenReturn(Optional.of(myRequest));
         when(requestRepository.findByIdForUpdate(THEIR_REQ)).thenReturn(Optional.of(theirRequest));
-        when(candidateRepository.isCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(true);
+        when(candidateRepository.findCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any()))
+                .thenReturn(Optional.of(new ExchangeCandidateRepository.PairExtras(EXTRA_MY, EXTRA_THEIR)));
         when(matchRepository.findOpenByPair(anyLong(), anyLong())).thenReturn(List.of());
         when(matchRepository.saveAndFlush(any(ExchangeMatch.class))).thenAnswer(inv -> {
             ExchangeMatch m = inv.getArgument(0);
@@ -126,7 +130,8 @@ class ExchangeMatchServiceTest {
         return new ExchangeMatchQueryRepository.Row(m.getId(), m.getStatus().name(), m.getUserAId(), m.getUserBId(),
                 m.getRequestAId(), m.getRequestBId(), m.getTicketAId(), m.getTicketBId(),
                 m.getAReservedAt(), m.getBReservedAt(), m.getCanceledById(), m.getCanceledAt(),
-                m.getCreatedAt(), m.getUpdatedAt(), mine, mine, "X", null, "X", null, "나", "상대");
+                m.getCreatedAt(), m.getUpdatedAt(), mine, mine, m.getAExtraType().name(), m.getAExtraAmount(),
+                m.getBExtraType().name(), m.getBExtraAmount(), false, false, "나", "상대");
     }
 
     private ExchangeMatchResponse toResponse(ExchangeMatch m, long userId) {
@@ -140,14 +145,14 @@ class ExchangeMatchServiceTest {
     }
 
     private static ExchangeRequest request(long id, Ticket ticket) {
-        ExchangeRequest r = ExchangeRequest.create(ticket, ExtraType.X, null);
+        ExchangeRequest r = ExchangeRequest.create(ticket);
         ReflectionTestUtils.setField(r, "id", id);
         return r;
     }
 
     /** 내가 a(제안자), 상대가 b 인 매칭을 상태와 함께 mock 저장소에 등록한다. */
     private ExchangeMatch existingMatch(ExchangeMatchStatus status) {
-        ExchangeMatch m = ExchangeMatch.propose(MY_REQ, THEIR_REQ, MY_TICKET, THEIR_TICKET, 1L, 2L);
+        ExchangeMatch m = ExchangeMatch.propose(MY_REQ, THEIR_REQ, MY_TICKET, THEIR_TICKET, 1L, 2L, EXTRA_MY, EXTRA_THEIR);
         ReflectionTestUtils.setField(m, "id", MATCH);
         ReflectionTestUtils.setField(m, "status", status);
         if (status == ExchangeMatchStatus.RESERVED || status == ExchangeMatchStatus.COMPLETED) {
@@ -198,6 +203,11 @@ class ExchangeMatchServiceTest {
         ExchangeMatch saved = captor.getValue();
         assertThat(saved.getRequestAId()).isEqualTo(MY_REQ);
         assertThat(saved.getRequestBId()).isEqualTo(THEIR_REQ);
+        // 후보 판정에서 읽은 양쪽 적용 추가금이 매칭 행의 스냅샷으로 복사된다(a = 제안자 쪽)
+        assertThat(saved.getAExtraType()).isEqualTo(ExtraType.POS);
+        assertThat(saved.getAExtraAmount()).isEqualTo(5000);
+        assertThat(saved.getBExtraType()).isEqualTo(ExtraType.NEG);
+        assertThat(saved.getBExtraAmount()).isEqualTo(-3000);
         assertThat(saved.getTicketAId()).isEqualTo(MY_TICKET);
         assertThat(saved.getTicketBId()).isEqualTo(THEIR_TICKET);
         assertThat(saved.getUserAId()).isEqualTo(1L);
@@ -260,11 +270,12 @@ class ExchangeMatchServiceTest {
     @Test
     void 제안_재검증_실패_사례는_모두_422이고_매칭을_만들지_않는다() {
         // 1) 후보 조건 불충족 (SQL 판정)
-        when(candidateRepository.isCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(false);
+        when(candidateRepository.findCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(Optional.empty());
         assertCode(NOT_A_CANDIDATE());
 
         // 2) 상대 요청 닫힘
-        when(candidateRepository.isCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(true);
+        when(candidateRepository.findCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any()))
+                .thenReturn(Optional.of(new ExchangeCandidateRepository.PairExtras(EXTRA_MY, EXTRA_THEIR)));
         ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.CLOSED);
         assertCode(NOT_A_CANDIDATE());
         ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.OPEN);
@@ -273,6 +284,11 @@ class ExchangeMatchServiceTest {
         ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.INACTIVE);
         assertCode(NOT_A_CANDIDATE());
         ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.ACTIVE);
+
+        // 3-1) 상대 요청 삭제됨 -> 후보에서 빠진 것과 같은 NOT_A_CANDIDATE
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.DELETED);
+        assertCode(NOT_A_CANDIDATE());
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.OPEN);
 
         // 4) 내 요청 닫힘 / 내 티켓 INACTIVE
         ReflectionTestUtils.setField(myRequest, "status", ExchangeRequestStatus.CLOSED);
@@ -308,7 +324,7 @@ class ExchangeMatchServiceTest {
 
     @Test
     void 후보가_아니면_잠금_상태와_무관하게_NOT_A_CANDIDATE이고_잠금을_조회하지_않는다() {
-        when(candidateRepository.isCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(false);
+        when(candidateRepository.findCandidatePair(eq(MY_REQ), eq(THEIR_REQ), any())).thenReturn(Optional.empty());
         when(lockRepository.existsAnyByTicketIds(any())).thenReturn(true);
 
         assertCode("NOT_A_CANDIDATE");
@@ -317,6 +333,17 @@ class ExchangeMatchServiceTest {
 
     private static String NOT_A_CANDIDATE() {
         return "NOT_A_CANDIDATE";
+    }
+
+    @Test
+    void 내_요청이_삭제됐으면_409_REQUEST_DELETED이고_매칭을_만들지_않는다() {
+        ReflectionTestUtils.setField(myRequest, "status", ExchangeRequestStatus.DELETED);
+
+        assertThatThrownBy(() -> service.propose(1L, MY_REQ, THEIR_REQ))
+                .isInstanceOfSatisfying(ConflictException.class, e ->
+                        assertThat(e.getDetails()).containsEntry("code", "REQUEST_DELETED"));
+        verify(matchRepository, never()).saveAndFlush(any());
+        verify(candidateRepository, never()).findCandidatePair(anyLong(), anyLong(), any());
     }
 
     private void assertCode(String code) {

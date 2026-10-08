@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 내 매칭 조회 (읽기 전용, 잠금 없음). 매칭 1건당 한 번의 조인으로 양쪽 티켓 좌석·회차·요청 추가금·닉네임을 모두 읽어 N+1이 없다.
+ * 내 매칭 조회 (읽기 전용, 잠금 없음). 매칭 1건당 한 번의 조인으로 양쪽 티켓 좌석·회차·추가금 스냅샷·요청 삭제 여부·닉네임을 모두 읽어 N+1이 없다.
  * 호출자가 a측/b측인지는 SQL이 아니라 {@link Row#toResponse}가 가른다(양쪽을 항상 읽으므로 CASE 가 필요 없다).
  * 접근 경로: 내 사용자 id -> idx_exchange_match_user_a / user_b (ALL 이면 index_merge) -> 매칭 행 -> 나머지는 PK 점조회.
  * 전제: 목록은 INNER JOIN 8개, COUNT 는 exchange_match 만 센다. FK 때문에 고아 행이 없어 두 결과가 같다(users 익명화·티켓 삭제를 도입하면 LEFT JOIN 또는 COUNT 에도 같은 조인 필요).
@@ -34,8 +34,8 @@ public class ExchangeMatchQueryRepository {
                    psa.id AS a_session_id, psa.starts_at AS a_starts_at,
                    tb.zone_label AS b_zone, tb.row_label AS b_row, tb.col_label AS b_col,
                    psb.id AS b_session_id, psb.starts_at AS b_starts_at,
-                   ra.extra_type AS a_extra_type, ra.extra_amount AS a_extra_amount,
-                   rb.extra_type AS b_extra_type, rb.extra_amount AS b_extra_amount,
+                   m.a_extra_type, m.a_extra_amount, m.b_extra_type, m.b_extra_amount,
+                   ra.status AS a_request_status, rb.status AS b_request_status,
                    ua.nickname AS a_nickname, ub.nickname AS b_nickname
             FROM exchange_match m
             JOIN ticket ta               ON ta.id = m.ticket_a_id
@@ -63,6 +63,7 @@ public class ExchangeMatchQueryRepository {
                       LocalDateTime createdAt, LocalDateTime updatedAt,
                       ExchangeMatchResponse.Seat aSeat, ExchangeMatchResponse.Seat bSeat,
                       String aExtraType, Integer aExtraAmount, String bExtraType, Integer bExtraAmount,
+                      boolean aRequestDeleted, boolean bRequestDeleted,
                       String aNickname, String bNickname) {
 
         public ExchangeMatchResponse toResponse(Long userId) {
@@ -78,6 +79,7 @@ public class ExchangeMatchQueryRepository {
                     mineIsA ? bNickname : aNickname,
                     mineIsA ? aExtraType : bExtraType, mineIsA ? aExtraAmount : bExtraAmount,
                     mineIsA ? bExtraType : aExtraType, mineIsA ? bExtraAmount : aExtraAmount,
+                    mineIsA ? aRequestDeleted : bRequestDeleted, mineIsA ? bRequestDeleted : aRequestDeleted,
                     mineIsA ? aReservedAt : bReservedAt, mineIsA ? bReservedAt : aReservedAt,
                     canceledBy, canceledAt, createdAt, updatedAt);
         }
@@ -144,6 +146,7 @@ public class ExchangeMatchQueryRepository {
                         rs.getLong("b_session_id"), rs.getObject("b_starts_at", LocalDateTime.class)),
                 rs.getString("a_extra_type"), (Integer) rs.getObject("a_extra_amount"),
                 rs.getString("b_extra_type"), (Integer) rs.getObject("b_extra_amount"),
+                "DELETED".equals(rs.getString("a_request_status")), "DELETED".equals(rs.getString("b_request_status")),
                 rs.getString("a_nickname"), rs.getString("b_nickname"));
     }
 }

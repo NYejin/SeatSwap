@@ -2,7 +2,6 @@ package com.seatswap.service;
 
 import com.seatswap.domain.ExchangeRequest;
 import com.seatswap.domain.ExchangeRequestStatus;
-import com.seatswap.domain.ExtraType;
 import com.seatswap.domain.Performance;
 import com.seatswap.domain.PerformanceSession;
 import com.seatswap.domain.Ticket;
@@ -74,7 +73,7 @@ class ExchangeCandidateServiceTest {
         Ticket t = Ticket.create(owner, session, "A", "A", "1", "1", "1", "1");
         ReflectionTestUtils.setField(t, "id", 500L);
         ReflectionTestUtils.setField(t, "status", ticketStatus);
-        ExchangeRequest r = ExchangeRequest.create(t, ExtraType.X, null);
+        ExchangeRequest r = ExchangeRequest.create(t);
         ReflectionTestUtils.setField(r, "id", requestId);
         ReflectionTestUtils.setField(r, "status", requestStatus);
         when(requestRepository.findById(requestId)).thenReturn(Optional.of(r));
@@ -108,6 +107,21 @@ class ExchangeCandidateServiceTest {
         stub(900L, me, openSession, TicketStatus.ACTIVE, ExchangeRequestStatus.CLOSED);
         assertThatThrownBy(() -> service.findCandidates(1L, 900L, 0, 20))
                 .isInstanceOfSatisfying(BusinessRuleException.class, e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_ACTIVE"));
+    }
+
+    @Test
+    void deletedRequestIs409RequestDeleted() {
+        stub(900L, me, openSession, TicketStatus.ACTIVE, ExchangeRequestStatus.DELETED);
+        assertThatThrownBy(() -> service.findCandidates(1L, 900L, 0, 20))
+                .isInstanceOfSatisfying(com.seatswap.exception.ConflictException.class,
+                        e -> assertThat(e.getDetails()).containsEntry("code", "REQUEST_DELETED"));
+        verify(candidateRepository, never()).findCandidates(anyLong(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void othersDeletedRequestIsStill403() {
+        stub(900L, other, openSession, TicketStatus.ACTIVE, ExchangeRequestStatus.DELETED);
+        assertThatThrownBy(() -> service.findCandidates(1L, 900L, 0, 20)).isInstanceOf(ForbiddenException.class);
     }
 
     @Test

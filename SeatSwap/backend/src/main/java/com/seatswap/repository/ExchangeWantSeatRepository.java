@@ -1,6 +1,7 @@
 package com.seatswap.repository;
 
 import com.seatswap.domain.SeatKey;
+import com.seatswap.domain.WantExtra;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -18,7 +19,7 @@ import java.util.Map;
 @Repository
 public class ExchangeWantSeatRepository {
 
-    /** 한 INSERT 문에 넣는 행 수 (4개 파라미터 x 500 = 2,000). */
+    /** 한 INSERT 문에 넣는 행 수 (6개 파라미터 x 500 = 3,000). */
     static final int CHUNK_SIZE = 500;
 
     private final JdbcTemplate jdbc;
@@ -31,21 +32,27 @@ public class ExchangeWantSeatRepository {
         return jdbc.update("DELETE FROM exchange_want_seat WHERE request_id = ?", requestId);
     }
 
-    /** 중복 없는 좌석 집합을 넣는다(PK 충돌은 호출 전에 집합으로 제거해 둔다). */
-    public void insertAll(Long requestId, Collection<SeatKey> seats) {
-        List<SeatKey> list = new ArrayList<>(seats);
+    /**
+     * 중복 없는 좌석 -> 추가금 맵을 넣는다(같은 좌석이 두 범위에 있을 때의 추가금 충돌은 호출 전에 서비스가 거른다).
+     * INSERT IGNORE / ON DUPLICATE KEY 를 쓰지 않는다: 서비스가 놓쳐도 PK 위반으로 실패해야 한다.
+     */
+    public void insertAll(Long requestId, Map<SeatKey, WantExtra> seats) {
+        List<Map.Entry<SeatKey, WantExtra>> list = new ArrayList<>(seats.entrySet());
         for (int from = 0; from < list.size(); from += CHUNK_SIZE) {
-            List<SeatKey> chunk = list.subList(from, Math.min(from + CHUNK_SIZE, list.size()));
+            List<Map.Entry<SeatKey, WantExtra>> chunk = list.subList(from, Math.min(from + CHUNK_SIZE, list.size()));
             StringBuilder sql = new StringBuilder(
-                    "INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES ");
-            Object[] args = new Object[chunk.size() * 4];
+                    "INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key, extra_type, extra_amount) VALUES ");
+            Object[] args = new Object[chunk.size() * 6];
             for (int i = 0; i < chunk.size(); i++) {
-                sql.append(i == 0 ? "(?,?,?,?)" : ",(?,?,?,?)");
-                SeatKey key = chunk.get(i);
-                args[i * 4] = requestId;
-                args[i * 4 + 1] = key.zoneKey();
-                args[i * 4 + 2] = key.rowKey();
-                args[i * 4 + 3] = key.colKey();
+                sql.append(i == 0 ? "(?,?,?,?,?,?)" : ",(?,?,?,?,?,?)");
+                SeatKey key = chunk.get(i).getKey();
+                WantExtra extra = chunk.get(i).getValue();
+                args[i * 6] = requestId;
+                args[i * 6 + 1] = key.zoneKey();
+                args[i * 6 + 2] = key.rowKey();
+                args[i * 6 + 3] = key.colKey();
+                args[i * 6 + 4] = extra.type().name();
+                args[i * 6 + 5] = extra.amount();
             }
             jdbc.update(sql.toString(), args);
         }

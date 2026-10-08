@@ -59,6 +59,23 @@ public class ExchangeMatch {
     @Column(nullable = false, length = 20)
     private ExchangeMatchStatus status = ExchangeMatchStatus.CHATTING;
 
+    /** 매칭 시점의 추가금 스냅샷(V6, 표시용). a = a측 희망 범위 중 b 티켓 좌석을 포함한 범위, b = b측이 a 좌석을 포함한 범위의 값. */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "a_extra_type", nullable = false, updatable = false, length = 10)
+    private ExtraType aExtraType;
+
+    @Column(name = "a_extra_amount", updatable = false)
+    private Integer aExtraAmount;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "b_extra_type", nullable = false, updatable = false, length = 10)
+    private ExtraType bExtraType;
+
+    @Column(name = "b_extra_amount", updatable = false)
+    private Integer bExtraAmount;
+
     @Column(name = "a_reserved_at")
     private LocalDateTime aReservedAt;
 
@@ -86,9 +103,9 @@ public class ExchangeMatch {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    /** 새 매칭(CHATTING). a = 제안자 쪽. */
+    /** 새 매칭(CHATTING). a = 제안자 쪽. aExtra/bExtra 는 후보 판정에서 읽은 양쪽 적용 추가금(스냅샷)이다. */
     public static ExchangeMatch propose(Long requestAId, Long requestBId, Long ticketAId, Long ticketBId,
-                                        Long userAId, Long userBId) {
+                                        Long userAId, Long userBId, WantExtra aExtra, WantExtra bExtra) {
         ExchangeMatch m = new ExchangeMatch();
         m.requestAId = requestAId;
         m.requestBId = requestBId;
@@ -96,6 +113,10 @@ public class ExchangeMatch {
         m.ticketBId = ticketBId;
         m.userAId = userAId;
         m.userBId = userBId;
+        m.aExtraType = aExtra.type();
+        m.aExtraAmount = aExtra.amount();
+        m.bExtraType = bExtra.type();
+        m.bExtraAmount = bExtra.amount();
         m.status = ExchangeMatchStatus.CHATTING;
         return m;
     }

@@ -79,30 +79,29 @@ class ExchangeRequestControllerSliceTest {
     }
 
     private static final String BODY = """
-            {"ticketId":500,"extraType":"NEG","extraAmount":-10000,
+            {"ticketId":500,
              "wantSessions":[{"sessionId":8,"priority":1}],
-             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5"}]}
+             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5","extraType":"NEG","extraAmount":-10000}]}
             """;
 
     private static final String PATCH_BODY = """
-            {"extraType":"X",
-             "wantSessions":[{"sessionId":8,"priority":1}],
-             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5"}]}
+            {"wantSessions":[{"sessionId":8,"priority":1}],
+             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5","extraType":"X"}]}
             """;
 
     private static ExchangeRequestResponse response() {
-        return new ExchangeRequestResponse(900L, 500L, "OPEN", "NEG", -10000,
+        return new ExchangeRequestResponse(900L, 500L, "OPEN",
                 List.of(new ExchangeRequestResponse.WantSessionItem(8L, 1, LocalDateTime.of(2026, 11, 2, 19, 0))),
-                List.of(new ExchangeRequestResponse.WantRangeItem("B", "1", "2", "3", "5")),
+                List.of(new ExchangeRequestResponse.WantRangeItem("B", "1", "2", "3", "5", "NEG", -10000)),
                 6,
                 LocalDateTime.of(2026, 10, 6, 14, 3, 21),
                 LocalDateTime.of(2026, 10, 6, 14, 3, 21));
     }
 
     private static final String RESPONSE_JSON = """
-            {"id":900,"ticketId":500,"status":"OPEN","extraType":"NEG","extraAmount":-10000,
+            {"id":900,"ticketId":500,"status":"OPEN",
              "wantSessions":[{"sessionId":8,"priority":1,"startsAt":"2026-11-02T19:00"}],
-             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5"}],
+             "ranges":[{"zone":"B","rowFrom":"1","rowTo":"2","colFrom":"3","colTo":"5","extraType":"NEG","extraAmount":-10000}],
              "wantSeatCount":6,"createdAt":"2026-10-06T14:03:21","updatedAt":"2026-10-06T14:03:21"}
             """;
 
@@ -159,6 +158,20 @@ class ExchangeRequestControllerSliceTest {
     }
 
     @Test
+    void deletedRequestCandidatesAndPatchAre409RequestDeleted() throws Exception {
+        when(exchangeCandidateService.findCandidates(1L, 910L, 0, 20))
+                .thenThrow(new ConflictException("삭제된 교환 요청입니다.", Map.of("code", "REQUEST_DELETED")));
+        when(exchangeRequestService.update(eq(1L), eq(910L), any(ExchangeRequestUpdateRequest.class)))
+                .thenThrow(new ConflictException("삭제된 교환 요청입니다.", Map.of("code", "REQUEST_DELETED")));
+
+        mockMvc.perform(auth(get("/api/exchange/requests/910/candidates"))).andExpect(status().isConflict())
+                .andExpect(content().json("{\"message\":\"삭제된 교환 요청입니다.\",\"code\":\"REQUEST_DELETED\"}", true));
+        mockMvc.perform(auth(patch("/api/exchange/requests/910")).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(content().json("{\"message\":\"삭제된 교환 요청입니다.\",\"code\":\"REQUEST_DELETED\"}", true));
+    }
+
+    @Test
     void candidatesRejectNonNumericId() throws Exception {
         mockMvc.perform(auth(get("/api/exchange/requests/abc/candidates"))).andExpect(status().isBadRequest());
     }
@@ -182,24 +195,24 @@ class ExchangeRequestControllerSliceTest {
                 .andExpect(status().isCreated())
                 .andExpect(content().json(RESPONSE_JSON, true));
         verify(exchangeRequestService).create(eq(1L), argThat(r ->
-                r.ticketId().equals(500L) && r.extraType().equals("NEG") && r.extraAmount() == -10000
-                        && r.wantSessions().get(0).priority() == 1 && r.ranges().get(0).colTo().equals("5")));
+                r.ticketId().equals(500L) && r.ranges().get(0).extraType().equals("NEG")
+                        && r.ranges().get(0).extraAmount() == -10000 && r.wantSessions().get(0).priority() == 1 && r.ranges().get(0).colTo().equals("5")));
     }
 
     @Test
     void createValidationUsesFieldKeysWithIndexes() throws Exception {
         mockMvc.perform(auth(post("/api/exchange/requests")).contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"extraType":" ",
-                                 "wantSessions":[{"priority":0}],
-                                 "ranges":[{"zone":"","rowFrom":"1","rowTo":"2","colFrom":"1"}]}
+                                {"wantSessions":[{"priority":0}],
+                                 "ranges":[{"zone":"","rowFrom":"1","rowTo":"2","colFrom":"1","extraType":" "}]}
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("""
-                        {"ticketId":"티켓을 선택해주세요.","extraType":"추가금 유형을 선택해주세요.",
+                        {"ticketId":"티켓을 선택해주세요.",
                          "wantSessions[0].sessionId":"회차를 선택해주세요.",
                          "wantSessions[0].priority":"우선순위는 1 이상이어야 합니다.",
-                         "ranges[0].zone":"구역을 입력해주세요.","ranges[0].colTo":"번 끝을 입력해주세요."}
+                         "ranges[0].zone":"구역을 입력해주세요.","ranges[0].colTo":"번 끝을 입력해주세요.",
+                         "ranges[0].extraType":"추가금 유형을 선택해주세요."}
                         """, true));
         verify(exchangeRequestService, never()).create(any(), any());
     }
@@ -207,13 +220,13 @@ class ExchangeRequestControllerSliceTest {
     @Test
     void emptyListsAreRejected() throws Exception {
         mockMvc.perform(auth(post("/api/exchange/requests")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"ticketId\":500,\"extraType\":\"X\",\"wantSessions\":[],\"ranges\":[]}"))
+                        .content("{\"ticketId\":500,\"wantSessions\":[],\"ranges\":[]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("""
                         {"wantSessions":"희망 회차를 1개 이상 선택해주세요.","ranges":"희망 좌석 범위를 1개 이상 입력해주세요."}
                         """, true));
         mockMvc.perform(auth(post("/api/exchange/requests")).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"ticketId\":500,\"extraType\":\"X\",\"wantSessions\":[null],\"ranges\":[null]}"))
+                        .content("{\"ticketId\":500,\"wantSessions\":[null],\"ranges\":[null]}"))
                 .andExpect(status().isBadRequest());
         verify(exchangeRequestService, never()).create(any(), any());
     }
@@ -268,6 +281,30 @@ class ExchangeRequestControllerSliceTest {
     }
 
     @Test
+    void extraConflictIs422WithRangePairs() throws Exception {
+        when(exchangeRequestService.create(eq(1L), any(ExchangeRequestCreateRequest.class)))
+                .thenThrow(new BusinessRuleException("WANT_EXTRA_CONFLICT", "겹치는 희망 좌석 범위의 추가금이 서로 다릅니다.",
+                        Map.of("conflicts", List.of(List.of(0, 1)))));
+
+        mockMvc.perform(auth(post("/api/exchange/requests")).contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().json("""
+                        {"code":"WANT_EXTRA_CONFLICT","message":"겹치는 희망 좌석 범위의 추가금이 서로 다릅니다.","conflicts":[[0,1]]}
+                        """, true));
+    }
+
+    @Test
+    void rangeExtraErrorKeysCarryTheRangeIndex() throws Exception {
+        when(exchangeRequestService.create(eq(1L), any(ExchangeRequestCreateRequest.class)))
+                .thenThrow(FieldValidationException.ofAll(new java.util.LinkedHashMap<>(Map.of(
+                        "ranges[1].extraAmount", "받을 금액은 0보다 큰 금액을 입력해주세요."))));
+
+        mockMvc.perform(auth(post("/api/exchange/requests")).contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().json("{\"ranges[1].extraAmount\":\"받을 금액은 0보다 큰 금액을 입력해주세요.\"}", true));
+    }
+
+    @Test
     void forbiddenAndNotFoundForTicketOwnership() throws Exception {
         when(exchangeRequestService.create(eq(1L), any(ExchangeRequestCreateRequest.class)))
                 .thenThrow(new ForbiddenException("본인의 티켓과 교환 요청만 다룰 수 있습니다."));
@@ -308,7 +345,8 @@ class ExchangeRequestControllerSliceTest {
                 .andExpect(status().isOk())
                 .andExpect(content().json(RESPONSE_JSON, true));
         verify(exchangeRequestService).update(eq(1L), eq(900L), argThat(r ->
-                r.extraType().equals("X") && r.extraAmount() == null && r.ranges().size() == 1));
+                r.ranges().get(0).extraType().equals("X") && r.ranges().get(0).extraAmount() == null
+                        && r.ranges().size() == 1));
     }
 
     @Test
@@ -320,7 +358,7 @@ class ExchangeRequestControllerSliceTest {
         mockMvc.perform(auth(delete("/api/exchange/requests/901"))).andExpect(status().isForbidden());
         doThrow(new NotFoundException("교환 요청을 찾을 수 없습니다.")).when(exchangeRequestService).delete(1L, 902L);
         mockMvc.perform(auth(delete("/api/exchange/requests/902"))).andExpect(status().isNotFound());
-        doThrow(new ConflictException("진행 중인 제안이 있습니다.", Map.of("code", "ACTIVE_PROPOSAL")))
+        doThrow(new ConflictException("예약된 매칭이 있습니다.", Map.of("code", "ACTIVE_MATCH_EXISTS")))
                 .when(exchangeRequestService).delete(1L, 903L);
         mockMvc.perform(auth(delete("/api/exchange/requests/903"))).andExpect(status().isConflict());
     }
