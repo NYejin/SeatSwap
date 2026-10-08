@@ -28,3 +28,9 @@ jwt:
   secret: ${JWT_SECRET:dev-only-insecure-default-secret-please-override-with-JWT-SECRET-env}
   access-token-validity-ms: 3600000
   refresh-token-validity-ms: 1209600000
+
+ticket:
+  # 사용자당 활성 티켓 상한, 숫자 열·번 상한 (숫자가 아닌 열·번(A, 가 등)에는 적용하지 않는다)
+  max-active-per-user: ${TICKET_MAX_ACTIVE_PER_USER:20}
+  max-row-number: ${TICKET_MAX_ROW_NUMBER:999}
+  max-col-number: ${TICKET_MAX_COL_NUMBER:999}

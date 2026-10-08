@@ -11,7 +11,7 @@ import java.time.temporal.ChronoUnit;
 
 /**
  * 공연 회차 (날짜·시간). Performance 1:N PerformanceSession, PerformanceSession 1:N Ticket.
- * 교환은 같은 공연이면 다른 회차끼리도 가능하다 (같은 회차로 제한하지 않는다, 2026-10-07 결정).
+ * 좌석 교환은 같은 공연이면 다른 회차끼리도 가능하다 (같은 회차로 제한하지 않는다, 2026-10-07 결정).
  *
  * 중복 방지: (performance_id, starts_at) unique. startsAt은 분 단위로 잘라 저장한다
  * (19:00과 19:00:30이 다른 회차로 등록되는 것 방지).
@@ -58,6 +58,11 @@ public class PerformanceSession {
         session.performance = performance;
         session.startsAt = truncate(startsAt);
         return session;
+    }
+
+    /** 티켓 등록·매칭 허용 마감: 회차 당일 끝(다음날 0시, KST). 이 시각 이후에는 등록할 수 없다. */
+    public LocalDateTime registrationDeadline() {
+        return startsAt.toLocalDate().plusDays(1).atStartOfDay();
     }
 
     /** 분 단위 절삭. 서비스의 중복 사전 조회도 이 값으로 해야 unique 제약과 판정이 일치한다. */
