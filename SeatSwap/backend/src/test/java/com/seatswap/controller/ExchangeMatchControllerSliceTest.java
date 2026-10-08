@@ -2,6 +2,9 @@ package com.seatswap.controller;
 
 import com.seatswap.config.SecurityConfig;
 import com.seatswap.dto.response.ExchangeMatchResponse;
+import com.seatswap.dto.response.PageResponse;
+import com.seatswap.exception.FieldValidationException;
+import com.seatswap.service.ExchangeMatchQueryService;
 import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.ForbiddenException;
@@ -24,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.mockito.Mockito.never;
@@ -51,6 +55,8 @@ class ExchangeMatchControllerSliceTest {
     private CustomUserDetailsService userDetailsService;
     @MockBean
     private ExchangeMatchService matchService;
+    @MockBean
+    private ExchangeMatchQueryService queryService;
 
     @BeforeEach
     void setUp() {
@@ -64,11 +70,30 @@ class ExchangeMatchControllerSliceTest {
         return builder.header("Authorization", "Bearer good");
     }
 
-    private static ExchangeMatchResponse response(String status) {
-        return new ExchangeMatchResponse(50L, status, "A", 900L, 700L, 800L, 600L, "상대",
+    private static ExchangeMatchResponse full(String status) {
+        return new ExchangeMatchResponse(50L, status, "A", "SENT", 900L, 700L,
+                new ExchangeMatchResponse.Seat("A구역", "3", "5", 7L, LocalDateTime.of(2026, 11, 1, 19, 0)),
+                800L, 600L,
+                new ExchangeMatchResponse.Seat("B구역", "4", "6", 8L, LocalDateTime.of(2026, 11, 2, 19, 0)),
+                "상대", "X", null, "POS", 30000,
                 LocalDateTime.of(2026, 10, 8, 12, 0, 5), null, null, null,
                 LocalDateTime.of(2026, 10, 8, 11, 0, 0), LocalDateTime.of(2026, 10, 8, 12, 0, 5));
     }
+
+    private static ExchangeMatchResponse response(String status) {
+        return full(status);
+    }
+
+    private static final String FULL_JSON = """
+            {"id":50,"status":"CHATTING","mySide":"A","role":"SENT","myRequestId":900,"myTicketId":700,
+             "mySeat":{"zone":"A구역","row":"3","col":"5","sessionId":7,"startsAt":"2026-11-01T19:00"},
+             "counterpartRequestId":800,"counterpartTicketId":600,
+             "counterpartSeat":{"zone":"B구역","row":"4","col":"6","sessionId":8,"startsAt":"2026-11-02T19:00"},
+             "counterpartNickname":"상대","myExtraType":"X","myExtraAmount":null,
+             "counterpartExtraType":"POS","counterpartExtraAmount":30000,
+             "myReservedAt":"2026-10-08T12:00:05","counterpartReservedAt":null,"canceledBy":null,"canceledAt":null,
+             "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T12:00:05"}
+            """;
 
     @Test
     void allEndpointsRequireLogin() throws Exception {
@@ -84,19 +109,12 @@ class ExchangeMatchControllerSliceTest {
 
     @Test
     void proposeReturns201WithMatchShape() throws Exception {
-        when(matchService.propose(1L, 900L, 800L)).thenReturn(new ExchangeMatchResponse(50L, "CHATTING", "A",
-                900L, 700L, 800L, 600L, "상대", null, null, null, null,
-                LocalDateTime.of(2026, 10, 8, 11, 0, 0), LocalDateTime.of(2026, 10, 8, 11, 0, 0)));
+        when(matchService.propose(1L, 900L, 800L)).thenReturn(full("CHATTING"));
 
         mockMvc.perform(auth(post("/api/exchange/requests/900/proposals")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"targetRequestId\":800}"))
                 .andExpect(status().isCreated())
-                .andExpect(content().json("""
-                        {"id":50,"status":"CHATTING","mySide":"A","myRequestId":900,"myTicketId":700,
-                         "counterpartRequestId":800,"counterpartTicketId":600,"counterpartNickname":"상대",
-                         "myReservedAt":null,"counterpartReservedAt":null,"canceledBy":null,"canceledAt":null,
-                         "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T11:00:00"}
-                        """, true));
+                .andExpect(content().json(FULL_JSON, true));
     }
 
     @Test
@@ -174,5 +192,58 @@ class ExchangeMatchControllerSliceTest {
         mockMvc.perform(auth(post("/api/exchange/matches/abc/accept"))).andExpect(status().isBadRequest());
         mockMvc.perform(auth(get("/api/exchange/matches/50/accept"))).andExpect(status().isMethodNotAllowed());
         verify(matchService, never()).accept(anyLong(), any());
+    }
+
+    // ------------------------------------------------------------------ 내 매칭 조회
+
+    @Test
+    void mineAndGetRequireLogin() throws Exception {
+        mockMvc.perform(get("/api/exchange/matches/me")).andExpect(status().isUnauthorized())
+                .andExpect(content().json("{\"message\":\"로그인이 필요합니다.\"}", true));
+        mockMvc.perform(get("/api/exchange/matches/50")).andExpect(status().isUnauthorized());
+        verify(queryService, never()).findMine(anyLong(), any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void mineReturnsPageShapeAndPassesFilters() throws Exception {
+        when(queryService.findMine(1L, "SENT", List.of("CHATTING", "RESERVED"), 1, 5))
+                .thenReturn(new PageResponse<>(List.of(full("CHATTING")), 1, 5, 6, 2));
+
+        mockMvc.perform(auth(get("/api/exchange/matches/me")).param("role", "SENT")
+                        .param("status", "CHATTING", "RESERVED").param("page", "1").param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"page\":1,\"size\":5,\"totalElements\":6,\"totalPages\":2,\"content\":["
+                        + FULL_JSON + "]}", true));
+    }
+
+    @Test
+    void mineDefaultsToAllWithoutFilters() throws Exception {
+        when(queryService.findMine(1L, null, null, 0, 20)).thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+        mockMvc.perform(auth(get("/api/exchange/matches/me"))).andExpect(status().isOk())
+                .andExpect(content().json("{\"content\":[],\"page\":0,\"size\":20,\"totalElements\":0,\"totalPages\":0}", true));
+    }
+
+    @Test
+    void mineInvalidFilterIs400() throws Exception {
+        when(queryService.findMine(1L, "BOTH", null, 0, 20)).thenThrow(new FieldValidationException("role", "role은 SENT, RECEIVED, ALL 중 하나여야 합니다."));
+
+        mockMvc.perform(auth(get("/api/exchange/matches/me")).param("role", "BOTH"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().json("{\"role\":\"role은 SENT, RECEIVED, ALL 중 하나여야 합니다.\"}", true));
+        mockMvc.perform(auth(get("/api/exchange/matches/me")).param("page", "abc")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void getReturnsMatchShapeAnd404ForNonParticipant() throws Exception {
+        when(queryService.findOne(1L, 50L)).thenReturn(full("CHATTING"));
+        when(queryService.findOne(1L, 51L)).thenThrow(new NotFoundException("매칭을 찾을 수 없습니다."));
+
+        mockMvc.perform(auth(get("/api/exchange/matches/50"))).andExpect(status().isOk())
+                .andExpect(content().json(FULL_JSON, true));
+        mockMvc.perform(auth(get("/api/exchange/matches/51"))).andExpect(status().isNotFound())
+                .andExpect(content().json("{\"message\":\"매칭을 찾을 수 없습니다.\"}", true));
+        mockMvc.perform(auth(get("/api/exchange/matches/abc"))).andExpect(status().isBadRequest());
     }
 }

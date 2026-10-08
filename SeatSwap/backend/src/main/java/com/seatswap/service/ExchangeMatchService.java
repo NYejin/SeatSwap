@@ -12,11 +12,11 @@ import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.repository.ExchangeCandidateRepository;
+import com.seatswap.repository.ExchangeMatchQueryRepository;
 import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.TicketRepository;
-import com.seatswap.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -99,7 +99,7 @@ public class ExchangeMatchService {
     private final TicketRepository ticketRepository;
     private final ExchangeTicketLockRepository lockRepository;
     private final ExchangeCandidateRepository candidateRepository;
-    private final UserRepository userRepository;
+    private final ExchangeMatchQueryRepository queryRepository;
     private final SessionTimePolicy timePolicy;
     private final TransactionTemplate tx;
 
@@ -108,7 +108,7 @@ public class ExchangeMatchService {
                                 TicketRepository ticketRepository,
                                 ExchangeTicketLockRepository lockRepository,
                                 ExchangeCandidateRepository candidateRepository,
-                                UserRepository userRepository,
+                                ExchangeMatchQueryRepository queryRepository,
                                 SessionTimePolicy timePolicy,
                                 PlatformTransactionManager transactionManager) {
         this.matchRepository = matchRepository;
@@ -116,7 +116,7 @@ public class ExchangeMatchService {
         this.ticketRepository = ticketRepository;
         this.lockRepository = lockRepository;
         this.candidateRepository = candidateRepository;
-        this.userRepository = userRepository;
+        this.queryRepository = queryRepository;
         this.timePolicy = timePolicy;
         this.tx = new TransactionTemplate(transactionManager);
     }
@@ -138,9 +138,9 @@ public class ExchangeMatchService {
         Long targetTicketId = requestRepository.findTicketIdById(targetRequestId)
                 .orElseThrow(() -> new NotFoundException(REQUEST_NOT_FOUND_MESSAGE));
 
-        ExchangeMatch saved;
+        ExchangeMatchResponse response;
         try {
-            saved = tx.execute(status -> {
+            response = tx.execute(status -> {
                 // 1) 티켓(id 오름차순) 2) 요청(id 오름차순) 잠금. 잠금 읽기가 이 트랜잭션의 첫 쿼리들이어야 한다.
                 Map<Long, Ticket> tickets = lockTickets(List.of(myTicketId, targetTicketId));
                 Map<Long, ExchangeRequest> requests = lockRequests(List.of(myRequestId, targetRequestId));
@@ -175,8 +175,9 @@ public class ExchangeMatchService {
                 if (lockRepository.existsAnyByTicketIds(List.of(targetTicketId))) {
                     throw new BusinessRuleException(NOT_A_CANDIDATE_CODE, NOT_A_CANDIDATE_MESSAGE);
                 }
-                return matchRepository.saveAndFlush(ExchangeMatch.propose(myRequestId, targetRequestId,
+                ExchangeMatch saved = matchRepository.saveAndFlush(ExchangeMatch.propose(myRequestId, targetRequestId,
                         myTicketId, targetTicketId, myTicket.getUser().getId(), targetTicket.getUser().getId()));
+                return view(saved.getId(), userId);
             });
         } catch (DataIntegrityViolationException e) {
             // 안전망: 요청 행 잠금으로 직렬화되어 정상 경로에서는 도달하지 않는다(uk_exchange_match_open_pair 최후 방어선).
@@ -186,7 +187,7 @@ public class ExchangeMatchService {
             log.info("Exchange match propose race on pair ({}, {})", myRequestId, targetRequestId);
             throw new ConflictException(MATCH_ALREADY_OPEN_MESSAGE, Map.of("code", MATCH_ALREADY_OPEN_CODE));
         }
-        return toResponse(saved, userId);
+        return response;
     }
 
     // ---------------------------------------------------------------- 예약 동의·거절·취소
@@ -219,7 +220,7 @@ public class ExchangeMatchService {
             throw new ForbiddenException(FORBIDDEN_REJECT_MESSAGE);
         }
 
-        ExchangeMatch result;
+        ExchangeMatchResponse result;
         try {
             result = tx.execute(status -> {
                 lockTickets(List.of(pre.getTicketAId(), pre.getTicketBId()));
@@ -239,7 +240,7 @@ public class ExchangeMatchService {
                     }
                     default -> throw new IllegalStateException("지원하지 않는 동작: " + action);
                 }
-                return m;
+                return view(m.getId(), userId);
             });
         } catch (DataIntegrityViolationException e) {
             // 안전망: 위 사전 검사를 통과해도 새는 경우의 최후 방어선. exchange_ticket_lock PK 충돌(JdbcTemplate 은 DuplicateKeyException)
@@ -248,7 +249,7 @@ public class ExchangeMatchService {
             }
             throw e;
         }
-        return toResponse(result, userId);
+        return result;
     }
 
     /** 잠금 순서(티켓 -> 요청 -> 매칭)를 모두 잡은 뒤 호출한다. */
@@ -317,21 +318,10 @@ public class ExchangeMatchService {
         return new ConflictException(ALREADY_RESERVED_MESSAGE, Map.of("code", ALREADY_RESERVED_CODE));
     }
 
-    ExchangeMatchResponse toResponse(ExchangeMatch m, Long userId) {
-        boolean mineIsA = userId.equals(m.getUserAId());
-        Long counterpartUserId = mineIsA ? m.getUserBId() : m.getUserAId();
-        String nickname = userRepository.findById(counterpartUserId).map(u -> u.getNickname()).orElse(null);
-        String canceledBy = null;
-        if (m.getStatus() == ExchangeMatchStatus.CANCELED) {
-            canceledBy = m.getCanceledById() == null ? "SYSTEM" : userId.equals(m.getCanceledById()) ? "ME" : "COUNTERPART";
-        }
-        return new ExchangeMatchResponse(
-                m.getId(), m.getStatus().name(), mineIsA ? "A" : "B",
-                mineIsA ? m.getRequestAId() : m.getRequestBId(), mineIsA ? m.getTicketAId() : m.getTicketBId(),
-                mineIsA ? m.getRequestBId() : m.getRequestAId(), mineIsA ? m.getTicketBId() : m.getTicketAId(),
-                nickname,
-                mineIsA ? m.getAReservedAt() : m.getBReservedAt(),
-                mineIsA ? m.getBReservedAt() : m.getAReservedAt(),
-                canceledBy, m.getCanceledAt(), m.getCreatedAt(), m.getUpdatedAt());
+    /** 호출 전 flush 필수(변경 후 saveAndFlush 로 반영된 상태여야 조인 조회가 읽는다). 응답은 조인 한 번으로 만든다(닉네임·좌석·회차·추가금 포함, 추가 쿼리 없음). 트랜잭션 안에서 호출해 방금 쓴 상태를 그대로 읽는다. */
+    private ExchangeMatchResponse view(Long matchId, Long userId) {
+        return queryRepository.findOne(matchId, userId)
+                .orElseThrow(() -> new NotFoundException(MATCH_NOT_FOUND_MESSAGE))
+                .toResponse(userId);
     }
 }
