@@ -1,10 +1,11 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { getDisplayName, useAuth } from "../hooks/useAuth";
 import { useLogout } from "../hooks/useLogout";
 import { FOCUS_RING } from "../components/ui";
 
 // FR-01 회원 — 마이페이지 (보호 라우트 /me). 내 정보(/api/users/me) 표시 + 로그아웃.
-// 내 티켓·거래 내역·받은 리뷰는 이후 기능(FR-08, FR-10~13) — 지금은 "준비 중" 자리만 둔다.
+// 내 티켓·내 매칭은 링크, 교환 이력은 이후 기능이라 "준비 중" 자리만 둔다.
 
 const cls = {
   /** AppLayout 콘텐츠 영역을 채우는 배경 (로그인 화면과 같은 톤) */
@@ -26,6 +27,7 @@ const cls = {
   sectionTitle: "text-base/[normal] font-semibold text-gray-900",
   comingList: "mt-2 divide-y divide-gray-200",
   comingItem: "flex min-h-11 items-center justify-between gap-3 text-[0.9375rem]/[normal] text-gray-700",
+  activityLink: "font-semibold text-gray-900 no-underline active:bg-gray-100 " + FOCUS_RING,
   /** gray-100 배경 + gray-700 글자 9.37:1 (gray-500은 4.39:1로 AA 미달) */
   comingBadge: "shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[0.8125rem]/[normal] text-gray-700",
   /** 하단 계정 동작 버튼 줄 (오른쪽 정렬) */
@@ -46,7 +48,11 @@ const comingSoonButton =
   `${cls.button} gap-2 border border-gray-200 bg-white text-gray-500 disabled:cursor-not-allowed`;
 const retryButton = `${cls.button} ${cls.buttonSolid} ${cls.retryButton}`;
 
-const COMING_SOON = ["내 티켓", "거래 내역"] as const;
+const ACTIVITY_LINKS = [
+  { to: "/tickets", label: "내 티켓" },
+  { to: "/exchange/matches", label: "내 매칭" },
+] as const;
+const COMING_SOON = ["교환 이력"] as const;
 
 /**
  * 신뢰도 점수는 소수 1자리. 값이 없으면(null) 대시.
@@ -140,6 +146,14 @@ export default function MyPage() {
             내 활동
           </h2>
           <ul className={cls.comingList}>
+            {ACTIVITY_LINKS.map((item) => (
+              <li key={item.to}>
+                <Link to={item.to} className={`${cls.comingItem} ${cls.activityLink}`}>
+                  <span>{item.label}</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+              </li>
+            ))}
             {COMING_SOON.map((label) => (
               <li key={label} className={cls.comingItem}>
                 <span>{label}</span>

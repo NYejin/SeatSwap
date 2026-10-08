@@ -8,7 +8,7 @@ import { button, linkButton, liveRegionClass, ui } from "../components/ui";
 
 // FR-02 공연 상세 (보호 라우트 /performances/:id) — 읽기 전용.
 // 공연은 등록 후 아무도 수정·삭제할 수 없다 (수정은 추후 관리자 수정 제안으로만).
-// 티켓(교환) 영역은 이후 기능 — "준비 중" 자리만.
+// 티켓 영역: 이 공연 티켓 등록(/tickets/new?performanceId=) 진입.
 
 /** 백엔드 TicketingSite와 같은 알려진 예매처 호스트 (호스트가 이것이거나 그 하위 도메인) */
 const KNOWN_TICKETING_HOSTS = ["interpark.com", "ticket.melon.com", "ticket.yes24.com", "ticketlink.co.kr"];
@@ -25,8 +25,6 @@ const cls = {
   /** 회차 시각 — 지난 회차는 gray-500(흰 배경 4.83:1)으로 흐리게 + "지난 회차" 배지 (색만으로 구분하지 않음) */
   sessionTimeUpcoming: "text-[0.9375rem]/[normal] font-semibold text-gray-900",
   sessionTimePast: "text-[0.9375rem]/[normal] text-gray-500",
-  comingList: "flex flex-col divide-y divide-gray-200",
-  comingItem: "flex min-h-11 items-center justify-between gap-3 text-[0.9375rem]/[normal] text-gray-700",
 } as const;
 
 /** http(s) 링크만 링크로 렌더링 (javascript: 등 차단). 표시용 호스트와 알려진 예매처 여부 */
@@ -102,18 +100,19 @@ export default function PerformanceDetailPage() {
       <>
         <InfoSection detail={detail} />
         <SessionsSection detail={detail} />
-        <section className={ui.card} aria-labelledby="perf-coming-title">
+        <section className={`${ui.card} flex flex-col gap-4`} aria-labelledby="perf-coming-title">
           <h2 id="perf-coming-title" className={ui.sectionTitle}>
             티켓
           </h2>
-          <ul className={cls.comingList}>
-            {["이 공연의 티켓·교환 요청"].map((label) => (
-              <li key={label} className={cls.comingItem}>
-                <span>{label}</span>
-                <span className={ui.badge}>준비 중</span>
-              </li>
-            ))}
-          </ul>
+          <p className={ui.body}>이 공연의 티켓을 가지고 있다면 등록하고, 바꾸고 싶은 자리를 정해 상대를 찾아보세요.</p>
+          <div className="flex flex-wrap gap-2">
+            <Link to={`/tickets/new?performanceId=${detail.id}`} className={linkButton.solid}>
+              이 공연 티켓 등록
+            </Link>
+            <Link to="/tickets" className={linkButton.outline}>
+              내 티켓
+            </Link>
+          </div>
         </section>
       </>
     );

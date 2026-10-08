@@ -77,3 +77,21 @@ export function parseApiError(error: unknown, fallback = "요청을 처리하지
   }
   return { message: fallback, fieldErrors: {} };
 }
+
+/** 422/409 본문의 `code` (없으면 null) */
+export function getErrorCode(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+  const data: unknown = error.response?.data;
+  if (typeof data !== "object" || data === null) return null;
+  const code: unknown = (data as Record<string, unknown>).code;
+  return typeof code === "string" ? code : null;
+}
+
+/** 오류 본문의 숫자 상세값 (예: count, limit, matchId) */
+export function getErrorNumber(error: unknown, key: string): number | null {
+  if (!axios.isAxiosError(error)) return null;
+  const data: unknown = error.response?.data;
+  if (typeof data !== "object" || data === null) return null;
+  const value: unknown = (data as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}

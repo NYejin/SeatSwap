@@ -11,9 +11,11 @@ interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "id
   error?: string;
   /** 입력 규칙 안내 (오류가 없을 때만 표시) */
   hint?: string;
+  /** true면 오류 문구에 role="alert"를 달아 나타나는 즉시 읽히게 한다 (제출 후 오류를 알려야 하는 폼용) */
+  liveError?: boolean;
 }
 
-export default function TextField({ id, label, error, hint, ...inputProps }: TextFieldProps) {
+export default function TextField({ id, label, error, hint, liveError = false, ...inputProps }: TextFieldProps) {
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
   const showHint = !!hint && !error;
@@ -37,7 +39,7 @@ export default function TextField({ id, label, error, hint, ...inputProps }: Tex
         </p>
       )}
       {error && (
-        <p id={errorId} className={ui.fieldError}>
+        <p id={errorId} className={ui.fieldError} role={liveError ? "alert" : undefined}>
           {error}
         </p>
       )}

@@ -83,8 +83,11 @@ const solidButton = `${cls.button} ${cls.buttonSolid}`;
 
 const AUTH_PATHS = ["/login", "/signup"];
 
-// 교환 목록·티켓 등록 메뉴는 해당 화면을 다시 만들 때 추가한다 (2026-10-07 스켈레톤 삭제)
-const MENU: readonly { to: string; label: string }[] = [];
+// 로그인한 사용자에게만 보이는 주요 메뉴 (FR-03 내 티켓, FR-04 내 매칭)
+const MENU: readonly { to: string; label: string }[] = [
+  { to: "/tickets", label: "내 티켓" },
+  { to: "/exchange/matches", label: "내 매칭" },
+];
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `${cls.navLink} ${isActive ? cls.navLinkActive : cls.navLinkIdle}`;
@@ -218,7 +221,7 @@ export default function Header() {
 
         <div id={menuId} className={`${cls.panel} ${menuOpen ? cls.panelOpen : cls.panelClosed}`}>
           <nav className={cls.nav} aria-label="주요 메뉴">
-            {MENU.map((item) => (
+            {(user ? MENU : []).map((item) => (
               <NavLink key={item.to} to={item.to} className={navClass} onClick={closeMenu}>
                 {item.label}
               </NavLink>

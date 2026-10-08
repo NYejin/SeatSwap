@@ -21,7 +21,7 @@ import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.ExchangeTicketLockRepository;
 import com.seatswap.repository.TicketRepository;
-import com.seatswap.repository.UserRepository;
+import com.seatswap.repository.ExchangeMatchQueryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -66,7 +66,9 @@ class ExchangeMatchServiceTest {
     private TicketRepository ticketRepository;
     private ExchangeTicketLockRepository lockRepository;
     private ExchangeCandidateRepository candidateRepository;
-    private UserRepository userRepository;
+    private ExchangeMatchQueryRepository queryRepository;
+    /** 가장 최근에 저장·등록된 매칭(조인 조회 mock 이 이 상태로 응답 행을 만든다). */
+    private ExchangeMatch tracked;
     private ExchangeMatchService service;
 
     private final User me = user(1L, "나");
@@ -87,9 +89,9 @@ class ExchangeMatchServiceTest {
         ticketRepository = mock(TicketRepository.class);
         lockRepository = mock(ExchangeTicketLockRepository.class);
         candidateRepository = mock(ExchangeCandidateRepository.class);
-        userRepository = mock(UserRepository.class);
+        queryRepository = mock(ExchangeMatchQueryRepository.class);
         service = new ExchangeMatchService(matchRepository, requestRepository, ticketRepository, lockRepository,
-                candidateRepository, userRepository, PerformanceFixtures.timePolicy(),
+                candidateRepository, queryRepository, PerformanceFixtures.timePolicy(),
                 PerformanceFixtures.noopTransactionManager());
 
         myTicket = ticket(MY_TICKET, me, openSession);
@@ -112,10 +114,23 @@ class ExchangeMatchServiceTest {
             if (m.getId() == null) {
                 ReflectionTestUtils.setField(m, "id", MATCH);
             }
+            tracked = m;
             return m;
         });
-        when(userRepository.findById(1L)).thenReturn(Optional.of(me));
-        when(userRepository.findById(2L)).thenReturn(Optional.of(other));
+        when(queryRepository.findOne(anyLong(), anyLong())).thenAnswer(inv -> Optional.of(row(tracked)));
+    }
+
+    /** 조인 조회가 돌려줄 행을 매칭 엔티티 상태로 만든다(실제 SQL 정확성은 MySQL 테스트가 본다). */
+    private ExchangeMatchQueryRepository.Row row(ExchangeMatch m) {
+        ExchangeMatchResponse.Seat mine = new ExchangeMatchResponse.Seat("A", "3", "5", 7L, openSession.getStartsAt());
+        return new ExchangeMatchQueryRepository.Row(m.getId(), m.getStatus().name(), m.getUserAId(), m.getUserBId(),
+                m.getRequestAId(), m.getRequestBId(), m.getTicketAId(), m.getTicketBId(),
+                m.getAReservedAt(), m.getBReservedAt(), m.getCanceledById(), m.getCanceledAt(),
+                m.getCreatedAt(), m.getUpdatedAt(), mine, mine, "X", null, "X", null, "나", "상대");
+    }
+
+    private ExchangeMatchResponse toResponse(ExchangeMatch m, long userId) {
+        return row(m).toResponse(userId);
     }
 
     private static Ticket ticket(long id, User owner, PerformanceSession session) {
@@ -142,6 +157,7 @@ class ExchangeMatchServiceTest {
         if (status == ExchangeMatchStatus.CANCELED) {
             ReflectionTestUtils.setField(m, "canceledAt", NOW.minusHours(1));
         }
+        tracked = m;
         when(matchRepository.findById(MATCH)).thenReturn(Optional.of(m));
         when(matchRepository.findByIdForUpdate(MATCH)).thenReturn(Optional.of(m));
         return m;
@@ -439,7 +455,7 @@ class ExchangeMatchServiceTest {
         assertThat(m.getCanceledById()).isEqualTo(1L);
         assertThat(mine.canceledBy()).isEqualTo("ME");
         // 상대(b)가 같은 매칭을 조회한다면 COUNTERPART 로 보인다
-        assertThat(service.toResponse(m, 2L).canceledBy()).isEqualTo("COUNTERPART");
+        assertThat(toResponse(m, 2L).canceledBy()).isEqualTo("COUNTERPART");
     }
 
     @Test
@@ -456,7 +472,7 @@ class ExchangeMatchServiceTest {
     void 시스템_취소된_매칭은_canceledBy가_SYSTEM이다() {
         ExchangeMatch m = existingMatch(ExchangeMatchStatus.CANCELED);
 
-        assertThat(service.toResponse(m, 1L).canceledBy()).isEqualTo("SYSTEM");
+        assertThat(toResponse(m, 1L).canceledBy()).isEqualTo("SYSTEM");
     }
 
     // ------------------------------------------------------------------ 전이 표 (서비스 동작 x 상태 전 조합)
