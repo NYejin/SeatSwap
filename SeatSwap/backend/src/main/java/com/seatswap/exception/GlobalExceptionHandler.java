@@ -35,7 +35,7 @@ public class GlobalExceptionHandler {
     // 필드에 귀속되는 비즈니스 오류(이메일 중복 등) — @Valid 실패와 동일한 {field: message} 포맷
     @ExceptionHandler(FieldValidationException.class)
     public ResponseEntity<Map<String, String>> handleFieldValidationException(FieldValidationException e) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(e.getField(), e.getMessage()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getErrors());
     }
 
     // 409 — {"message": ..., ...details} (예: {"message":"이미 등록된 공연입니다.","performanceId":3})
@@ -82,6 +82,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, String>> handleNotFoundException(NotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+    }
+
+    // 422 — {"code": ..., "message": ...} (예: 활성 티켓 상한 초과)
+    @ExceptionHandler(BusinessRuleException.class)
+    public ResponseEntity<Map<String, String>> handleBusinessRuleException(BusinessRuleException e) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("code", e.getCode(), "message", e.getMessage()));
     }
 
     @ExceptionHandler(SeatSwapException.class)

@@ -12,7 +12,7 @@
 
 ## 현재 상태
 - 2026-10-07 방향 전환으로 좌석표 트랙 코드와 교환·채팅·후기 등 빈 스켈레톤(컨트롤러·서비스·저장소)을 삭제했다. 좌석표 코드는 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
-- 엔티티는 User·Performance·PerformanceSession·Ticket 4종이다. Ticket은 엔티티·저장소만 있고 티켓 등록 API는 아직 없다.
+- 엔티티는 User·Performance·PerformanceSession·Ticket 4종이다. Ticket은 구역·열·번(표시용 label + 정규화 key)·상태(ACTIVE/INACTIVE)를 가지며 티켓 등록·조회·내리기 API가 있다(FR-03).
 - **회원가입/로그인/JWT 인증(FR-01)은 구현 완료**:
   - `security/JwtTokenProvider` — access/refresh 토큰 발급·검증 (jjwt 0.12.5)
   - `security/JwtAuthenticationFilter` — Authorization 헤더 검증 후 SecurityContext 설정
@@ -22,7 +22,8 @@
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
 - **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`). 공연은 회차와 함께 등록하며, 등록 후에는 아무도 제목·공연장·회차를 수정하거나 공연·회차를 삭제할 수 없다(수정은 추후 관리자 수정 제안으로만, 후속). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이다.
 - 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
-- 테스트는 146건이다.
+- **티켓 등록(FR-03)은 구현 완료** (`TicketController`, `TicketService`, `SeatKeyNormalizer`). 좌석 1개를 텍스트(구역 필수, 열·번은 숫자 또는 문자)로 등록한다. 같은 회차·구역·열·번의 활성 티켓은 1개(DB `uk_ticket_active_seat`), 사용자당 활성 티켓 20개 상한(`users` 행 FOR UPDATE로 직렬화), 회차 당일 끝(다음날 0시 KST)까지만 등록할 수 있다. 교환 희망 범위·매칭·예약은 아직 없다(V4 이후). 내릴 때 예약 잠금 검사는 V4 구현 시 `TicketService.ensureCanDeactivate`에 추가한다.
+- 테스트는 194건이다.
 
 ## 인증 API
 
@@ -44,11 +45,37 @@
 | GET | /api/performances/{id} | 공연 상세 |
 | POST | /api/performances | 공연 등록 (201, 같은 링크가 있으면 409 + performanceId) |
 
+## 티켓 API
+
+모두 로그인이 필요하고 본인 티켓만 다룬다.
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | /api/tickets | 티켓 등록 (body `{sessionId, zone, row, col}`, 201). 같은 좌석의 활성 티켓이 있으면 409 `{message, code: SEAT_ALREADY_REGISTERED \| MY_TICKET_ALREADY_REGISTERED}`(보유자 정보 없음), 활성 티켓 상한 초과 422 `{code: TICKET_LIMIT_REACHED, message}`, 지난 회차·없는 회차·좌석 입력 오류 400(필드 키 `sessionId`/`zone`/`row`/`col`) |
+| GET | /api/tickets/me | 내 활성 티켓 (회차 시각 오름차순, 공연 제목·공연장 이름·회차 시각 포함) |
+| DELETE | /api/tickets/{id} | 티켓 내리기(소프트 삭제 → INACTIVE, 204). 이미 내린 티켓도 204, 본인 티켓이 아니면 404 |
+
+오류 형식은 API마다 다르다 (프론트는 상태 코드와 키로 구분한다).
+
+| 상황 | 상태 | 본문 |
+|---|---|---|
+| 입력 검증(@Valid)·좌석 입력 오류·없는/지난 회차 | 400 | `{필드: 메시지}` — 좌석 입력 오류는 zone/row/col 오류를 한 번에 모아서 반환, `sessionId` 오류(없는 회차·마감)는 별도 |
+| 본문 누락·JSON/타입 불일치(`/api/tickets/abc` 포함) | 400 | `{message}` |
+| 인증 없음·토큰 오류 | 401 | `{message}` |
+| 남의 티켓 내리기·없는 티켓 | 404 | `{message}` (존재 여부 비노출) |
+| 같은 좌석 중복 | 409 | `{message, code}` |
+| 활성 티켓 상한 | 422 | `{code, message}` |
+
+(회차 마감 지난 등록은 현행대로 400 `sessionId`이며 422 `SESSION_CLOSED`로 바꾸지 않았다. 프론트 작업 때 재검토.)
+
+좌석 정규화(비교 키): NFKC, 공백 제거, 영문 대문자. 제어·서식·제로폭·사설·미할당 문자(`\p{C}`)와 변이 선택자는 제거하지 않고 `<구역|열|번>에 사용할 수 없는 문자가 있습니다.`로 거부한다(label·key 공통). 숫자(아랍-인도 숫자 등 Nd)는 ASCII로 바꾸며 `03A`처럼 섞인 값은 그대로 허용한다(앞 0 제거는 순수 숫자만). 열은 끝의 '열', 번은 끝의 '번' 제거, 숫자는 앞 0 제거(`03` → `3`). 숫자는 1 이상 상한 이하(기본 999), 문자(`A`, `가`)도 허용한다. 구역 접미사('구역', '층')는 지우지 않는다. 표시용 원문은 공백만 정리해 `*_label`에 저장한다.
+설정(`application.yml` `ticket.*`, 환경변수): `TICKET_MAX_ACTIVE_PER_USER`(20), `TICKET_MAX_ROW_NUMBER`(999), `TICKET_MAX_COL_NUMBER`(999).
+
 그 외 모든 API는 `Authorization: Bearer {accessToken}` 헤더가 필요하다 (SecurityConfig 기준).
 
 ## DB 마이그레이션 (Flyway)
 
-- 마이그레이션 파일: `src/main/resources/db/migration/V{n}__{snake_description}.sql` (V1 = 새 기준선 5개 테이블, V2 = `venue` 삭제·`performance.venue_name` 추가, 한국어 주석)
+- 마이그레이션 파일: `src/main/resources/db/migration/V{n}__{snake_description}.sql` (V1 = 새 기준선 5개 테이블, V2 = `venue` 삭제·`performance.venue_name` 추가, V3 = `ticket` 좌석(구역·열·번)·상태 컬럼과 활성 좌석 유일 제약, 한국어 주석)
 - 적용 이력: `SELECT * FROM flyway_schema_history;` (docker: `docker exec seatswap-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" seatswap -e "SELECT * FROM flyway_schema_history"'`)
 - 규칙: 스키마 변경은 새 V 파일로만, 적용된 파일 수정 금지, `ddl-auto: validate`, 엔티티 변경과 마이그레이션을 함께 작성
 - 앱 기동 시 자동 적용된다.
@@ -60,6 +87,9 @@
   - 백업 권장: 적용 전 `mysqldump`로 `venue`·`performance`를 받아 둔다.
   - 되돌릴 수 없는 손실: `venue.address`, `status`, `verified_by`, `verified_at`, `normalized_name`.
   - 가드 실패(venue 매칭 없는 공연이 있어 SIGNAL로 중단)한 경우: 임시 프로시저 `v2_drop_venue`와 NULL 허용 `venue_name` 컬럼이 남을 수 있다. 데이터를 고친 뒤 `flyway repair`로 실패 기록을 지우고 다시 적용하면 남은 단계부터 이어서 진행된다(프로시저는 재실행 시 먼저 DROP 된다).
+- **V3 적용 안내 (`ticket` 좌석 컬럼)**: `zone_label/zone_key`, `row_key`, `col_key`, `status`, `created_at/updated_at`, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`(회차·구역·열·번·active_flag), `idx_ticket_user_status`를 추가하고 `row_label`/`col_label`을 NOT NULL VARCHAR(20)으로 바꾼다.
+  - 가드: `ticket`에 행이 있으면 아무것도 바꾸기 전에 SIGNAL로 실패한다(새 NOT NULL 구역 컬럼에 채울 값이 없음). 적용 전 `SELECT COUNT(*) FROM ticket;`가 0인지 확인한다. 행이 있어 실패했다면 테스트 행을 지우고 `flyway repair`(실패 기록 삭제) 후 다시 적용한다. 임시 프로시저 `v3_guard_ticket_empty`가 남을 수 있으나 재실행 시 먼저 DROP 한다.
+  - 주의: `./gradlew bootRun`은 `backend/.env`를 읽어 `SPRING_DATASOURCE_URL`을 덮어쓴다. 임시 DB로 검증하려면 `bootRun`이 아니라 `bootJar` 후 `java -jar`로 환경변수를 지정해 실행한다.
 - MySQL 최소 버전 8.0.16 — 그 미만은 CHECK 제약을 문법만 받고 강제하지 않는다 (현재 docker 이미지는 mysql:8.0).
 
 ## 관리자 권한
@@ -82,9 +112,14 @@ cp .env.example .env
 
 `.env`는 `.gitignore`에 등록되어 있어 커밋되지 않는다.
 
+## 후속 메모 (티켓 등록)
+- V4 후보 조회·스케줄러에서 회차 마감(당일 끝)이 지난 회차의 티켓은 제외하거나 비활성 처리한다.
+- `POST /api/tickets` 레이트 리밋을 도입할 때 함께 포함한다.
+- V4에서 `findOwned`를 `PESSIMISTIC_WRITE`로 바꾸고, 여러 티켓을 잠글 때는 ticket id 오름차순으로 잠근다(데드락 방지).
+
 ## 다음 단계
-1. 교환 도메인 설계 (좌석 키 = 공연·구역·열·번, 희망 범위·추가금·회차 조건 — CLAUDE.md '확정 전 기본안' 확인 후 확정) 및 스키마 V2
-2. 티켓 등록 API (텍스트 좌석 입력)
+1. 교환 도메인 구현: 설계안(`산출물/08_ERD/exchange-schema-design.md`)의 V4(희망 범위·희망 좌석·희망 회차·차단·매칭·예약 잠금·이력) 마이그레이션과 엔티티
+2. 티켓 자동 비활성(회차 당일 끝 경과, 스케줄러)과 '내 티켓 인증'
 3. 자동 매칭 (후보 제시, 양쪽 수락으로 확정)
 4. 채팅(WebSocketConfig 구현)·후기
 5. 배포 시 SecurityConfig의 CORS allowed-origin을 실제 프론트 도메인으로 교체
