@@ -114,9 +114,22 @@ export default function MatchesPage() {
           ))}
         </div>
 
-        <p className={liveRegionClass(statusText, ui.status)} role="status">
-          {statusText}
-        </p>
+        {/* 상태 문구(live region, 항상 렌더)와 새로고침 아이콘을 한 행에 두고 가로 중심선을 맞춘다 */}
+        <div className="flex items-center gap-1">
+          <p className={liveRegionClass(statusText, ui.status)} role="status">
+            {statusText}
+          </p>
+          {state.status === "success" && (
+            <button
+              type="button"
+              className="-my-3 inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full"
+              onClick={() => refresh()}
+              aria-label="새로고침"
+            >
+              <img src="/icons/refresh.svg" alt="" aria-hidden="true" className="block size-5 opacity-80 hover:opacity-100" />
+            </button>
+          )}
+        </div>
 
         {state.status === "error" && (
           <div className={`${ui.card} flex flex-col gap-3`}>
@@ -144,15 +157,6 @@ export default function MatchesPage() {
 
         {state.status === "success" && state.items.length > 0 && (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
-                onClick={() => refresh()}
-              >
-                <img src="/icons/refresh.svg" alt="새로고침" className="w-5 h-5 opacity-80 hover:opacity-100" />
-              </button>
-            </div>
             <ul className="flex flex-col gap-3" aria-label={role === "SENT" ? "보낸 제안 목록" : role === "RECEIVED" ? "받은 제안 목록" : "전체 매칭 목록"}>
               {state.items.map((m) => (
                 <li key={m.id}>
@@ -176,6 +180,11 @@ export default function MatchesPage() {
     </div>
   );
 }
+
+/** dt: 좁을 때는 회색 작은 글자(원래 레이아웃), 480px 이상에서는 배지 모양 (ui.badge와 같은 모양) */
+const DT_CLASS =
+  "text-sm/[normal] text-gray-500 min-[30rem]:inline-flex min-[30rem]:items-center min-[30rem]:rounded-full min-[30rem]:bg-gray-100 min-[30rem]:px-2.5 min-[30rem]:py-0.5 min-[30rem]:text-[0.8125rem]/[normal] min-[30rem]:text-gray-700";
+const DD_CLASS = "text-sm/[normal] text-gray-900 min-[30rem]:my-1 min-[30rem]:ml-2";
 
 type Action = "accept" | "reject" | "cancel";
 
@@ -265,30 +274,31 @@ function MatchCard({
         </span>
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
-        <div>
-          <dt className={ui.badge}>내 자리</dt>
-          <dd className="ml-2 my-1 min-w-0 text-sm/[normal] text-gray-900">
+      {/* 좁은 화면(<480px): 라벨|값 한 줄 레이아웃, 넓은 화면: 2열 카드형(라벨 배지 위, 값 아래). 항목 래퍼는 좁을 때 contents라 dt/dd가 바로 그리드 칸이 된다 */}
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 min-[30rem]:grid-cols-2 min-[30rem]:gap-y-4">
+        <div className="contents min-[30rem]:block">
+          <dt className={DT_CLASS}>내 자리</dt>
+          <dd className={`${DD_CLASS} min-w-0`}>
             <span className="font-semibold">{formatSeat(m.mySeat)}</span>
             {m.myRequestDeleted && <DeletedTag label="내 교환 조건을 삭제했어요" text="(내 조건 삭제됨)" />}
             <span className={`block text-sm/[normal] ${anyDeleted ? "text-gray-600" : "text-gray-500"}`}>{formatKstDateTime(m.mySeat.startsAt)}</span>
           </dd>
         </div>
-        <div>
-          <dt className={`${ui.badge}`}>상대 자리</dt>
-          <dd className="ml-2 my-1 min-w-0 text-sm/[normal] text-gray-900">
+        <div className="contents min-[30rem]:block">
+          <dt className={DT_CLASS}>상대 자리</dt>
+          <dd className={`${DD_CLASS} min-w-0`}>
             <span className="font-semibold">{formatSeat(m.counterpartSeat)}</span>
             {m.counterpartRequestDeleted && <DeletedTag label="상대가 교환 조건을 삭제했어요" text="(삭제)" />}
             <span className={`block text-sm/[normal] ${anyDeleted ? "text-gray-600" : "text-gray-500"}`}>{formatKstDateTime(m.counterpartSeat.startsAt)}</span>
           </dd>
         </div>
-        <div>
-          <dt className={ui.badge}>내 추가금</dt>
-          <dd className="ml-2 my-1 text-sm/[normal] text-gray-900">{formatExtra(m.myExtraType, m.myExtraAmount)}</dd>
+        <div className="contents min-[30rem]:block">
+          <dt className={DT_CLASS}>내 추가금</dt>
+          <dd className={DD_CLASS}>{formatExtra(m.myExtraType, m.myExtraAmount)}</dd>
         </div>
-        <div>
-          <dt className={`${ui.badge}`}>상대 추가금</dt>
-          <dd className="ml-2 my-1 text-sm/[normal] text-gray-900">{formatExtra(m.counterpartExtraType, m.counterpartExtraAmount)}</dd>
+        <div className="contents min-[30rem]:block">
+          <dt className={DT_CLASS}>상대 추가금</dt>
+          <dd className={DD_CLASS}>{formatExtra(m.counterpartExtraType, m.counterpartExtraAmount)}</dd>
         </div>
       </dl>
 
