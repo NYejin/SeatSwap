@@ -2,7 +2,9 @@
 
 작성 2026-10-08 / 브랜치 `docs/exchange-schema-design` / 상태: **설계 확정(2026-10-08 사용자 답변 반영, 남은 확인 필요는 6절 끝), 구현은 별도 지시 후**
 
-> **구현 상태 (2026-10-08, 브랜치 `feature/ticket-register`, 미커밋)**: 1.1절 ticket 변경은 **V3로 구현 완료**(`V3__ticket_seat_columns.sql`, ticket 행이 있으면 SIGNAL 가드로 실패, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`, `idx_ticket_user_status`; 정규화 키는 서비스 `SeatKeyNormalizer`가 NFKC·공백 제거·대문자·앞 0 제거·끝의 '열'/'번' 제거로 만든다). 티켓 등록 API(`POST /api/tickets`, `GET /api/tickets/me`, `DELETE /api/tickets/{id}`)도 구현됨. V4(exchange_request 등)는 미구현이며, 교환 요청 존재·예약 잠금 시 409 검사는 V4에서 `TicketService.ensureCanDeactivate`에 추가한다.
+> **구현 상태 (2026-10-08, 브랜치 `feature/ticket-register`, 미커밋)**: 1.1절 ticket 변경은 **V3로 구현 완료**(`V3__ticket_seat_columns.sql`, ticket 행이 있으면 SIGNAL 가드로 실패, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`, `idx_ticket_user_status`; 정규화 키는 서비스 `SeatKeyNormalizer`가 NFKC·공백 제거·대문자·앞 0 제거·끝의 '열'/'번' 제거로 만든다). 티켓 등록 API(`POST /api/tickets`, `GET /api/tickets/me`, `DELETE /api/tickets/{id}`)도 구현됨. V4 희망 쪽은 아래 메모대로 구현 완료다.
+>
+> **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-want`, 미커밋)**: **V4 희망 쪽 구현 완료** — `V4__exchange_want_tables.sql`이 `exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session` 4개 테이블을 만든다(API: `POST /api/exchange/requests`, `GET /api/exchange/requests/me`, `PATCH/DELETE /api/exchange/requests/{id}`). **매칭 쪽(차단·`exchange_match`·`exchange_ticket_lock`·`chat_message`·`exchange_history`)은 미구현이며 V5 이후**로 번호를 옮긴다(이 문서 본문의 'V4' 표기 중 매칭 쪽 테이블은 V5 이후로 읽는다). 티켓을 내리면 해당 요청이 CLOSED로 바뀌고(이후 수정 422 `TICKET_NOT_ACTIVE`), 예약 잠금 409는 매칭 구현 때 `ensureCanDeactivate`/`ensureNoActiveProposal` 훅에서 추가한다. 서버 안전 상한 5,000석·50범위(`exchange.want.*`, 초과 422 `WANT_SEAT_LIMIT_EXCEEDED`/`WANT_RANGE_LIMIT_EXCEEDED`). 리뷰 반영(테스트 254건): 자기 좌석 포함 422 `WANT_INCLUDES_OWN_SEAT`는 희망 회차가 내 티켓 회차 하나뿐일 때만이며 다른 회차가 있으면 같은 위치도 허용한다(사용자가 별도 결정 없이 추천안 채택, 이의 시 변경 가능). 상한 판정은 합집합 기준. 요청에도 지난 회차 마감 적용(422 `SESSION_CLOSED`, 희망 회차 마감은 400 `wantSessions[i].sessionId`). 열·번 부호 정수형은 400. 잠금 순서는 항상 티켓→요청. 남은 한계는 요청 응답의 열·번 범위가 정규화 값이라 원문 표기를 복원할 수 없다는 것뿐이다. V4 실제 파일에는 초안에 없던 `ck_exchange_want_range_sort`, `ck_exchange_want_session_priority`, `idx_exchange_want_range_request`, `idx_exchange_want_session_session`이 추가됐다(4.1 참고).
 기준선: V1+V2 (users, performance, performance_session, ticket 4개 테이블). 이 문서의 SQL은 초안이며 마이그레이션 파일이 아니다.
 좌석표(`SeatMapLayout`·`uid`·`section`)에 의존하지 않는다. 후기·신뢰도·신고 테이블은 만들지 않는다(신고는 8절에서 확장 여지만 언급).
 
@@ -349,6 +351,11 @@ CREATE TABLE exchange_ticket_lock (
   CONSTRAINT fk_exchange_ticket_lock_ticket FOREIGN KEY (ticket_id) REFERENCES ticket (id),
   CONSTRAINT fk_exchange_ticket_lock_match  FOREIGN KEY (match_id)  REFERENCES exchange_match (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+-- [V4 실제 파일 추가분 — 구현 반영] 초안의 exchange_want_range / exchange_want_session 에 다음이 추가됐다.
+--   exchange_want_range  : CONSTRAINT ck_exchange_want_range_sort CHECK (sort_order >= 0),
+--                          KEY idx_exchange_want_range_request (request_id, sort_order)
+--   exchange_want_session: CONSTRAINT ck_exchange_want_session_priority CHECK (priority >= 1),
+--                          KEY idx_exchange_want_session_session (performance_session_id)
 -- 나머지(exchange_want_range, exchange_want_session, user_block, exchange_match, chat_message, exchange_history)는
 -- 1절의 컬럼·제약표 그대로 같은 패턴으로 작성한다. exchange_match 는 먼저 만들어야 lock 의 FK 가 걸린다.
 ```
