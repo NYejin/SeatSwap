@@ -4,9 +4,11 @@
 
 > **구현 상태 (2026-10-08, 브랜치 `feature/ticket-register`, 미커밋)**: 1.1절 ticket 변경은 **V3로 구현 완료**(`V3__ticket_seat_columns.sql`, ticket 행이 있으면 SIGNAL 가드로 실패, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`, `idx_ticket_user_status`; 정규화 키는 서비스 `SeatKeyNormalizer`가 NFKC·공백 제거·대문자·앞 0 제거·끝의 '열'/'번' 제거로 만든다). 티켓 등록 API(`POST /api/tickets`, `GET /api/tickets/me`, `DELETE /api/tickets/{id}`)도 구현됨. V4 희망 쪽은 아래 메모대로 구현 완료다.
 >
-> **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-candidates`, 미커밋)**: **2절 후보 조회 구현 완료** — `GET /api/exchange/requests/{id}/candidates?page&size`(기본 20, 최대 100), `ExchangeCandidateRepository`(네이티브 SQL)·`ExchangeCandidateService`. 스키마 변경 없음(V4 인덱스로 충분). 2절 SQL과 다른 점은 2절 끝의 '구현 반영' 참고(STRAIGHT_JOIN, 정렬, **차단·같은 쌍 채팅·예약 잠금 제외는 V5 테이블이 없어 미적용** — 확장 지점 `additionalExclusions()`). X–X·NEG–NEG 성립은 사용자 미확정 기본값(확인 필요).
+> **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-candidates`, 미커밋)**: **2절 후보 조회 구현 완료** — `GET /api/exchange/requests/{id}/candidates?page&size`(기본 20, 최대 100), `ExchangeCandidateRepository`(네이티브 SQL)·`ExchangeCandidateService`. 스키마 변경 없음(V4 인덱스로 충분). 2절 SQL과 다른 점은 2절 끝의 '구현 반영' 참고(STRAIGHT_JOIN, 정렬, **차단·같은 쌍 채팅·예약 잠금 제외는 V5 테이블이 없어 미적용** — 확장 지점 `additionalExclusions()`; **V5(위 갱신)에서 같은 쌍 채팅·예약 잠금은 적용, 차단만 미적용**). X–X·NEG–NEG 성립은 사용자 미확정 기본값(확인 필요).
 >
 > **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-want`, 미커밋)**: **V4 희망 쪽 구현 완료** — `V4__exchange_want_tables.sql`이 `exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session` 4개 테이블을 만든다(API: `POST /api/exchange/requests`, `GET /api/exchange/requests/me`, `PATCH/DELETE /api/exchange/requests/{id}`). **매칭 쪽(차단·`exchange_match`·`exchange_ticket_lock`·`chat_message`·`exchange_history`)은 미구현이며 V5 이후**로 번호를 옮긴다(이 문서 본문의 'V4' 표기 중 매칭 쪽 테이블은 V5 이후로 읽는다). 티켓을 내리면 해당 요청이 CLOSED로 바뀌고(이후 수정 422 `TICKET_NOT_ACTIVE`), 예약 잠금 409는 매칭 구현 때 `ensureCanDeactivate`/`ensureNoActiveProposal` 훅에서 추가한다. 서버 안전 상한 5,000석·50범위(`exchange.want.*`, 초과 422 `WANT_SEAT_LIMIT_EXCEEDED`/`WANT_RANGE_LIMIT_EXCEEDED`). 리뷰 반영(테스트 254건): 자기 좌석 포함 422 `WANT_INCLUDES_OWN_SEAT`는 희망 회차가 내 티켓 회차 하나뿐일 때만이며 다른 회차가 있으면 같은 위치도 허용한다(사용자가 별도 결정 없이 추천안 채택, 이의 시 변경 가능). 상한 판정은 합집합 기준. 요청에도 지난 회차 마감 적용(422 `SESSION_CLOSED`, 희망 회차 마감은 400 `wantSessions[i].sessionId`). 열·번 부호 정수형은 400. 잠금 순서는 항상 티켓→요청. 남은 한계는 요청 응답의 열·번 범위가 정규화 값이라 원문 표기를 복원할 수 없다는 것뿐이다. V4 실제 파일에는 초안에 없던 `ck_exchange_want_range_sort`, `ck_exchange_want_session_priority`, `idx_exchange_want_range_request`, `idx_exchange_want_session_session`이 추가됐다(4.1 참고).
+> **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-propose-accept`, 미커밋)**: **V5 구현 완료 — `V5__exchange_match_tables.sql`이 `exchange_match`·`exchange_ticket_lock` 2개 테이블만 만든다.** `user_block`·`chat_message`·`exchange_history`는 V6 이후다(이 문서의 'V5 이후' 표기 중 이 3개는 V6 이후로 읽는다). 사용자 결정(명령 6)에 따라 요청당 '제안 1개→수락' 모델이 아니라 확정 흐름(후보 선택→채팅 여러 개 동시→양쪽 예약→각자 완료)에 매핑했다. 구현 범위는 매칭 생성·예약(accept)·거절(reject)·취소(cancel)이며 COMPLETED·채팅·교환 이력·차단·매칭 조회/목록 API는 범위 밖이다. 1.7·1.8·3절·4절의 V5 변경점은 각 절 끝의 '구현 반영 (V5)'를 본다.
+>
 기준선: V1+V2 (users, performance, performance_session, ticket 4개 테이블). 이 문서의 SQL은 초안이며 마이그레이션 파일이 아니다.
 좌석표(`SeatMapLayout`·`uid`·`section`)에 의존하지 않는다. 후기·신뢰도·신고 테이블은 만들지 않는다(신고는 8절에서 확장 여지만 언급).
 
@@ -129,9 +131,17 @@
 | open_flag | TINYINT GENERATED STORED | `IF(status IN ('CHATTING','RESERVED'),1,NULL)` |
 
 - `uk_exchange_match_open_pair` UNIQUE (request_low_id, request_high_id, open_flag): 같은 요청 쌍의 열린 매칭 1개(방향 무관, 중복 채팅방 방지).
-- `idx_exchange_match_user_a` (user_a_id, status), `idx_exchange_match_user_b` (user_b_id, status): 내 매칭 목록. 한 요청의 채팅 여러 개는 허용(요청당 열린 매칭 수 제한 없음). `idx_exchange_match_request_b` (request_b_id)는 FK용.
+- ~~`idx_exchange_match_user_a` (user_a_id, status), `idx_exchange_match_user_b` (user_b_id, status)~~ -> V5에서 단일 컬럼 `(user_a_id)`/`(user_b_id)`로 변경(3.4): 내 매칭 목록. 한 요청의 채팅 여러 개는 허용(요청당 열린 매칭 수 제한 없음). `idx_exchange_match_request_b` (request_b_id)는 FK용.
 - 상태 의미: CHATTING(채팅, 예약 대기) -> RESERVED(양쪽 예약 완료, 두 티켓 잠김, 이후 티켓팅 사이트에서 양도 진행) -> COMPLETED(양쪽 모두 완료). 'TRANSFERRING' 같은 별도 양도 상태는 두지 않는다: 양도는 서비스 밖에서 일어나며 RESERVED + 각자 완료 시각으로 충분하다. CANCELED = 취소(사용자 또는 시스템). **취소는 재매칭 불가가 아니다**: 상태만 원상태로 돌아가고(잠금 해제, 티켓은 다시 후보 대상) 같은 상대와 새 매칭을 다시 열 수 있다(`open_flag`가 NULL이 되어 유일 제약에 걸리지 않음). 양쪽 완료 전에는 누구든 취소할 수 있다. 한쪽만 완료한 매칭은 자동 완료·자동 취소가 없고 7일 경과 알림만 보낸다(`a/b_completed_at`과 `updated_at`으로 조회, 별도 컬럼 없음). 양쪽 완료로 두 티켓의 좌석이 바뀌면 그 티켓들의 다른 열린 매칭은 시스템이 CANCELED(canceled_by_id NULL)로 바꾼다.
 - 점수·랭킹·신뢰도 컬럼 없음. 조건 일치는 저장하지 않는다.
+
+**구현 반영 (V5, 2026-10-08, `V5__exchange_match_tables.sql`) — 위 초안과의 차이**
+- 컬럼 추가: `ticket_a_id`·`ticket_b_id` BIGINT NOT NULL, FK -> ticket (예약 잠금·훅 검사가 요청을 거치지 않고 티켓을 바로 참조하도록).
+- CHECK 추가: `ck_exchange_match_distinct_tickets`(ticket_a_id <> ticket_b_id), `ck_exchange_match_canceled`(status = 'CANCELED'이면 canceled_at NOT NULL, 아니면 canceled_at·canceled_by_id 모두 NULL). 기존 요청 서로 다름 CHECK는 유지.
+- FK 추가: `canceled_by_id` -> users.
+- 인덱스 변경: `idx_exchange_match_user_a (user_a_id, status)` / `idx_exchange_match_user_b (user_b_id, status)`는 **단일 컬럼 `(user_a_id)` / `(user_b_id)`로 변경**(아래 3.4 FK 인덱스 규칙). 추가: `idx_exchange_match_request_a (request_a_id)`, `idx_exchange_match_ticket_a (ticket_a_id)`, `idx_exchange_match_ticket_b (ticket_b_id)`. `idx_exchange_match_request_b (request_b_id)`는 유지.
+- 상태 의미: `reject`(제안받은 b측만)와 `cancel`(참여자 누구나) **모두 CANCELED**이고 둘의 구분은 `canceled_by_id`로 한다(시스템 취소 = NULL). RESERVED였던 매칭이 취소되면 `exchange_ticket_lock`을 해제한다. 취소 후 같은 쌍은 다시 매칭할 수 있다(`open_flag`가 NULL이 되어 유일 제약에 걸리지 않음). 불허 전이는 409 `MATCH_STATE_CONFLICT`.
+- 규칙: 티켓 좌석·회차 갱신은 COMPLETED 시점(양쪽 완료)에 한 트랜잭션에서 두 티켓을 교체한다(g). 이미 시작한 채팅의 accept에는 회차 마감 검사를 하지 않는다(공연 시작 후에도 예약·취소 가능, 확정).
 
 ### 1.8 exchange_ticket_lock — 예약 잠금 (티켓당 1개)
 | 컬럼 | 타입 | 제약 |
@@ -140,7 +150,9 @@
 | match_id | BIGINT | NOT NULL, FK -> exchange_match, idx |
 | created_at | DATETIME(6) | NOT NULL |
 
-예약 확정 시 매칭 한 건의 두 티켓 행을 한 트랜잭션에서 INSERT(티켓 id 오름차순). 취소·종료·완료 때 DELETE. PK 충돌 = '이미 다른 매칭에서 예약됨'. 근거는 3절.
+예약 확정 시 매칭 한 건의 두 티켓 행을 한 트랜잭션에서 INSERT(티켓 id 오름차순). 취소·종료·완료 때 DELETE. PK 충돌 = '이미 다른 매칭에서 예약됨'(409 `TICKET_ALREADY_RESERVED`). 근거는 3절.
+
+**구현 반영 (V5)**: 두 FK(`fk_exchange_ticket_lock_ticket`, `fk_exchange_ticket_lock_match`)를 **ON DELETE CASCADE로 확정**했다(부모 행 삭제 시 잠금도 함께 삭제). 요청 삭제 정책은 4절 참고.
 
 ### 1.9 chat_message — 채팅 메시지 (최소안)
 | 컬럼 | 타입 | 제약 |
@@ -241,7 +253,7 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 ### 구현 반영 (2026-10-08, 위 초안 SQL과의 차이)
 - **`SELECT STRAIGHT_JOIN`**: FROM 절 순서(내 요청 -> 내 희망 회차·좌석 -> 상대 티켓 -> 상대 요청 -> 상대 희망 회차·좌석)대로 조인하도록 고정했다. 힌트가 없으면 요청 수가 적을 때 옵티마이저가 상대 요청 테이블(`exchange_request b`)을 풀스캔으로 시작해 작업량이 전체 요청 수에 비례한다(EXPLAIN으로 확인). 고정하면 작업량이 내 희망 좌석 수 x 희망 회차 수에만 비례한다.
 - **정렬**: 초안의 `wsa.priority, psb.starts_at, tb.id` 대신 구현은 `wsa.priority ASC, b.created_at DESC, b.id DESC`(내 희망 회차 priority -> 상대 요청 최신순). 점수·랭킹·신뢰도 없음, '같은 회차 우선'은 적용하지 않는다. 마감 조건은 `NOW(6) < DATE_ADD(DATE(starts_at), …)` 대신 `psb.starts_at >= 오늘 0시(KST)`로 동치 구현했다.
-- **미적용(V5 필요)**: 초안의 차단(`user_block`)·같은 쌍 열린 채팅(`exchange_match`)·예약 잠금(`exchange_ticket_lock`) `NOT EXISTS` 3개는 해당 테이블이 없어 SQL에 넣지 않았다. V5에서 `ExchangeCandidateRepository.additionalExclusions()`에 추가한다(현재 후보에 차단 사용자·잠긴 티켓이 보일 수 있다).
+- **V5 적용 (2026-10-08, `feature/exchange-propose-accept`)**: 같은 쌍 열린 채팅(`exchange_match`의 `open_flag`) `NOT EXISTS`와 상대 티켓 예약 잠금(`exchange_ticket_lock`) `NOT EXISTS`를 `additionalExclusions()`에 추가했다. **차단(`user_block`)은 테이블이 없어(V6 이후) 여전히 미적용**이다(차단 사용자가 후보에 보일 수 있다). 또한 **내 티켓이 예약 잠금 상태이면 후보 조회 자체를 422 `TICKET_LOCKED`로 거절**한다(위 '주의'의 서비스 검사).
 - **추가금 호환**: 초안 두 줄(POS–POS, POS–X, X–POS 불성립)을 그대로 구현했고 호환표와 일치한다. X–X·NEG–NEG 성립은 사용자 미확정 기본값(확인 필요).
 - **응답**: 상대 좌석(구역·열·번)·회차·닉네임·내/상대 추가금 유형·금액·`settlementHint`(POS–NEG이고 금액 범위가 겹치면 {min,max}, 참고값). 신뢰도 필드 없음.
 
@@ -291,6 +303,10 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 - 완료 교체(확정 g, 두 사람이 모두 완료를 누르는 순간): 두 티켓 + 매칭 행을 id 순으로 잠금. 티켓 교체는 좌석 유일 제약 때문에 A를 임시 INACTIVE -> B를 A의 좌석으로 -> A를 B의 좌석 + ACTIVE 순으로 한 트랜잭션에서 처리한다(한 UPDATE 문에서 서로 맞교환하면 행 단위 검사로 중간에 유일 위반).
 - 동시 두 사람이 같은 좌석 등록: 3.1이 하나만 통과시킴.
 
+### 3.4 FK 인덱스에 갱신 컬럼 금지 (V5에서 얻은 규칙, 실제 교착 재현)
+- **외래키에 쓰이는 인덱스에 `status` 같은 자주 갱신되는 컬럼을 붙이지 않는다.** 초안의 `idx_exchange_match_user_a (user_a_id, status)`처럼 FK 인덱스에 갱신 컬럼이 들어 있으면, 그 컬럼을 UPDATE할 때 InnoDB가 인덱스 항목 갱신과 함께 부모 행(users 등)에 공유(S) 잠금을 걸어 다른 트랜잭션과 교착이 났다(동시성 테스트에서 실제 재현). FK 인덱스는 **단일 컬럼**(예: `(user_a_id)`)으로 두고, 상태 필터가 필요한 조회는 별도 인덱스로 분리하거나 소량 스캔으로 처리한다.
+- 잠금 순서 규약(V5 확정): 티켓 id 오름차순 -> 요청 id 오름차순 -> 매칭.
+
 ---
 
 ## 4. Flyway 계획
@@ -303,6 +319,8 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
   - ticket은 엔티티만 있고 API가 없으므로 정상 환경에서는 0행일 가능성이 높다. 그러나 신규 `zone_label/zone_key` NOT NULL에 채울 값이 없다(기존 행은 구역 정보가 없음).
   - 추천: V3 맨 앞에 V2와 같은 `SIGNAL SQLSTATE '45000'` 가드로 **ticket 행이 있으면 실패**하고 '테스트 행을 삭제한 뒤 `flyway repair` 후 재시도'를 안내한다. 대안은 구역을 `'미입력'`으로 채우는 이관인데 같은 회차·번호 중복에서 활성 유일 제약 위반 위험이 있어 비추천(이 판단은 위 확인 결과가 0이면 무의미해지므로 구현 직전에 행 수를 다시 확인한다).
   - 가드와 별개로 `row_label/col_label`을 NOT NULL로 바꾸는 단계도 NULL 행이 있으면 실패하므로 같은 가드가 막아준다.
+- **V5 구현 (2026-10-08)**: `V5__exchange_match_tables.sql` = `exchange_match` + `exchange_ticket_lock`만. 위 `V4__exchange_domain.sql`의 나머지(`user_block`·`chat_message`·`exchange_history`)는 **V6 이후**로 미룬다.
+- **요청 삭제 정책 (V5 훅 채움)**: 열린 매칭(CHATTING/RESERVED)이 있는 요청은 PATCH/DELETE 모두 409 `ACTIVE_MATCH_EXISTS`. 닫힌 요청을 삭제할 때는 CANCELED 매칭 행을 먼저 삭제하고, COMPLETED 매칭이 하나라도 있으면 409 `MATCH_HISTORY_EXISTS`(이력 보존). 잠긴 티켓(RESERVED 매칭)을 내리면 409 `TICKET_RESERVED`; 잠기지 않았다면 요청을 CLOSED로 바꾸고 그 티켓의 CHATTING 매칭을 시스템 취소(canceled_by_id NULL)한다.
 - 엔티티 영향(backend-dev): `Ticket`에 필드 추가(zone/row/col label·key, status, 시각), 신규 엔티티 8개(ExchangeRequest, ExchangeWantRange, ExchangeWantSeat(복합키), ExchangeWantSession(복합키), UserBlock, ExchangeMatch, ExchangeTicketLock, ChatMessage, ExchangeHistory — 채팅은 후순위). 생성 컬럼은 매핑하지 않거나 읽기 전용.
 
 ### 4.1 V3/V4 초안 SQL (설계 문서 안에서만 사용, 파일 아님)
