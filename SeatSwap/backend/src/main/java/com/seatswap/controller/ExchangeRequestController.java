@@ -4,6 +4,9 @@ import com.seatswap.dto.request.ExchangeRequestCreateRequest;
 import com.seatswap.dto.request.ExchangeRequestUpdateRequest;
 import com.seatswap.dto.response.ExchangeRequestResponse;
 import com.seatswap.security.AuthUserPrincipal;
+import com.seatswap.dto.response.ExchangeCandidateResponse;
+import com.seatswap.dto.response.PageResponse;
+import com.seatswap.service.ExchangeCandidateService;
 import com.seatswap.service.ExchangeRequestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +32,7 @@ import java.util.List;
 public class ExchangeRequestController {
 
     private final ExchangeRequestService exchangeRequestService;
+    private final ExchangeCandidateService exchangeCandidateService;
 
     /** 201 + 등록된 요청. 티켓당 1개(중복 409), 남의 티켓 403, 없는 티켓 404, 내린 티켓·내 좌석 포함·상한 초과 422. */
     @PostMapping
@@ -51,6 +55,15 @@ public class ExchangeRequestController {
                                           @Valid @RequestBody ExchangeRequestUpdateRequest request,
                                           @AuthenticationPrincipal AuthUserPrincipal principal) {
         return exchangeRequestService.update(principal.userId(), id, request);
+    }
+
+    /** 매칭 후보(조건이 서로 맞는 상대 요청). 남의 요청 403, 없는 요청 404, 닫힌 요청·내린 티켓·마감 422. size 기본 20, 최대 100. */
+    @GetMapping("/{id}/candidates")
+    public PageResponse<ExchangeCandidateResponse> candidates(@PathVariable Long id,
+                                                              @RequestParam(defaultValue = "0") int page,
+                                                              @RequestParam(defaultValue = "20") int size,
+                                                              @AuthenticationPrincipal AuthUserPrincipal principal) {
+        return exchangeCandidateService.findCandidates(principal.userId(), id, page, size);
     }
 
     /** 하드 삭제 -> 204. 남의 요청 403, 없는 요청 404. */
