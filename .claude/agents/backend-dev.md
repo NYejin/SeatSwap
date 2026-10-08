@@ -24,9 +24,9 @@ com.seatswap
 ```
 
 ## 반드시 지킬 것
-- 교환 도메인(희망 범위·펼친 개별 좌석·매칭·채팅·후기)은 아직 구현 전이다. 이전 스켈레톤(`ExchangeRequest`·`ExchangeMatch`·`ChatRoom`·`Message`·`Review` 등)은 삭제되었고,
-  티켓 등록(`TicketController`·`TicketService`·`SeatKeyNormalizer`, Flyway V3)은 구현 완료다(2026-10-08). 희망 범위·희망 좌석·매칭은 V4(설계 확정안 exchange-schema-design.md)에서 구현하며, 이때 티켓 내리기(`TicketService.ensureCanDeactivate`)에 교환 요청·예약 잠금 409 검사를 추가한다. 적용된 Flyway 파일(V1~V3)은 수정하지 않는다.
-- 엔티티는 산출물/08_ERD(erd.dot) 기준선을 따른다 (현재 User, Performance, PerformanceSession, Ticket(V3 좌석 컬럼) — Venue는 V2로 삭제, 공연장은 `Performance.venueName` 텍스트).
+- 교환 도메인 중 희망 범위·펼친 좌석·희망 회차는 구현됐고 매칭·채팅·후기 쪽은 아직 구현 전이다. 이전 스켈레톤(`ExchangeRequest`·`ExchangeMatch`·`ChatRoom`·`Message`·`Review` 등)은 삭제되었고,
+  티켓 등록(`TicketController`·`TicketService`·`SeatKeyNormalizer`, Flyway V3)은 구현 완료다(2026-10-08). 교환 희망 조건 등록(`ExchangeRequestController`·`ExchangeRequestService`·`WantSeatExpander`, Flyway V4 4개 테이블)도 구현 완료다(2026-10-08; 티켓 내리기는 해당 요청을 CLOSED로 닫고, 자기 좌석 포함 422는 희망 회차가 내 티켓 회차 하나뿐일 때만, 다른 회차가 있으면 같은 위치 허용; 요청에도 지난 회차 마감 적용 422 `SESSION_CLOSED`/400 `wantSessions[i].sessionId`; 열·번 부호 정수형 400; 상한은 합집합 기준; 잠금 순서는 항상 티켓→요청이며 요청만 잠그는 update/delete에서 티켓 잠금 금지; 테스트 254건; 남은 한계는 응답 열·번 범위가 정규화 값인 것뿐). 차단·매칭·잠금·채팅·이력은 V5 이후(설계 확정안 exchange-schema-design.md)에서 구현하며, 이때 티켓 내리기(`TicketService.ensureCanDeactivate`)에 예약 잠금 409 검사를 추가한다. 적용된 Flyway 파일(V1~V4)은 수정하지 않는다.
+- 엔티티는 산출물/08_ERD(erd.dot) 기준선을 따른다 (현재 User, Performance, PerformanceSession, Ticket(V3 좌석 컬럼), ExchangeRequest·ExchangeWantRange·ExchangeWantSeat·ExchangeWantSession(V4) — Venue는 V2로 삭제, 공연장은 `Performance.venueName` 텍스트).
   구조를 바꿔야 하면 직접 바꾸지 말고 db-schema-architect에게 먼저 설계를 요청하라고 사용자에게 알려라.
 - 매칭은 **조건 일치 판정으로 후보를 찾는 모델**이며 확정 흐름은 **매칭 → 채팅 → 교환 후 각자 수락 → 교환 확정/완료**이다 (2026-10-08 확정, CLAUDE.md '매칭 모델'·'확정 결정 — 텍스트 좌석 입력 기반 매칭 세부').
   점수화·랭킹·추천 알고리즘은 추가하지 않고, **신뢰도 점수는 매칭에 쓰지 않는다**(우선순위는 신뢰도가 아니라 사용자가 정한 희망 회차 우선순위). 후기 기능은 만들지 않는다.

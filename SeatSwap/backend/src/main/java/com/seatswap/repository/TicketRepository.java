@@ -2,7 +2,9 @@ package com.seatswap.repository;
 
 import com.seatswap.domain.Ticket;
 import com.seatswap.domain.TicketStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -35,12 +37,21 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
             """)
     List<Ticket> findActiveByUser(@Param("userId") Long userId);
 
-    /** 본인 티켓만 조회 — 다른 사람의 티켓은 존재 여부도 드러나지 않게 비어 있다. */
+    /**
+     * 티켓 행 잠금(SELECT ... FOR UPDATE). 티켓 내리기·교환 요청 등록을 직렬화한다.
+     * 회차·공연은 조인하지 않는다(조인하면 같은 회차의 모든 티켓이 회차 행 잠금으로 직렬화된다).
+     * 트랜잭션의 첫 쿼리로 호출해야 한다(MySQL REPEATABLE READ 스냅샷 때문).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Ticket t where t.id = :id")
+    Optional<Ticket> findByIdForUpdate(@Param("id") Long id);
+
+    /** 잠금 없이 회차·공연까지 읽는다(교환 요청 검증용). */
     @Query("""
             select t from Ticket t
               join fetch t.performanceSession s
               join fetch s.performance
-            where t.id = :id and t.user.id = :userId
+            where t.id = :id
             """)
-    Optional<Ticket> findOwned(@Param("id") Long id, @Param("userId") Long userId);
+    Optional<Ticket> findWithSessionById(@Param("id") Long id);
 }

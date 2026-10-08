@@ -10,6 +10,7 @@ import com.seatswap.exception.BusinessRuleException;
 import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.PerformanceSessionRepository;
 import com.seatswap.repository.TicketRepository;
 import com.seatswap.repository.UserRepository;
@@ -48,6 +49,7 @@ public class TicketService {
     private final TicketRepository ticketRepository;
     private final PerformanceSessionRepository sessionRepository;
     private final UserRepository userRepository;
+    private final ExchangeRequestRepository exchangeRequestRepository;
     private final SessionTimePolicy sessionTimePolicy;
     private final TransactionTemplate transactionTemplate;
     private final int maxActivePerUser;
@@ -57,6 +59,7 @@ public class TicketService {
     public TicketService(TicketRepository ticketRepository,
                          PerformanceSessionRepository sessionRepository,
                          UserRepository userRepository,
+                         ExchangeRequestRepository exchangeRequestRepository,
                          SessionTimePolicy sessionTimePolicy,
                          PlatformTransactionManager transactionManager,
                          @Value("${ticket.max-active-per-user:20}") int maxActivePerUser,
@@ -65,6 +68,7 @@ public class TicketService {
         this.ticketRepository = ticketRepository;
         this.sessionRepository = sessionRepository;
         this.userRepository = userRepository;
+        this.exchangeRequestRepository = exchangeRequestRepository;
         this.sessionTimePolicy = sessionTimePolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.maxActivePerUser = maxActivePerUser;
@@ -143,16 +147,20 @@ public class TicketService {
     /**
      * 티켓 내리기(소프트 삭제). 본인 티켓이 아니면 존재 여부를 드러내지 않도록 404.
      * 이미 INACTIVE면 그대로 성공(멱등). 내릴 수 없는 상태(예약 잠금 등) 검사는 ensureCanDeactivate 에 모은다.
+     * 티켓 행을 FOR UPDATE 로 잠가(트랜잭션의 첫 쿼리) 같은 티켓의 교환 요청 등록과 직렬화하고,
+     * 그 티켓의 교환 요청은 CLOSED 로 바꾼다(설계 1.2: CLOSED = 티켓 내림). 잠금 순서는 티켓 -> 요청이다.
      */
     @Transactional
     public void deactivate(Long userId, Long ticketId) {
-        Ticket ticket = ticketRepository.findOwned(ticketId, userId)
+        Ticket ticket = ticketRepository.findByIdForUpdate(ticketId)
+                .filter(t -> t.isOwnedBy(userId))
                 .orElseThrow(() -> new NotFoundException(TICKET_NOT_FOUND_MESSAGE));
         if (!ticket.isActive()) {
             return;
         }
         ensureCanDeactivate(ticket);
         ticket.deactivate();
+        exchangeRequestRepository.closeByTicketId(ticket.getId(), sessionTimePolicy.now());
     }
 
     private void ensureCanDeactivate(Ticket ticket) {

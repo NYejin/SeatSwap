@@ -142,4 +142,18 @@ class SeatKeyNormalizerTest {
         assertThat(SeatKeyNormalizer.colKey("٠٣a", MAX)).isEqualTo("03A");
         assertThat(SeatKeyNormalizer.colKey("1-2", MAX)).isEqualTo("1-2");
     }
+
+    @Test
+    void 부호_붙은_정수형은_문자가_아니라_400으로_거부한다() {
+        for (String signed : new String[]{"-3", "+3", "−3", "－3", "＋3", "-0"}) {
+            assertThatThrownBy(() -> SeatKeyNormalizer.rowKey(signed, MAX)).as(signed)
+                    .isInstanceOf(FieldValidationException.class).hasMessage("열은 부호 없는 숫자(1 이상)로 입력해주세요.");
+            assertThatThrownBy(() -> SeatKeyNormalizer.colKey(signed, MAX)).as(signed)
+                    .isInstanceOf(FieldValidationException.class);
+        }
+        assertThatThrownBy(() -> SeatKeyNormalizer.rowKey("-3열", MAX)).isInstanceOf(FieldValidationException.class);
+        assertThatThrownBy(() -> SeatKeyNormalizer.colKey("+3번", MAX)).isInstanceOf(FieldValidationException.class);
+        // 숫자가 아닌 값 사이의 하이픈은 그대로 문자로 허용
+        assertThat(SeatKeyNormalizer.colKey("A-3", MAX)).isEqualTo("A-3");
+    }
 }
