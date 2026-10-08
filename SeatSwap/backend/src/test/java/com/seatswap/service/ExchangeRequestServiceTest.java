@@ -20,6 +20,7 @@ import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.FieldValidationException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
+import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.ExchangeWantRangeRepository;
 import com.seatswap.repository.ExchangeWantSeatRepository;
@@ -63,6 +64,7 @@ class ExchangeRequestServiceTest {
     private ExchangeWantSeatRepository seatRepository;
     private TicketRepository ticketRepository;
     private PerformanceSessionRepository sessionRepository;
+    private ExchangeMatchRepository matchRepository;
     private ExchangeRequestService service;
 
     private final User me = user(1L, "나");
@@ -86,8 +88,9 @@ class ExchangeRequestServiceTest {
         seatRepository = mock(ExchangeWantSeatRepository.class);
         ticketRepository = mock(TicketRepository.class);
         sessionRepository = mock(PerformanceSessionRepository.class);
+        matchRepository = mock(ExchangeMatchRepository.class);
         service = new ExchangeRequestService(requestRepository, rangeRepository, wantSessionRepository,
-                seatRepository, ticketRepository, sessionRepository, PerformanceFixtures.noopTransactionManager(),
+                seatRepository, ticketRepository, sessionRepository, matchRepository, PerformanceFixtures.noopTransactionManager(),
                 PerformanceFixtures.timePolicy(), 5000, 50, 999, 999);
 
         myTicket = ticket(500L, me, mySession, TicketStatus.ACTIVE);
@@ -475,7 +478,52 @@ class ExchangeRequestServiceTest {
     }
 
     @Test
-    void 진행중_제안_훅은_지금_항상_통과한다() {
+    void 열린_매칭이_없으면_진행중_제안_훅을_통과한다() {
+        when(matchRepository.existsOpenByRequestId(900L)).thenReturn(false);
+
         service.ensureNoActiveProposal(existingRequest(900L, myTicket));
+    }
+
+    @Test
+    void 열린_매칭이_있으면_진행중_제안_훅이_409로_막는다() {
+        when(matchRepository.existsOpenByRequestId(900L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.ensureNoActiveProposal(existingRequest(900L, myTicket)))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getMessage()).isEqualTo(ExchangeRequestService.ACTIVE_MATCH_MESSAGE);
+                    assertThat(e.getDetails()).containsEntry("code", "ACTIVE_MATCH_EXISTS");
+                });
+    }
+
+    @Test
+    void 열린_매칭이_있으면_수정과_삭제가_409이고_아무것도_바꾸지_않는다() {
+        ExchangeRequest existing = existingRequest(900L, myTicket);
+        when(requestRepository.findByIdForUpdate(900L)).thenReturn(Optional.of(existing));
+        when(matchRepository.existsOpenByRequestId(900L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update(1L, 900L, update("X", null, ONE_SESSION, range("B", "1", "2", "3", "5"))))
+                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> service.delete(1L, 900L)).isInstanceOf(ConflictException.class);
+
+        verify(seatRepository, never()).deleteByRequestId(anyLong());
+        verify(requestRepository, never()).delete(any(ExchangeRequest.class));
+        verify(matchRepository, never()).deleteCanceledByRequestId(anyLong());
+    }
+
+    @Test
+    void 삭제는_취소된_매칭을_먼저_지우고_완료된_매칭이_있으면_409() {
+        ExchangeRequest existing = existingRequest(900L, myTicket);
+        when(requestRepository.findByIdForUpdate(900L)).thenReturn(Optional.of(existing));
+
+        service.delete(1L, 900L);
+
+        InOrder order = inOrder(matchRepository, requestRepository);
+        order.verify(matchRepository).deleteCanceledByRequestId(900L);
+        order.verify(requestRepository).delete(existing);
+
+        when(matchRepository.existsCompletedByRequestId(900L)).thenReturn(true);
+        assertThatThrownBy(() -> service.delete(1L, 900L))
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.getDetails()).containsEntry("code", "MATCH_HISTORY_EXISTS"));
     }
 }

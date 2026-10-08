@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * 후보 조회 네이티브 SQL을 실제 MySQL에서 검증한다 (H2 등으로는 생성 컬럼·utf8mb4_bin 동작이 달라 의미가 없다).
  * 기본(./gradlew test)에서는 환경변수가 없어 건너뛴다. 실행하려면 임시 MySQL 컨테이너를 띄우고 환경변수를 준다:
  *   SEATSWAP_IT_JDBC_URL=jdbc:mysql://localhost:13307/seatswap_it  SEATSWAP_IT_USER=root  SEATSWAP_IT_PASSWORD=tmp
- * 안전장치: DB 이름이 `_it` 로 끝나야 하며(개발 DB `seatswap` 보호) 실행할 때마다 Flyway clean 후 V1~V4를 새로 적용한다.
+ * 안전장치: DB 이름이 `_it` 로 끝나야 하며(개발 DB `seatswap` 보호) 실행할 때마다 Flyway clean 후 V1~V5를 새로 적용한다.
  */
 class ExchangeCandidateQueryTest {
 
@@ -115,8 +115,8 @@ class ExchangeCandidateQueryTest {
     void resetData() {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).as("TRUNCATE 전 DATABASE() 재확인").endsWith("_it");
         jdbc.execute("SET FOREIGN_KEY_CHECKS = 0");
-        for (String t : List.of("exchange_want_seat", "exchange_want_session", "exchange_want_range",
-                "exchange_request", "ticket", "performance_session", "performance", "users")) {
+        for (String t : List.of("exchange_ticket_lock", "exchange_match", "exchange_want_seat", "exchange_want_session",
+                "exchange_want_range", "exchange_request", "ticket", "performance_session", "performance", "users")) {
             jdbc.execute("TRUNCATE TABLE " + t);
         }
         jdbc.execute("SET FOREIGN_KEY_CHECKS = 1");
@@ -500,6 +500,241 @@ class ExchangeCandidateQueryTest {
         assertThat(o1).as("트랜잭션 밖(대조군)에서는 호출마다 새 연결").isNotEqualTo(o2);
     }
 
+
+    // ---------- V5 제외 조건: 같은 쌍 열린 매칭, 예약 잠금 ----------
+
+    /** a(제안자)·b 사이의 매칭 행을 직접 넣는다. CANCELED 는 CHECK 때문에 canceled_at 도 채운다. */
+    private long match(Req a, Req b, String status) {
+        jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, canceled_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NOW(6),NOW(6))",
+                a.id, b.id, a.ticketId, b.ticketId, a.userId, b.userId, status,
+                status.equals("CANCELED") ? java.sql.Timestamp.valueOf(BASE) : null);
+        return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+    }
+
+    private void lock(Req r, long matchId) {
+        jdbc.update("INSERT INTO exchange_ticket_lock (ticket_id, match_id, created_at) VALUES (?,?,NOW(6))", r.ticketId, matchId);
+    }
+
+    /** 서로 후보인 한 쌍 (a: A열 1번 <-> b: A열 2번). */
+    private Req[] pair() {
+        Req a = request(user("me"), s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        Req b = request(user("other"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        return new Req[]{a, b};
+    }
+
+    private List<Long> candidateIds(Req of) {
+        return repository.findCandidates(of.id, TODAY, 20, 0).stream().map(ExchangeCandidateRepository.Row::requestId).toList();
+    }
+
+    @ParameterizedTest(name = "같은 쌍의 {0} 매칭은 후보에서 뺀다 (제안자 쪽 / 상대 쪽 양방향)")
+    @CsvSource({"CHATTING", "RESERVED"})
+    void openMatchOfTheSamePairIsExcludedFromBothSides(String status) {
+        Req[] p = pair();
+        match(p[0], p[1], status);
+
+        assertThat(candidateIds(p[0])).isEmpty();
+        assertThat(candidateIds(p[1])).isEmpty();
+        assertThat(repository.countCandidates(p[0].id, TODAY)).isZero();
+        assertThat(repository.countCandidates(p[1].id, TODAY)).isZero();
+    }
+
+    @ParameterizedTest(name = "같은 쌍의 {0} 매칭은 후보를 빼지 않는다 (재매칭 허용)")
+    @CsvSource({"CANCELED", "COMPLETED"})
+    void closedMatchOfTheSamePairDoesNotExclude(String status) {
+        Req[] p = pair();
+        match(p[0], p[1], status);
+
+        assertThat(candidateIds(p[0])).containsExactly(p[1].id);
+        assertThat(candidateIds(p[1])).containsExactly(p[0].id);
+        assertThat(repository.countCandidates(p[0].id, TODAY)).isEqualTo(1);
+    }
+
+    @Test
+    void openMatchWithAnotherRequestDoesNotExcludeThisCandidate() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2"), seat("A", "1", "3")));
+        Req b = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        Req c = request(user("c"), s1, "A", "1", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        match(a, c, "CHATTING");   // 한 요청에 채팅이 여러 개 동시에 열릴 수 있다: c 만 빠지고 b 는 그대로
+
+        assertThat(candidateIds(a)).containsExactly(b.id);
+    }
+
+    @Test
+    void candidateWhoseTicketIsLockedIsExcludedAndReturnsAfterRelease() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        Req b = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        // b 의 티켓이 '다른 사람과' 예약 잠금 상태
+        Req c = request(user("c"), s1, "A", "1", "9", "ANY", null, List.of(s1), List.of(seat("A", "1", "8")));
+        long m = match(b, c, "RESERVED");
+        lock(b, m);
+        lock(c, m);
+
+        assertThat(candidateIds(a)).isEmpty();
+        assertThat(repository.countCandidates(a.id, TODAY)).isZero();
+
+        jdbc.update("DELETE FROM exchange_ticket_lock WHERE match_id = ?", m);   // 예약 취소로 잠금 해제
+        jdbc.update("UPDATE exchange_match SET status='CANCELED', canceled_at=NOW(6) WHERE id=?", m);
+        assertThat(candidateIds(a)).containsExactly(b.id);
+    }
+
+    @Test
+    void exclusionsKeepListAndCountInSync() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1),
+                List.of(seat("A", "1", "2"), seat("A", "1", "3"), seat("A", "1", "4")));
+        Req openOne = request(user("o1"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        Req locked = request(user("o2"), s1, "A", "1", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        Req ok = request(user("o3"), s1, "A", "1", "4", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        match(a, openOne, "CHATTING");
+        Req far = request(user("far"), s1, "Z", "9", "9", "ANY", null, List.of(s1), List.of(seat("Z", "9", "8")));
+        long m = match(locked, far, "RESERVED");
+        lock(locked, m);
+        lock(far, m);
+
+        assertThat(candidateIds(a)).containsExactly(ok.id);
+        assertThat(repository.countCandidates(a.id, TODAY)).isEqualTo(1);
+    }
+
+    // ---------- 쌍 단위 재검증 (isCandidatePair) ----------
+
+    @Test
+    void isCandidatePairAcceptsMutualMatchAndIsSymmetric() {
+        Req[] p = pair();
+
+        assertThat(repository.isCandidatePair(p[0].id, p[1].id, TODAY)).isTrue();
+        assertThat(repository.isCandidatePair(p[1].id, p[0].id, TODAY)).isTrue();
+    }
+
+    @Test
+    void isCandidatePairIgnoresOpenMatchAndLockBecauseServiceChecksThemSeparately() {
+        Req[] p = pair();
+        long m = match(p[0], p[1], "RESERVED");
+        lock(p[0], m);
+        lock(p[1], m);
+
+        assertThat(repository.isCandidatePair(p[0].id, p[1].id, TODAY)).isTrue();
+        assertThat(candidateIds(p[0])).isEmpty();
+    }
+
+    @Test
+    void isCandidatePairRejectsEveryBrokenCondition() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "POS", 5000, List.of(s1),
+                List.of(seat("A", "1", "2"), seat("A", "1", "3"), seat("A", "1", "4"), seat("A", "1", "5")));
+        // 한쪽만 원함 (상대는 내 좌석을 원하지 않는다)
+        Req oneSided = request(user("one"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "9", "9")));
+        assertThat(repository.isCandidatePair(a.id, oneSided.id, TODAY)).isFalse();
+        // 추가금 POS-POS 불성립 (좌석·회차는 서로 맞다)
+        Req posPos = request(user("pp"), s1, "A", "1", "3", "POS", 100, List.of(s1), List.of(seat("A", "1", "1")));
+        assertThat(repository.isCandidatePair(a.id, posPos.id, TODAY)).isFalse();
+        // 내 희망 회차에 없는 회차 (a 의 희망은 s1 만)
+        Req wrongSession = request(user("ws"), s3, "A", "1", "4", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        assertThat(repository.isCandidatePair(a.id, wrongSession.id, TODAY)).isFalse();
+        // 같은 사용자
+        Req mine = request(u1, s1, "A", "1", "5", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        assertThat(repository.isCandidatePair(a.id, mine.id, TODAY)).isFalse();
+        // 상대 요청 CLOSED / 티켓 INACTIVE
+        Req closed = request(user("cl"), s1, "A", "2", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)", a.id, "A", "2", "2");
+        assertThat(repository.isCandidatePair(a.id, closed.id, TODAY)).isTrue();
+        jdbc.update("UPDATE exchange_request SET status='CLOSED' WHERE id=?", closed.id);
+        assertThat(repository.isCandidatePair(a.id, closed.id, TODAY)).isFalse();
+        Req inactive = request(user("in"), s1, "A", "3", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)", a.id, "A", "3", "3");
+        jdbc.update("UPDATE ticket SET status='INACTIVE' WHERE id=?", inactive.ticketId);
+        assertThat(repository.isCandidatePair(a.id, inactive.id, TODAY)).isFalse();
+        // 내 요청이 CLOSED
+        Req p0 = request(user("p0"), s2, "A", "1", "1", "ANY", null, List.of(s2), List.of(seat("A", "1", "2")));
+        Req p1 = request(user("p1"), s2, "A", "1", "2", "ANY", null, List.of(s2), List.of(seat("A", "1", "1")));
+        assertThat(repository.isCandidatePair(p0.id, p1.id, TODAY)).isTrue();
+        jdbc.update("UPDATE exchange_request SET status='CLOSED' WHERE id=?", p0.id);
+        assertThat(repository.isCandidatePair(p0.id, p1.id, TODAY)).isFalse();
+    }
+
+    @Test
+    void isCandidatePairRespectsDeadlineOfTheirSession() {
+        long u1 = user("me");
+        long past = session(performanceId, TODAY.minusDays(1).withHour(20));
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1, past), List.of(seat("A", "1", "2")));
+        Req b = request(user("pastOwner"), past, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+
+        assertThat(repository.isCandidatePair(a.id, b.id, TODAY)).isFalse();
+    }
+
+    // ---------- V5 스키마 제약 ----------
+
+    @Test
+    void openPairIsUniqueInEitherDirectionButNotAfterCancel() {
+        Req[] p = pair();
+        long first = match(p[0], p[1], "CHATTING");
+
+        // 같은 방향·반대 방향 모두 열린 매칭 중복은 DB 가 거부 (uk_exchange_match_open_pair)
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> match(p[0], p[1], "CHATTING"));
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> match(p[1], p[0], "RESERVED"));
+
+        // 취소하면 open_flag 가 NULL 이 되어 새 매칭을 다시 열 수 있다. 취소 이력은 여러 개 쌓여도 된다.
+        jdbc.update("UPDATE exchange_match SET status='CANCELED', canceled_at=NOW(6) WHERE id=?", first);
+        match(p[1], p[0], "CHATTING");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_match WHERE open_flag = 1", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_match", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT request_low_id < request_high_id FROM exchange_match WHERE id = ?",
+                Boolean.class, first)).isTrue();
+    }
+
+    @Test
+    void matchCheckConstraintsRejectBadRows() {
+        Req[] p = pair();
+        // CANCELED 인데 canceled_at 이 없음
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
+                jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CANCELED',NOW(6),NOW(6))",
+                        p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
+        // 열린 매칭인데 canceled_at 이 있음
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
+                jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, canceled_at, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6),NOW(6))",
+                        p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
+        // 상태 값 오류
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
+                jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CLOSED',NOW(6),NOW(6))",
+                        p[0].id, p[1].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
+        // 같은 요청·같은 티켓끼리
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
+                jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6))",
+                        p[0].id, p[0].id, p[0].ticketId, p[1].ticketId, p[0].userId, p[1].userId));
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataAccessException.class, () ->
+                jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
+                        + "status, created_at, updated_at) VALUES (?,?,?,?,?,?,'CHATTING',NOW(6),NOW(6))",
+                        p[0].id, p[1].id, p[0].ticketId, p[0].ticketId, p[0].userId, p[1].userId));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_match", Integer.class)).isZero();
+    }
+
+    @Test
+    void ticketLockPrimaryKeyAllowsOneMatchPerTicketAndCascadesOnMatchDelete() {
+        long u1 = user("me");
+        Req a = request(u1, s1, "A", "1", "1", "ANY", null, List.of(s1), List.of(seat("A", "1", "2")));
+        Req b = request(user("b"), s1, "A", "1", "2", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        Req c = request(user("c"), s1, "A", "1", "3", "ANY", null, List.of(s1), List.of(seat("A", "1", "1")));
+        long m1 = match(a, b, "RESERVED");
+        long m2 = match(a, c, "CHATTING");
+        lock(a, m1);
+        lock(b, m1);
+
+        // a 의 티켓은 이미 m1 에 잠겼다: 다른 매칭 m2 로는 잠글 수 없다 (교차 충돌도 PK 하나로 막는다)
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> lock(a, m2));
+        // 다른 사람의 b 측으로서도 마찬가지: b 티켓이 c 의 매칭에서 잠기려 해도 PK 충돌
+        long m3 = match(c, b, "CHATTING");
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> lock(b, m3));
+
+        jdbc.update("DELETE FROM exchange_match WHERE id = ?", m1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM exchange_ticket_lock", Integer.class)).as("매칭 삭제 시 잠금도 CASCADE").isZero();
+    }
+
     // ---------- 도우미 ----------
 
     private long comSelect() {
@@ -520,7 +755,7 @@ class ExchangeCandidateQueryTest {
 
     private record Seat(String zone, String row, String col) {}
 
-    private record Req(long id, long ticketId) {}
+    private record Req(long id, long ticketId, long userId) {}
 
     private static Seat seat(String zone, String row, String col) {
         return new Seat(zone, row, col);
@@ -564,6 +799,6 @@ class ExchangeCandidateQueryTest {
             jdbc.update("INSERT INTO exchange_want_seat (request_id, zone_key, row_key, col_key) VALUES (?,?,?,?)",
                     requestId, s.zone(), s.row(), s.col());
         }
-        return new Req(requestId, ticketId);
+        return new Req(requestId, ticketId, userId);
     }
 }

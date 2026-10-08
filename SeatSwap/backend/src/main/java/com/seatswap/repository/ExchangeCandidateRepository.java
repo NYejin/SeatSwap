@@ -80,6 +80,19 @@ public class ExchangeCandidateRepository {
             LIMIT ? OFFSET ?
             """;
 
+    /**
+     * V5 제외 조건 (별칭 mo, l 사용). 같은 요청 쌍(방향 무관)의 열린 매칭(CHATTING·RESERVED)이 있거나,
+     * 상대 티켓이 예약 잠금(RESERVED 로 두 티켓이 잠김)이면 후보에서 뺀다. 취소·완료된 매칭은 보지 않는다(재매칭 허용).
+     * 잠금이 풀리면(예약 취소) 다시 후보로 복귀한다. 내 티켓이 잠겼을 때는 서비스가 조회 자체를 422로 막는다.
+     */
+    private static final String EXCLUSIONS = """
+            AND NOT EXISTS (SELECT 1 FROM exchange_match mo
+                            WHERE mo.request_low_id  = LEAST(a.id, b.id)
+                              AND mo.request_high_id = GREATEST(a.id, b.id)
+                              AND mo.open_flag = 1)
+            AND NOT EXISTS (SELECT 1 FROM exchange_ticket_lock l WHERE l.ticket_id = tb.id)
+            """;
+
     private final JdbcTemplate jdbc;
 
     public ExchangeCandidateRepository(JdbcTemplate jdbc) {
@@ -87,13 +100,13 @@ public class ExchangeCandidateRepository {
     }
 
     /**
-     * 후보에서 더 제외할 조건을 붙이는 확장 지점. 지금은 해당 테이블이 없어 비어 있다.
-     * V5(차단·매칭·예약 잠금 테이블) 때 이 메서드만 채운다. 정확한 조건식은 backend/README.md '후속 메모 (매칭 후보 조회)' 참고.
+     * 후보에서 더 제외할 조건을 붙이는 확장 지점 (V5: 같은 쌍 열린 매칭, 예약 잠금 티켓). 정확한 조건식은 backend/README.md '후속 메모 (매칭 후보 조회)' 참고.
+     * 차단(user_block) 조건은 해당 테이블이 아직 없어 넣지 않았다(후속 V 파일에서 같은 방식으로 추가).
      * 규칙(위반하면 IllegalStateException): 조각은 `AND`로 시작하고 파라미터(`?`)를 포함하지 않는다.
      * ta/tb/a/b 별칭을 쓸 수 있다. 앞뒤 개행은 {@link #normalizeExclusions} 가 보장한다.
      */
     static String additionalExclusions() {
-        return normalizeExclusions("");
+        return normalizeExclusions(EXCLUSIONS);
     }
 
     /** 확장 조각 검증·정규화. 비어 있으면 빈 문자열, 아니면 앞뒤에 개행을 붙인다. */
@@ -139,5 +152,15 @@ public class ExchangeCandidateRepository {
     public long countCandidates(Long myRequestId, LocalDateTime todayStart) {
         Long count = jdbc.queryForObject(countSql(), Long.class, myRequestId, todayStart);
         return count == null ? 0 : count;
+    }
+
+    /**
+     * 요청 쌍 (a, b) 가 서로 후보 조건(같은 공연, 양방향 회차·좌석, 추가금 호환, 상대 티켓 ACTIVE·요청 OPEN·회차 마감 전, 다른 사용자)을
+     * 만족하는가. 후보 목록과 같은 조인·판정(FROM_CORE + WHERE)을 쌍 하나로 좁혀 재사용한다. 열린 매칭·예약 잠금 제외 조건은
+     * 호출하는 서비스가 사유별로 따로 검사하므로 붙이지 않는다.
+     */
+    public boolean isCandidatePair(Long myRequestId, Long targetRequestId, LocalDateTime todayStart) {
+        String sql = "SELECT STRAIGHT_JOIN 1 " + FROM_CORE + WHERE + "  AND b.id = ? LIMIT 1";
+        return !jdbc.queryForList(sql, Integer.class, myRequestId, todayStart, targetRequestId).isEmpty();
     }
 }

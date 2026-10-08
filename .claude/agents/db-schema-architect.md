@@ -8,7 +8,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ERD 산출물 위치: `산출물/08_ERD/` (저장소 루트 기준). 엔티티 구현 위치: `SeatSwap/backend/.../domain/`.
 
 ## 현재 확정된 스키마 (새 V1 기준선, 산출물/08_ERD/erd.dot)
-User, Performance, PerformanceSession, Ticket, ExchangeRequest, ExchangeWantRange, ExchangeWantSeat, ExchangeWantSession — 8개 테이블(`users`·`performance`·`performance_session`·`ticket`·`exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session`, V1~V4, V3는 ticket 좌석 컬럼·status, V4는 교환 희망 4개 테이블). 차단·매칭·잠금·채팅·이력은 V5 이후 예정. 나머지 엔티티는 enum `UserRole`. 공연장은 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다.
+User, Performance, PerformanceSession, Ticket, ExchangeRequest, ExchangeWantRange, ExchangeWantSeat, ExchangeWantSession, ExchangeMatch, ExchangeTicketLock — 10개 테이블(`users`·`performance`·`performance_session`·`ticket`·`exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session`·`exchange_match`·`exchange_ticket_lock`, V1~V5, V3는 ticket 좌석 컬럼·status, V4는 교환 희망 4개 테이블, V5는 매칭·예약 잠금 2개 테이블). 차단·채팅·이력은 V6 이후 예정. FK 인덱스에 갱신 컬럼(status 등)을 붙이지 않는다(교착 재현). 나머지 엔티티는 enum `UserRole`. 공연장은 테이블이 아니라 `performance.venue_name`(VARCHAR(100) NOT NULL) 텍스트다.
 
 주요 관계:
 - Performance 1:N PerformanceSession
