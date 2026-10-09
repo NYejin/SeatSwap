@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  * (uk_exchange_match_open_pair 가 '같은 요청 쌍의 열린 매칭 1개'를 보장한다).
  *
  * 상태 전이는 {@link #isAllowed(ExchangeMatchStatus, ExchangeMatchAction)} 한 곳에서 정의한다.
- * 티켓 좌석·회차 갱신은 COMPLETED 시점에 한 트랜잭션에서 두 티켓을 교체한다는 규칙이 있다(이번 범위 밖, 서비스 Javadoc 참고).
+ * COMPLETED 시점(8차 답변, 2026-10-09)에는 한 트랜잭션에서 기존 두 티켓을 EXCHANGED 로 바꾸고 각자 새 자리 티켓을 만든다는 규칙이 있다(구현 예정, 이번 범위 밖, 서비스 Javadoc 참고).
  */
 @Entity
 @Table(name = "exchange_match")
