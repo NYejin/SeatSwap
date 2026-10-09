@@ -7,6 +7,7 @@
 // 2026-10-08: V4(V4__exchange_want_tables.sql)로 exchange_request·exchange_want_range·exchange_want_seat·exchange_want_session 구현 완료(현재). 차단·매칭·잠금·채팅·이력은 예정(V5 이후)
 // 2026-10-08: V5(V5__exchange_match_tables.sql)로 exchange_match·exchange_ticket_lock 구현 완료(현재). user_block·chat_message·exchange_history는 예정(V8 이후)
 // 2026-10-09: V6(V6__exchange_extra_per_range.sql) = 추가금을 요청에서 희망 범위(want_range)·펼친 좌석(want_seat)으로 이동하고 매칭에 추가금 스냅샷 4컬럼 추가, V7(V7__exchange_request_soft_delete.sql) = 요청 소프트 삭제(DELETED, deleted_at, live_flag 유일 키) 구현 완료(현재, 7차 답변). 예정은 노랑 본문·주황 헤더 = user_block·chat_message·exchange_history(V8 이후). 상세: exchange-schema-design.md 9절
+// 2026-10-10: V8 예정(설계안, 사용자 확인 전·미구현) = exchange_match에 reserved_by_id(FK users, NULL)·reserved_at 추가(한 명 예약 방식), a/b_reserved_at은 미사용 레거시, CHECK로 RESERVED일 때만 NOT NULL. 상세: exchange-schema-design.md 10절. 테이블 수는 그대로 10개
 // 2026-10-08: V2에서 venue 테이블 삭제, 공연장은 performance.venue_name 텍스트(등록 후 수정 불가)
 // 시각 컬럼(created_at, updated_at, starts_at 등)은 모두 KST(Asia/Seoul) 벽시계 시각
 digraph SeatSwapERD {
@@ -148,7 +149,9 @@ digraph SeatSwapERD {
       <TR><TD>FK</TD><TD ALIGN="LEFT">ticket_a_id, ticket_b_id → ticket (NN, ck_exchange_match_distinct_tickets)</TD></TR>
       <TR><TD>FK</TD><TD ALIGN="LEFT">user_a_id, user_b_id → users (NN)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">status (CHATTING/RESERVED/COMPLETED/CANCELED, bin + CHECK) 취소=재매칭 가능</TD></TR>
-      <TR><TD> </TD><TD ALIGN="LEFT">a/b_reserved_at, a/b_completed_at (NULL 허용)</TD></TR>
+      <TR><TD> </TD><TD ALIGN="LEFT">a/b_reserved_at (V8 예정: 미사용 레거시), a/b_completed_at (NULL 허용, V8 예정: 교환 수락 표시, 예약 취소 시 초기화)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">V8 예정</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">reserved_by_id BIGINT NULL, FK → users (예약한 사람, idx_exchange_match_reserved_by 단일 컬럼)</TD></TR>
+      <TR><TD BGCOLOR="#FFF2CC">V8 예정</TD><TD ALIGN="LEFT" BGCOLOR="#FFF2CC">reserved_at DATETIME(6) NULL; ck_exchange_match_reserved: RESERVED일 때만 reserved_by_id·reserved_at NOT NULL, 아니면 둘 다 NULL</TD></TR>
       <TR><TD>FK</TD><TD ALIGN="LEFT">canceled_by_id → users (NULL=시스템), canceled_at (ck_exchange_match_canceled)</TD></TR>
       <TR><TD> </TD><TD ALIGN="LEFT">created_at / updated_at (NN)</TD></TR>
       <TR><TD>V6</TD><TD ALIGN="LEFT">a_extra_type, a_extra_amount, b_extra_type, b_extra_amount (매칭 시점 적용 추가금 스냅샷)</TD></TR>
@@ -196,6 +199,7 @@ digraph SeatSwapERD {
   // ---------- 현재 관계(실선) / 예정 관계(점선, V8 이후) ----------
   exchange_request -> exchange_match [label="1:N (a측/b측)"];
   users -> exchange_match [label="1:N (a/b)"];
+  users -> exchange_match [style=dashed, color="#C55A11", label="1:N 예약자 reserved_by_id (V8 예정)"];
   ticket -> exchange_match [label="1:N (a/b)"];
   users -> user_block [style=dashed, color="#C55A11", label="1:N 차단자/피차단자"];
   exchange_match -> exchange_ticket_lock [label="1:N (최대 2)"];
