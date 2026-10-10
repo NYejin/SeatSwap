@@ -2,7 +2,7 @@
 title: 교환 완료 시 티켓 처리: 안 2의 근거
 type: decision
 tags: [교환, 티켓, 유니크키, 8차답변]
-sources: [산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/README.md, CLAUDE.md]
+sources: [산출물/07_작업일지/2026-10-11.md, SeatSwap/backend/src/main/resources/db/migration/V9__exchange_complete_history.sql, 산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/README.md, CLAUDE.md]
 updated: 2026-10-11
 confidence: high
 status: stable
@@ -29,7 +29,7 @@ status: stable
 - 교환 전 자리가 매칭 행(`ticket_a_id`/`ticket_b_id`)과 교환 이력(`old_ticket_id`/`new_ticket_id`)에 그대로 남는다. 그래서 매칭 응답의 좌석은 항상 교환 전 자리다.
 - 대가는 티켓 id가 바뀐다는 점이다.
 
-요구사항 문서 §3.3은 "유니크 충돌 자체는 기존 설계의 임시 INACTIVE 순서로도 풀 수 있었다"고 적는다. 즉 안 2의 이점은 충돌 회피가 아니라 불변성과 상태 표현이다. 구현 전이라 안 1로 되돌리는 비용은 문서 수정뿐이라고도 적혀 있다.
+요구사항 문서 §3.3은 "유니크 충돌 자체는 기존 설계의 임시 INACTIVE 순서로도 풀 수 있었다"고 적는다. 즉 안 2의 이점은 충돌 회피가 아니라 불변성과 상태 표현이다. 구현 전 문서에는 안 1로 되돌리는 비용이 문서 수정뿐이라고 적혀 있었으나, 지금은 구현이 끝났으므로(아래 "구현 상태") 되돌리려면 코드와 V9 이력 테이블까지 바꿔야 한다.
 
 ## 함정: 유니크 충돌 회피 순서
 
@@ -42,11 +42,13 @@ status: stable
 
 INSERT를 먼저 하면 상대의 기존 티켓이 아직 같은 좌석을 점유하므로 `uk_ticket_active_seat` 위반이 난다. 사용자당 활성 20개 상한은 활성 수가 늘지 않으므로 이 경로에서 검사하지 않는다. 잠금 순서(티켓 id 오름차순, 요청 id 오름차순, 매칭)는 그대로다.
 
-추가 함정: V3의 `ck_ticket_status`는 `status IN ('ACTIVE', 'INACTIVE')`만 허용한다. `EXCHANGED`를 쓰려면 새 마이그레이션(V9 이후)에서 이 CHECK를 확장해야 한다. 요구사항 문서 §3.4도 "CHECK 등이 있으면 마이그레이션에서 확장"이라고 적는다.
+추가 함정 1: V3의 `ck_ticket_status`는 `status IN ('ACTIVE', 'INACTIVE')`만 허용했다. `EXCHANGED`를 쓰려고 V9에서 이 CHECK를 확장했다(ACTIVE/INACTIVE/EXCHANGED).
+
+추가 함정 2 (Hibernate flush 순서): 서비스 코드에서 "UPDATE 후 INSERT"로 써도 JPA는 flush 때 INSERT를 UPDATE보다 먼저 실행한다(Hibernate의 기본 액션 큐 순서). 그대로 두면 새 티켓 INSERT가 아직 ACTIVE로 남은 기존 티켓과 `uk_ticket_active_seat`에서 충돌한다. 그래서 기존 두 티켓을 `EXCHANGED`로 바꾼 직후 명시적으로 flush한 다음 새 티켓을 저장한다. 일반론은 [gotcha 7절](../gotchas/lock-order-and-index-pitfalls.md)에 있다.
 
 ## 구현 상태
 
-확정이지만 미구현이다. `feature/exchange-complete`에서 구현할 예정이다. 현재 `TicketStatus`에는 `EXCHANGED`가 없고(`ACTIVE`, `INACTIVE`) 서비스·엔티티 Javadoc에 "구현 예정"으로만 적혀 있다. 대체된 이전 서술은 설계 문서(`산출물/08_ERD/exchange-schema-design.md`)의 3.3절 취소선 부분, 표의 6행·확정 g 행에 취소선과 대체 표기로 남아 있다.
+구현 완료다(2026-10-11, 브랜치 `feature/exchange-complete`, 커밋 `52cfb5a`, 병합 전). V9(`V9__exchange_complete_history.sql`)가 `ck_ticket_status`를 확장하고 교환 이력 테이블 `exchange_history`를 추가했다. 완료 전이는 `POST /api/exchange/matches/{id}/complete`가 맡고, 두 번째 수락이 한 트랜잭션에서 기존 티켓 `EXCHANGED`, flush, 새 티켓 INSERT, 이력 2행, 기존 요청 CLOSED, 예약 잠금 삭제, 매칭 `COMPLETED` 순으로 처리한다. 상세 동작과 오류 코드는 코드와 [작업일지 2026-10-11](../../산출물/07_작업일지/2026-10-11.md)을 본다. 교환 이력 조회 API와 마이페이지 화면은 다음 브랜치로 미뤘다. 대체된 이전 서술은 설계 문서(`산출물/08_ERD/exchange-schema-design.md`)의 3.3절 취소선 부분에 남아 있다.
 
 ## 확정: Q-15 (교환 완료 시 기존 티켓에 걸린 요청과 채팅)
 

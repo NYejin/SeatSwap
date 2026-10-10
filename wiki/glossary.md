@@ -2,7 +2,7 @@
 title: 용어집
 type: glossary
 tags: [용어, 교환, 매칭]
-sources: [CLAUDE.md, 산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/application.yml]
+sources: [SeatSwap/backend/src/main/resources/db/migration/V9__exchange_complete_history.sql, CLAUDE.md, 산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/application.yml]
 updated: 2026-10-11
 confidence: high
 status: draft
@@ -18,9 +18,9 @@ SeatSwap 고유 용어의 짧은 정의다. 확정 결정 본문은 [CLAUDE.md](
 |---|---|---|---|
 | 매칭 | `CHATTING` | 후보 목록에서 한쪽이 상대를 골라 제안하면 생기는 채팅 단계. 한 요청에 여러 개 동시에 열 수 있다. 화면 라벨은 현재 '진행 중'이고 '매칭'으로 바꾸는 것은 문서의 기본안이다 | `ExchangeMatchStatus`, 테이블 `exchange_match` |
 | 예약 중 | `RESERVED` | 둘 중 한 명이 예약하면 되는 상태(8차·9차 답변, V8). 두 티켓이 잠긴다. 예약을 취소하면 `CHATTING`으로 돌아간다. 구현 완료 | `reserve`/`unreserve` API, `reserved_by_id`·`reserved_at` |
-| 교환 수락 | (버튼 이름) | 화면 버튼 이름만 바뀐 것이다. 내부 값·API는 `complete`, 컬럼은 `a_completed_at`/`b_completed_at` 그대로. 현재 화면에는 보이되 비활성이다 | 요구사항 문서 §3, 9차 답변 |
-| 교환 완료 | `COMPLETED` | 양쪽이 '교환 수락'을 모두 누른 상태. 상태·뱃지·이력 라벨은 '교환 완료'를 유지한다. 취소 불가. 전이는 미구현. 완료 시 기존 티켓의 교환 요청은 `CLOSED`가 되고 그 티켓의 다른 채팅은 자동 취소하지 않는다(Q-15 확정) | `feature/exchange-complete`에서 구현 예정 |
-| 교환됨 | `TicketStatus.EXCHANGED` | 교환 완료 때 기존 티켓에 붙는 티켓 상태. 미구현(현재 `ACTIVE`, `INACTIVE`뿐이고 `ck_ticket_status`도 두 값만 허용, 확장은 V9 이후 마이그레이션 예정). 이 상태인 티켓의 다른 채팅 카드는 버튼 비활성 + "이미 교환된 좌석이에요" 표시 | [근거 페이지](decisions/exchange-complete-new-ticket.md) |
+| 교환 수락 | (버튼 이름) | 화면 버튼 이름만 바뀐 것이다. 내부 값·API는 `complete`, 컬럼은 `a_completed_at`/`b_completed_at` 그대로. 구현 완료(V9, 커밋 `52cfb5a`). 첫 수락은 시각만 기록하고 RESERVED를 유지하며, 화면에서 확인 단계를 한 번 거친다 | 요구사항 문서 §3, 9차 답변 |
+| 교환 완료 | `COMPLETED` | 양쪽이 '교환 수락'을 모두 누른 상태. 상태·뱃지·이력 라벨은 '교환 완료'를 유지한다. 취소 불가. 두 번째 수락 때 한 트랜잭션으로 전이한다(구현 완료). 완료 시 기존 티켓의 교환 요청은 `CLOSED`가 되고 그 티켓의 다른 채팅은 자동 취소하지 않는다(Q-15 확정) | `complete` API, `exchange_history` |
+| 교환됨 | `TicketStatus.EXCHANGED` | 교환 완료 때 기존 티켓에 붙는 티켓 상태. 구현 완료(V9에서 `ck_ticket_status` 확장). 이 상태인 티켓은 내릴 수 없고(409 `TICKET_EXCHANGED`) 새 예약도 막힌다. 이 상태인 티켓의 다른 채팅 카드는 버튼 비활성 + "이미 교환된 좌석이에요" 표시 | [근거 페이지](decisions/exchange-complete-new-ticket.md) |
 | 취소됨 | `CANCELED` | 채팅 종료(`cancel`), 받은 쪽 거절(`reject`), 시스템 취소로 끝난 매칭. 취소는 재매칭 불가가 아니다. 단 `RESERVED`에서는 먼저 예약을 취소해야 한다 | `canceled_by_id`, `canceled_at` |
 | 시스템 취소 | `canceled_by_id` NULL | 사용자가 아니라 서비스가 취소한 경우. 티켓 내리기, 요청 수정·삭제 때 `CHATTING` 매칭에 적용된다. 응답의 `canceledBy`는 `SYSTEM` | README "연동 규칙" |
 | 예약 잠금 | `exchange_ticket_lock` | 예약된 두 티켓에 한 행씩 INSERT하는 테이블. PK가 `ticket_id`라 한 티켓은 동시에 한 매칭에서만 예약된다. 해제는 DELETE | V5, 설계 문서 3.2절 |
