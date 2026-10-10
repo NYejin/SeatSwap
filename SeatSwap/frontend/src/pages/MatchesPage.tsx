@@ -4,17 +4,17 @@ import { exchangeApi } from "../api/exchange";
 import { exchangeErrorMessage, formatExtra } from "../api/exchangeMessages";
 import { formatKstDateTime } from "../api/dateTime";
 import { formatSeat } from "../api/seat";
-import { button, linkButton, liveRegionClass, ui } from "../components/ui";
+import { button, FOCUS_RING, linkButton, liveRegionClass, ui } from "../components/ui";
 import { usePagedList } from "../hooks/usePagedList";
 import type { ExchangeMatch, MatchRole, MatchStatus } from "../types/exchange";
 
-// FR-04 내 매칭 목록 (보호 라우트 /exchange/matches): 보낸(내가 제안)/받은 탭, 상태 배지, 예약 동의·거절·취소.
-// 채팅 메시지와 '교환 완료'는 아직 없다 (안내 문구만).
-// 동작(동의·거절·취소) 뒤에는 제자리 패치 대신 첫 페이지부터 다시 불러온다 (서버가 updated_at 순으로 정렬해 더 보기 목록이 어긋날 수 있음).
+// FR-04 내 매칭 목록 (보호 라우트 /exchange/matches): 보낸(내가 제안)/받은 탭, 상태 배지, 예약하기·예약 취소·거절·채팅 종료.
+// 채팅 메시지와 '교환 수락' 동작은 아직 없다 (버튼은 보이되 비활성, 안내 문구만).
+// 동작(예약·예약 취소·거절·종료) 뒤에는 제자리 패치 대신 첫 페이지부터 다시 불러온다 (서버가 updated_at 순으로 정렬해 더 보기 목록이 어긋날 수 있음).
 
 const STATUS_LABEL: Record<MatchStatus, string> = {
   CHATTING: "진행 중",
-  RESERVED: "예약됨",
+  RESERVED: "예약 중",
   COMPLETED: "교환 완료",
   CANCELED: "취소됨",
 };
@@ -184,9 +184,12 @@ export default function MatchesPage() {
 /** dt: 좁을 때는 회색 작은 글자(원래 레이아웃), 480px 이상에서는 배지 모양 (ui.badge와 같은 모양) */
 const DT_CLASS =
   "text-sm/[normal] text-gray-500 min-[30rem]:inline-flex min-[30rem]:items-center min-[30rem]:rounded-full min-[30rem]:bg-gray-100 min-[30rem]:px-2.5 min-[30rem]:py-0.5 min-[30rem]:text-[0.8125rem]/[normal] min-[30rem]:text-gray-700";
+/** 지금은 누를 수 없는 버튼 (aria-disabled). 대비는 AA를 유지하고 점선 테두리로 색 외에도 구분한다 */
+const NOT_READY_CLASS =
+  "inline-flex min-h-11 cursor-not-allowed items-center justify-center rounded-[10px] border border-dashed border-gray-500 bg-gray-100 px-4 text-[0.9375rem]/[normal] font-semibold whitespace-nowrap text-gray-700 touch-manipulation " + FOCUS_RING;
 const DD_CLASS = "text-sm/[normal] text-gray-900 min-[30rem]:my-1 min-[30rem]:ml-2";
 
-type Action = "accept" | "reject" | "cancel";
+type Action = "reserve" | "unreserve" | "reject" | "cancel";
 
 /** '(삭제)' 표시 — 색이 아니라 글자로 알리고, 보조기기에는 긴 설명을 함께 읽어준다 */
 function DeletedTag({ label, text }: { label: string; text: string }) {
@@ -207,7 +210,7 @@ function MatchCard({
   onChanged: (message: string) => void;
   onStale: () => void;
 }) {
-  const [confirming, setConfirming] = useState<"reject" | "cancel" | null>(null);
+  const [confirming, setConfirming] = useState<"reject" | "cancel" | "unreserve" | null>(null);
   const [busy, setBusy] = useState<Action | null>(null);
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
   /** 더블 탭 방지 (state는 다음 렌더 전까지 갱신되지 않는다) */
@@ -215,6 +218,11 @@ function MatchCard({
   const confirmRef = useRef<HTMLDivElement>(null);
 
   // 거절·취소 확인 영역이 열리면 포커스를 그리로 옮긴다 (누른 버튼이 사라지므로)
+  // 목록이 갱신돼 상태가 바뀌면 낡은 확인 영역을 닫는다
+  useEffect(() => {
+    setConfirming(null);
+  }, [m.status]);
+
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
   }, [confirming]);
@@ -225,21 +233,25 @@ function MatchCard({
     setBusy(action);
     setError(null);
     try {
-      const res =
-        action === "accept"
-          ? await exchangeApi.accept(m.id)
-          : action === "reject"
-            ? await exchangeApi.reject(m.id)
-            : await exchangeApi.cancel(m.id);
+      let res: ExchangeMatch | null = null;
+      if (action === "reserve") res = await exchangeApi.reserve(m.id);
+      else if (action === "unreserve") res = await exchangeApi.unreserve(m.id);
+      else if (action === "reject") await exchangeApi.reject(m.id);
+      else await exchangeApi.cancel(m.id);
       setConfirming(null);
       onChanged(
-        action === "accept"
-          ? res.status === "RESERVED"
-            ? `${m.counterpartNickname}님과 예약됐어요.`
-            : `${m.counterpartNickname}님에게 동의를 전했어요. 상대의 동의를 기다려요.`
-          : action === "reject"
-            ? `${m.counterpartNickname}님의 제안을 거절했어요.`
-            : `${m.counterpartNickname}님과의 매칭을 취소했어요.`
+        action === "reserve"
+          ? // 화면이 낡아 상대가 먼저 예약했다면 서버는 멱등 응답을 줄 수 있다 — 예약자가 내가 아니면 사실대로 안내
+            res?.reservedBy === "COUNTERPART"
+            ? `${m.counterpartNickname}님이 이미 예약했어요.`
+            : `${m.counterpartNickname}님과 예약했어요. 두 티켓이 예약 중이에요.`
+          : action === "unreserve"
+            ? res?.status === "CHATTING"
+              ? `${m.counterpartNickname}님과의 예약을 취소했어요. 매칭은 그대로 유지돼요.`
+              : `${m.counterpartNickname}님과의 예약 상태를 확인했어요.`
+            : action === "reject"
+              ? `${m.counterpartNickname}님의 제안을 거절했어요.`
+              : `${m.counterpartNickname}님과의 채팅을 종료했어요.`
       );
     } catch (err) {
       const parsed = exchangeErrorMessage(err, "처리하지 못했습니다.");
@@ -252,8 +264,11 @@ function MatchCard({
 
   const titleId = `match-${m.id}-title`;
   const open = m.status === "CHATTING" || m.status === "RESERVED";
-  const canAccept = m.status === "CHATTING" && !m.myReservedAt;
-  const canReject = m.status === "CHATTING" && m.role === "RECEIVED";
+  const reserved = m.status === "RESERVED";
+  const canReserve = m.status === "CHATTING";
+  const showReject = open && m.role === "RECEIVED";
+  const lockedReasonId = `match-${m.id}-locked-reason`;
+  const acceptReasonId = `match-${m.id}-accept-reason`;
   /** 삭제된 조건이 걸린 매칭은 회색으로 낮춰 보인다 (글자 표시를 함께 쓴다) */
   const anyDeleted = m.counterpartRequestDeleted || m.myRequestDeleted;
 
@@ -308,14 +323,15 @@ function MatchCard({
         </p>
       )}
 
-      {m.status === "CHATTING" && (
-        <ul className="flex flex-col gap-1 text-sm/[normal] text-gray-700" aria-label="교환 동의 현황">
-          <li>나: {m.myReservedAt ? "‘이 사람과 교환할게요’ 동의함" : "아직 동의하지 않았어요"}</li>
-          <li>상대: {m.counterpartReservedAt ? "‘이 사람과 교환할게요’ 동의함" : "아직 동의하지 않았어요"}</li>
-        </ul>
-      )}
-      {m.status === "RESERVED" && (
-        <p className={ui.notice}>두 사람 모두 동의했어요. 두 티켓이 예약되어 다른 매칭에서는 쓸 수 없어요.</p>
+      {reserved && (
+        <p className={ui.notice}>
+          {m.reservedBy === "ME"
+            ? "내가 예약했어요."
+            : m.reservedBy === "COUNTERPART"
+              ? `${m.counterpartNickname}님이 예약했어요.`
+              : "예약 중이에요."}{" "}
+          두 티켓이 예약되어 다른 매칭에서는 쓸 수 없어요.
+        </p>
       )}
       {m.status === "CANCELED" && (
         <p className={anyDeleted ? "text-sm/[normal] text-gray-600" : ui.muted}>{m.canceledBy ? CANCELED_BY_LABEL[m.canceledBy] : "취소됐어요."}</p>
@@ -323,17 +339,37 @@ function MatchCard({
 
       {open && (
         <div className="flex flex-wrap gap-2">
-          {canAccept && (
-            <button type="button" className={button.solid} onClick={() => run("accept")} disabled={busy !== null} aria-busy={busy === "accept"}>
-              {busy === "accept" ? "처리 중..." : "이 사람과 교환할게요"}
+          {canReserve && (
+            <button type="button" className={button.solid} onClick={() => run("reserve")} disabled={busy !== null} aria-busy={busy === "reserve"}>
+              {busy === "reserve" ? "처리 중..." : "예약하기"}
             </button>
           )}
-          {canReject && confirming !== "reject" && (
+          {reserved && confirming !== "unreserve" && (
+            <button type="button" className={button.outline} onClick={() => setConfirming("unreserve")} disabled={busy !== null}>
+              예약 취소
+            </button>
+          )}
+          {reserved && (
+            /* 교환 수락은 준비 중: 눌리지 않지만 포커스는 받게 aria-disabled로 두고 사유를 aria-describedby로 연결한다 */
             <button
               type="button"
-              className={button.outline}
-              onClick={() => setConfirming("reject")}
-              disabled={busy !== null}
+              className={NOT_READY_CLASS}
+              aria-disabled="true"
+              aria-describedby={acceptReasonId}
+              onClick={(e) => e.preventDefault()}
+            >
+              교환 수락
+            </button>
+          )}
+          {/* 예약 중에는 숨기지 않고 aria-disabled로 남겨 '왜 못 누르는지'를 보조기기와 터치 사용자 모두 알 수 있게 한다 */}
+          {showReject && confirming !== "reject" && (
+            <button
+              type="button"
+              className={reserved ? NOT_READY_CLASS : button.outline}
+              onClick={reserved ? (e) => e.preventDefault() : () => setConfirming("reject")}
+              disabled={reserved ? false : busy !== null}
+              aria-disabled={reserved ? "true" : undefined}
+              aria-describedby={reserved ? lockedReasonId : undefined}
               aria-label={`${m.counterpartNickname}님 제안 거절`}
             >
               거절
@@ -342,14 +378,22 @@ function MatchCard({
           {confirming !== "cancel" && (
             <button
               type="button"
-              className={button.dangerOutline}
-              onClick={() => setConfirming("cancel")}
-              disabled={busy !== null}
-              aria-label={`${m.counterpartNickname}님과 매칭 취소`}
+              className={reserved ? NOT_READY_CLASS : button.dangerOutline}
+              onClick={reserved ? (e) => e.preventDefault() : () => setConfirming("cancel")}
+              disabled={reserved ? false : busy !== null}
+              aria-disabled={reserved ? "true" : undefined}
+              aria-describedby={reserved ? lockedReasonId : undefined}
+              aria-label={`${m.counterpartNickname}님과 채팅 종료`}
             >
-              취소
+              채팅 종료
             </button>
           )}
+        </div>
+      )}
+      {reserved && (
+        <div className="flex flex-col gap-1 text-sm/[normal] text-gray-700">
+          <p id={acceptReasonId}>교환 수락 기능은 준비 중이에요.</p>
+          <p id={lockedReasonId}>예약 중에는 거절·채팅 종료를 할 수 없어요. 먼저 예약을 취소해주세요.</p>
         </div>
       )}
 
@@ -358,9 +402,9 @@ function MatchCard({
           <p className={ui.warning}>
             {confirming === "reject"
               ? "이 제안을 거절할까요?"
-              : m.status === "RESERVED"
-                ? "취소하면 예약이 풀리고 두 티켓을 다시 쓸 수 있어요. 취소할까요?"
-                : "이 매칭을 취소할까요?"}
+              : confirming === "unreserve"
+                ? "취소하면 예약이 풀리고 두 티켓을 다시 쓸 수 있어요. 예약을 취소할까요?"
+                : "이 채팅을 종료할까요? 매칭이 취소돼요."}
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -370,7 +414,7 @@ function MatchCard({
               disabled={busy !== null}
               aria-busy={busy === confirming}
             >
-              {busy === confirming ? "처리 중..." : confirming === "reject" ? "거절할게요" : "취소할게요"}
+              {busy === confirming ? "처리 중..." : confirming === "reject" ? "거절할게요" : confirming === "unreserve" ? "예약 취소할게요" : "종료할게요"}
             </button>
             <button type="button" className={button.outline} onClick={() => setConfirming(null)} disabled={busy !== null}>
               돌아가기
@@ -390,7 +434,12 @@ function MatchCard({
         </div>
       )}
 
-      {open && <p className={anyDeleted ? "text-[0.8125rem]/[normal] text-gray-600" : ui.hint}>채팅·교환 완료 기능은 준비 중이에요.</p>}
+      {/* RESERVED일 때는 위의 '교환 수락 준비 중' 안내가 있으므로 채팅 부분만 안내한다 */}
+      {open && (
+        <p className={anyDeleted ? "text-[0.8125rem]/[normal] text-gray-600" : ui.hint}>
+          {reserved ? "채팅 기능은 준비 중이에요." : "채팅·교환 수락 기능은 준비 중이에요."}
+        </p>
+      )}
     </article>
   );
 }
