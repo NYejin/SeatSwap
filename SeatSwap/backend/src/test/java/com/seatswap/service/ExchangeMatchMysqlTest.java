@@ -90,68 +90,160 @@ class ExchangeMatchMysqlTest {
     // ------------------------------------------------------------------ 단일 흐름
 
     @Test
-    void 제안_양쪽수락_취소의_전체_흐름과_잠금_행() {
+    void 제안_한명예약_예약취소_취소의_전체_흐름과_잠금_행() {
         Party p = party(1, "Z1");
         Party q = party(2, "Z1");
         mutual(p, q);
 
         ExchangeMatchResponse proposed = matchService.propose(p.userId, p.requestId, q.requestId);
         assertThat(proposed.status()).isEqualTo("CHATTING");
+        assertThat(proposed.reservedBy()).isNull();
 
-        ExchangeMatchResponse first = matchService.accept(p.userId, proposed.id());
-        assertThat(first.status()).isEqualTo("CHATTING");
-        assertThat(first.myReservedAt()).isNotNull();
-        assertThat(locks()).isZero();
-        // 멱등
-        assertThat(matchService.accept(p.userId, proposed.id()).myReservedAt())
-                .isCloseTo(first.myReservedAt(), org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.MILLIS));
-
-        ExchangeMatchResponse reserved = matchService.accept(q.userId, proposed.id());
+        // 한 명만 눌러도 바로 RESERVED + 잠금 2행
+        ExchangeMatchResponse reserved = matchService.reserve(p.userId, proposed.id());
         assertThat(reserved.status()).isEqualTo("RESERVED");
+        assertThat(reserved.reservedBy()).isEqualTo("ME");
+        assertThat(reserved.reservedAt()).isNotNull();
+        assertThat(reserved.myAccepted()).isFalse();
+        assertThat(reserved.counterpartAccepted()).isFalse();
         assertThat(locks()).isEqualTo(2);
-        assertThat(matchService.accept(q.userId, proposed.id()).status()).as("RESERVED 에서 다시 눌러도 멱등").isEqualTo("RESERVED");
+        assertThat(jdbc.queryForObject("SELECT reserved_by_id FROM exchange_match WHERE id=?", Long.class, proposed.id())).isEqualTo(p.userId);
+        assertThat(matchService.reserve(q.userId, proposed.id()).reservedBy()).as("상대가 눌러도 멱등, 예약자는 그대로").isEqualTo("COUNTERPART");
+        assertThat(matchService.reserve(p.userId, proposed.id()).status()).isEqualTo("RESERVED");
         assertThat(locks()).isEqualTo(2);
 
-        // 잠긴 티켓은 내릴 수 없다 (409)
+        // 예약 중에는 채팅 종료(cancel)와 거절(reject)이 막힌다
+        assertThatThrownBy(() -> matchService.cancel(q.userId, proposed.id()))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getMessage()).isEqualTo("먼저 예약을 취소해주세요.");
+                    assertThat(e.getDetails()).containsEntry("code", "MATCH_STATE_CONFLICT");
+                });
+        assertThatThrownBy(() -> matchService.reject(q.userId, proposed.id())).isInstanceOf(ConflictException.class);
+        // 잠긴 티켓은 내릴 수 없다 (409), 요청 삭제도 409 (열린 매칭)
         assertThatThrownBy(() -> ticketService.deactivate(p.userId, p.ticketId)).isInstanceOf(ConflictException.class);
-        // 잠금 상태에서는 요청 수정·삭제도 409 (열린 매칭)
         assertThatThrownBy(() -> requestService.delete(p.userId, p.requestId)).isInstanceOf(ConflictException.class);
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE status='RESERVED'")).isEqualTo(1);
+
+        // 예약한 사람이 아닌 상대가 예약을 취소 -> CHATTING 복귀, 잠금 해제
+        ExchangeMatchResponse back = matchService.unreserve(q.userId, proposed.id());
+        assertThat(back.status()).isEqualTo("CHATTING");
+        assertThat(back.reservedBy()).isNull();
+        assertThat(back.reservedAt()).isNull();
+        assertThat(locks()).isZero();
+        assertThat(matchService.unreserve(q.userId, proposed.id()).status()).as("CHATTING 에서 예약 취소는 멱등").isEqualTo("CHATTING");
+
+        // 같은 쌍이 바로 다시 예약하고, 이번엔 상대가 예약자
+        assertThat(matchService.reserve(q.userId, proposed.id()).reservedBy()).isEqualTo("ME");
+        assertThat(locks()).isEqualTo(2);
+        matchService.unreserve(q.userId, proposed.id());
 
         ExchangeMatchResponse canceled = matchService.cancel(q.userId, proposed.id());
         assertThat(canceled.status()).isEqualTo("CANCELED");
         assertThat(canceled.canceledBy()).isEqualTo("ME");
         assertThat(locks()).isZero();
+        assertThatThrownBy(() -> matchService.reserve(p.userId, proposed.id())).isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> matchService.unreserve(p.userId, proposed.id())).isInstanceOf(ConflictException.class);
 
         // 취소 후 같은 쌍 재매칭 허용
         assertThat(matchService.propose(q.userId, q.requestId, p.requestId).status()).isEqualTo("CHATTING");
         assertThat(count("SELECT COUNT(*) FROM exchange_match")).isEqualTo(2);
+        assertInvariants();
     }
 
     @Test
-    void 같은_티켓의_두_번째_매칭_예약은_409이고_첫_매칭이_취소되면_복귀한다() {
+    void 티켓이_INACTIVE이거나_요청이_닫힘_삭제면_예약은_거절되고_예약_취소와_채팅_종료는_가능하다() {
+        Party p = party(1, "Z1");
+        Party q = party(2, "Z1");
+        mutual(p, q);
+        long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+
+        // 티켓 내리기 경로를 거치지 않고 직접 INACTIVE 로 만든 불일치 상태(방어선 검증)
+        jdbc.update("UPDATE ticket SET status = 'INACTIVE' WHERE id = ?", q.ticketId);
+        assertThatThrownBy(() -> matchService.reserve(p.userId, m)).isInstanceOfSatisfying(BusinessRuleException.class,
+                e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_ACTIVE"));
+        jdbc.update("UPDATE ticket SET status = 'ACTIVE' WHERE id = ?", q.ticketId);
+
+        jdbc.update("UPDATE exchange_request SET status = 'CLOSED' WHERE id = ?", q.requestId);
+        assertThatThrownBy(() -> matchService.reserve(p.userId, m)).isInstanceOf(BusinessRuleException.class);
+        jdbc.update("UPDATE exchange_request SET status = 'DELETED', deleted_at = NOW(6) WHERE id = ?", q.requestId);
+        assertThatThrownBy(() -> matchService.reserve(p.userId, m)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "REQUEST_DELETED"));
+        assertThat(locks()).isZero();
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE id = " + m + " AND status = 'CHATTING' AND reserved_by_id IS NULL")).isEqualTo(1);
+        // 이미 열린 매칭은 닫을 수 있다
+        assertThat(matchService.cancel(p.userId, m).status()).isEqualTo("CANCELED");
+
+        // RESERVED 인 뒤 요청이 닫혀도 멱등 reserve 는 200, unreserve 는 가능
+        Party r = party(3, "Z2");
+        Party s = party(4, "Z2");
+        mutual(r, s);
+        long m2 = matchService.propose(r.userId, r.requestId, s.requestId).id();
+        matchService.reserve(r.userId, m2);
+        jdbc.update("UPDATE exchange_request SET status = 'CLOSED' WHERE id = ?", s.requestId);
+        assertThat(matchService.reserve(s.userId, m2).status()).isEqualTo("RESERVED");
+        assertThat(matchService.unreserve(s.userId, m2).status()).isEqualTo("CHATTING");
+        assertInvariants();
+    }
+
+    @Test
+    void 교환_수락_표시가_있어도_예약_취소는_허용되고_표시가_초기화된다() {
+        Party p = party(1, "Z1");
+        Party q = party(2, "Z1");
+        mutual(p, q);
+        long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+        matchService.reserve(q.userId, m);
+        // 교환 수락 기능은 아직 없으므로 한쪽이 수락을 눌러 둔 상태를 직접 만든다(RESERVED 에서는 CHECK 허용)
+        jdbc.update("UPDATE exchange_match SET a_completed_at = NOW(6) WHERE id = ?", m);
+        assertThat(matchService.reserve(p.userId, m).myAccepted()).as("a측(p) 화면: 내가 수락").isTrue();
+        assertThat(matchService.reserve(q.userId, m).counterpartAccepted()).isTrue();
+
+        ExchangeMatchResponse back = matchService.unreserve(p.userId, m);
+
+        assertThat(back.status()).isEqualTo("CHATTING");
+        assertThat(back.myAccepted()).isFalse();
+        assertThat(back.counterpartAccepted()).isFalse();
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE a_completed_at IS NOT NULL OR b_completed_at IS NOT NULL")).isZero();
+        assertThat(locks()).isZero();
+    }
+
+    @Test
+    void 예약_중에도_이미_열려있던_다른_채팅은_유지되고_새_예약과_새_제안만_막힌다() {
         Party p = party(1, "Z1");
         Party q = party(2, "Z1");
         Party r = party(3, "Z1");
         wants(p, q, r);
         wants(q, p);
         wants(r, p);
-
         long m1 = matchService.propose(p.userId, p.requestId, q.requestId).id();
         long m2 = matchService.propose(p.userId, p.requestId, r.requestId).id();   // 한 요청에 채팅 여러 개
-        matchService.accept(p.userId, m1);
-        matchService.accept(q.userId, m1);                                          // m1 RESERVED, p/q 티켓 잠김
-        assertThatThrownBy(() -> matchService.accept(p.userId, m2))                // p 의 티켓은 잠겨 있어 409
-                .isInstanceOfSatisfying(ConflictException.class,
-                        e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_ALREADY_RESERVED"));
-        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE status='RESERVED'")).isEqualTo(1);
-        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE id = " + m2 + " AND a_reserved_at IS NOT NULL"))
-                .as("실패한 수락은 누른 시각도 남기지 않는다").isZero();
 
-        matchService.cancel(q.userId, m1);                                          // 예약 취소 -> 잠금 해제, p 티켓 복귀
+        matchService.reserve(q.userId, m1);                                          // m1 RESERVED, p/q 티켓 잠김
+
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m2)).as("다른 채팅은 유지").isEqualTo("CHATTING");
+        // 누가 눌러도 p 의 티켓은 잠겨 있어 m2 예약은 409
+        for (long who : new long[]{p.userId, r.userId}) {
+            assertThatThrownBy(() -> matchService.reserve(who, m2))
+                    .isInstanceOfSatisfying(ConflictException.class,
+                            e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_ALREADY_RESERVED"));
+        }
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE id = " + m2 + " AND reserved_by_id IS NOT NULL"))
+                .as("실패한 예약은 흔적을 남기지 않는다").isZero();
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE status='RESERVED'")).isEqualTo(1);
+        // 잠긴 티켓의 새 제안은 막힌다: 같은 쌍은 열린 매칭(m2)이 먼저 걸리고, 새 상대로는 내 티켓이 잠겨 TICKET_LOCKED
+        assertThatThrownBy(() -> matchService.propose(p.userId, p.requestId, r.requestId))
+                .isInstanceOf(ConflictException.class);
+        Party s = party(4, "Z1");
+        mutual(p, s);
+        assertThatThrownBy(() -> matchService.propose(p.userId, p.requestId, s.requestId))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> assertThat(e.getCode()).isEqualTo("TICKET_LOCKED"));
+        assertThatThrownBy(() -> matchService.propose(s.userId, s.requestId, p.requestId))
+                .isInstanceOfSatisfying(BusinessRuleException.class, e -> assertThat(e.getCode()).isEqualTo("NOT_A_CANDIDATE"));
+        // m1 의 예약을 취소하면 m2 를 예약할 수 있다 (m2 의 채팅은 계속 유지됐다)
+        matchService.unreserve(p.userId, m1);
         assertThat(locks()).isZero();
-        matchService.accept(p.userId, m2);
-        assertThat(matchService.accept(r.userId, m2).status()).isEqualTo("RESERVED");
+        assertThat(matchService.reserve(r.userId, m2).status()).isEqualTo("RESERVED");
         assertThat(locks()).isEqualTo(2);
+        assertInvariants();
     }
 
     @Test
@@ -203,7 +295,7 @@ class ExchangeMatchMysqlTest {
         assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("CANCELED");
         assertThat(jdbc.queryForObject("SELECT canceled_by_id FROM exchange_match WHERE id=?", Long.class, m)).isNull();
         // COMPLETED 매칭(교환 완료 기능 전이므로 직접 상태를 만든다)이 있어도 p 의 요청 삭제는 허용된다
-        jdbc.update("UPDATE exchange_match SET status='COMPLETED', canceled_at=NULL, canceled_by_id=NULL WHERE id=?", m);
+        jdbc.update("UPDATE exchange_match SET status='COMPLETED', canceled_at=NULL, canceled_by_id=NULL, a_completed_at=NOW(6), b_completed_at=NOW(6) WHERE id=?", m);
         requestService.delete(p.userId, p.requestId);
         assertThat(jdbc.queryForObject("SELECT status FROM exchange_request WHERE id=?", String.class, p.requestId)).isEqualTo("DELETED");
         assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("COMPLETED");
@@ -287,7 +379,7 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 같은_티켓을_걸고_두_매칭이_동시에_양쪽_수락을_완료하려_하면_하나만_RESERVED() throws Exception {
+    void 같은_티켓을_걸고_두_매칭이_동시에_예약하려_하면_하나만_RESERVED() throws Exception {
         for (int round = 0; round < ROUNDS; round++) {
             String zone = "Z" + (++zoneSeq);
             Party p = party(1, zone);
@@ -300,8 +392,8 @@ class ExchangeMatchMysqlTest {
             long m2 = matchService.propose(p.userId, p.requestId, r.requestId).id();
 
             List<Callable<Object>> calls = new ArrayList<>(List.of(
-                    () -> matchService.accept(p.userId, m1), () -> matchService.accept(q.userId, m1),
-                    () -> matchService.accept(p.userId, m2), () -> matchService.accept(r.userId, m2)));
+                    () -> matchService.reserve(p.userId, m1), () -> matchService.reserve(q.userId, m1),
+                    () -> matchService.reserve(p.userId, m2), () -> matchService.reserve(r.userId, m2)));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
 
@@ -316,14 +408,14 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 수락과_취소가_동시에_와도_잠금_행이_상태와_어긋나지_않는다() throws Exception {
+    void 예약과_취소_거절이_동시에_와도_잠금_행이_상태와_어긋나지_않는다() throws Exception {
         for (int round = 0; round < ROUNDS; round++) {
             Party p = party(1, "Z" + (++zoneSeq));
             Party q = party(2, "Z" + zoneSeq);
             mutual(p, q);
             long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
             List<Callable<Object>> calls = new ArrayList<>(List.of(
-                    () -> matchService.accept(p.userId, m), () -> matchService.accept(q.userId, m),
+                    () -> matchService.reserve(p.userId, m), () -> matchService.reserve(q.userId, m),
                     () -> matchService.cancel(p.userId, m), () -> matchService.reject(q.userId, m)));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
@@ -338,7 +430,7 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 티켓_내리기와_양쪽_수락이_동시에_와도_잠긴_티켓이_INACTIVE가_되지_않는다() throws Exception {
+    void 티켓_내리기와_예약이_동시에_와도_잠긴_티켓이_INACTIVE가_되지_않는다() throws Exception {
         int deactivated = 0;
         int reserved = 0;
         for (int round = 0; round < DEACTIVATE_ROUNDS; round++) {
@@ -349,7 +441,7 @@ class ExchangeMatchMysqlTest {
             final int finalRound = round;
             Party victim = round % 2 == 0 ? q : p;   // 번갈아 id 가 큰/작은 티켓을 내린다 (잠금 순서 양방향 검증)
             List<Callable<Object>> calls = new ArrayList<>(List.of(
-                    () -> matchService.accept(p.userId, m), () -> matchService.accept(q.userId, m),
+                    () -> matchService.reserve(p.userId, m), () -> matchService.reserve(q.userId, m),
                     () -> {
                         Thread.sleep((long) (finalRound % 8) * 6);   // 라운드 번호로 정한 고정 지연(0~42ms): 양쪽 승부가 모두 나오되 무작위가 아니다
                         ticketService.deactivate(victim.userId, victim.ticketId);
@@ -373,7 +465,7 @@ class ExchangeMatchMysqlTest {
             }
         }
         assertInvariants();
-        System.out.println("[deactivate-vs-accept] deactivated=" + deactivated + " reserved=" + reserved);
+        System.out.println("[deactivate-vs-reserve] deactivated=" + deactivated + " reserved=" + reserved);
         assertThat(deactivated).as("티켓 내리기가 이기는 라운드가 있어야 한다").isPositive();
         assertThat(reserved).as("예약이 이기는 라운드가 있어야 한다").isPositive();
     }
@@ -425,7 +517,7 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void 요청_수정과_양쪽_수락이_동시에_와도_예약된_매칭의_요청은_수정되지_않는다() throws Exception {
+    void 요청_수정과_예약이_동시에_와도_예약된_매칭의_요청은_수정되지_않는다() throws Exception {
         int reservedWins = 0;
         int updateWins = 0;
         for (int round = 0; round < DEACTIVATE_ROUNDS; round++) {
@@ -438,7 +530,7 @@ class ExchangeMatchMysqlTest {
                     List.of(new WantSessionInput(session1, 1)),
                     List.of(new WantRangeInput("Z" + zoneSeq, "1", "1", "1", "1", "NEG", -500)));
             List<Callable<Object>> calls = new ArrayList<>(List.of(
-                    () -> matchService.accept(p.userId, m), () -> matchService.accept(q.userId, m),
+                    () -> matchService.reserve(p.userId, m), () -> matchService.reserve(q.userId, m),
                     () -> {
                         Thread.sleep((long) (finalRound % 8) * 6);   // 고정 지연 0~42ms: 양쪽 승부가 모두 나온다
                         return requestService.update(q.userId, q.requestId, patch);
@@ -465,7 +557,7 @@ class ExchangeMatchMysqlTest {
             jdbc.update("DELETE FROM exchange_ticket_lock");
             jdbc.update("DELETE FROM exchange_match");
         }
-        System.out.println("[update-vs-accept] updateWins=" + updateWins + " reservedWins=" + reservedWins);
+        System.out.println("[update-vs-reserve] updateWins=" + updateWins + " reservedWins=" + reservedWins);
         assertThat(updateWins).as("수정이 이기는 라운드가 있어야 한다").isPositive();
         assertThat(reservedWins).as("예약이 이기는 라운드가 있어야 한다").isPositive();
         assertInvariants();
@@ -623,43 +715,69 @@ class ExchangeMatchMysqlTest {
     }
 
     @Test
-    void RESERVED_취소_직후_같은_티켓으로_새_제안과_양쪽_수락이_다시_RESERVED가_된다() throws Exception {
+    void 두_사람이_동시에_예약해도_한_번만_처리되고_둘_다_RESERVED를_본다() throws Exception {
         for (int round = 0; round < ROUNDS; round++) {
             Party p = party(1, "Z" + (++zoneSeq));
             Party q = party(2, "Z" + zoneSeq);
             mutual(p, q);
-            long m1 = matchService.propose(p.userId, p.requestId, q.requestId).id();
-            matchService.accept(p.userId, m1);
-            matchService.accept(q.userId, m1);
+            long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+            List<Callable<Object>> calls = new ArrayList<>(List.of(
+                    () -> matchService.reserve(p.userId, m), () -> matchService.reserve(q.userId, m)));
+            List<Object> results = runConcurrently(calls);
+
+            assertThat(results).as("round " + round).allSatisfy(res ->
+                    assertThat(res instanceof ExchangeMatchResponse r && r.status().equals("RESERVED")).as(String.valueOf(res)).isTrue());
+            assertThat(results.stream().filter(x -> x instanceof ExchangeMatchResponse r && "ME".equals(r.reservedBy())).count())
+                    .as("예약자는 정확히 한 명 " + results).isEqualTo(1);
+            assertThat(locks()).isEqualTo(2);
+            assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE id = " + m + " AND reserved_by_id IS NOT NULL AND reserved_at IS NOT NULL"))
+                    .isEqualTo(1);
+            matchService.unreserve(p.userId, m);
+            matchService.cancel(p.userId, m);
+        }
+        assertInvariants();
+    }
+
+    @Test
+    void 예약_취소_예약_재예약_채팅종료가_동시에_와도_교착이_없고_불변식이_유지된다() throws Exception {
+        for (int round = 0; round < ROUNDS; round++) {
+            Party p = party(1, "Z" + (++zoneSeq));
+            Party q = party(2, "Z" + zoneSeq);
+            mutual(p, q);
+            long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+            matchService.reserve(p.userId, m);
             assertThat(locks()).isEqualTo(2);
 
-            // 취소와 새 제안이 동시에: 제안은 취소 전이면 409(열린 매칭), 후면 201
             List<Callable<Object>> calls = new ArrayList<>(List.of(
-                    () -> matchService.cancel(p.userId, m1),
-                    () -> matchService.propose(q.userId, q.requestId, p.requestId)));
+                    () -> matchService.unreserve(q.userId, m), () -> matchService.reserve(q.userId, m),
+                    () -> matchService.cancel(p.userId, m), () -> matchService.unreserve(p.userId, m)));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
-            assertThat(results).anyMatch(x -> x instanceof ExchangeMatchResponse r && r.status().equals("CANCELED"));
-            long m2;
-            Object proposeResult = results.stream().filter(x -> x instanceof ExchangeMatchResponse r && !r.id().equals(m1)
-                    || x instanceof ConflictException).findFirst().orElseThrow();
-            if (proposeResult instanceof ExchangeMatchResponse r) {
-                m2 = r.id();
-            } else {
-                m2 = matchService.propose(q.userId, q.requestId, p.requestId).id();   // 취소가 끝난 뒤에는 바로 성공
-            }
-            assertThat(locks()).as("round " + round + " 취소로 잠금이 풀렸다").isZero();
 
-            matchService.accept(p.userId, m2);
-            assertThat(matchService.accept(q.userId, m2).status()).isEqualTo("RESERVED");
+            assertThat(results).as("round " + round).allSatisfy(res ->
+                    assertThat(res instanceof ExchangeMatchResponse || res instanceof ConflictException).as(String.valueOf(res)).isTrue());
+            String status = jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m);
+            assertThat(locks()).as("round " + round + " status=" + status + " " + results).isEqualTo(status.equals("RESERVED") ? 2 : 0);
+            assertInvariants();
+
+            // 정리 후 같은 쌍으로 다시 진행: 새 매칭이 필요하면 만들고 예약까지 된다
+            if (status.equals("RESERVED")) {
+                matchService.unreserve(p.userId, m);
+            }
+            if (!status.equals("CANCELED")) {
+                matchService.cancel(p.userId, m);
+            }
+            long m2 = matchService.propose(q.userId, q.requestId, p.requestId).id();
+            assertThat(matchService.reserve(q.userId, m2).status()).isEqualTo("RESERVED");
             assertThat(locks()).isEqualTo(2);
+            matchService.unreserve(p.userId, m2);
             matchService.cancel(p.userId, m2);
         }
         assertInvariants();
     }
 
     @Test
-    void 티켓_등록_취소_수락이_동시에_와도_교착이_없다() throws Exception {
+    void 티켓_등록_취소_예약이_동시에_와도_교착이_없다() throws Exception {
         // TicketService.create 는 users 행을 잠그고, cancel 의 canceled_by FK 는 users 행에 S 잠금을 건다.
         for (int round = 0; round < ROUNDS; round++) {
             Party p = party(1, "Z" + (++zoneSeq));
@@ -670,7 +788,7 @@ class ExchangeMatchMysqlTest {
             List<Callable<Object>> calls = new ArrayList<>(List.of(
                     () -> ticketService.create(p.userId, new com.seatswap.dto.request.TicketCreateRequest(session1, "N" + r, "1", "1")),
                     () -> matchService.cancel(p.userId, m),
-                    () -> matchService.accept(q.userId, m),
+                    () -> matchService.reserve(q.userId, m),
                     () -> matchService.propose(q.userId, q.requestId, p.requestId)));
             Collections.shuffle(calls);
             List<Object> results = runConcurrently(calls);
@@ -681,6 +799,37 @@ class ExchangeMatchMysqlTest {
             assertThat(results).anyMatch(res -> res instanceof com.seatswap.dto.response.TicketResponse);   // 티켓 등록은 항상 성공
         }
         assertInvariants();
+    }
+
+    @Test
+    void V8_제약을_직접_SQL로_위반하면_제약_이름과_함께_거부된다() {
+        Party p = party(1, "Z1");
+        Party q = party(2, "Z1");
+        Party r = party(3, "Z1");
+        mutual(p, q);
+        long m = matchService.propose(p.userId, p.requestId, q.requestId).id();
+
+        // ck_exchange_match_reserved: CHATTING 인데 예약자, RESERVED 인데 예약자 없음
+        assertRejected("ck_exchange_match_reserved", () -> jdbc.update(
+                "UPDATE exchange_match SET reserved_by_id = ?, reserved_at = NOW(6) WHERE id = ?", p.userId, m));
+        assertRejected("ck_exchange_match_reserved", () -> jdbc.update("UPDATE exchange_match SET status = 'RESERVED' WHERE id = ?", m));
+        // ck_exchange_match_reserved_by_party: 예약자는 참여자여야 한다
+        assertRejected("ck_exchange_match_reserved_by_party", () -> jdbc.update(
+                "UPDATE exchange_match SET status = 'RESERVED', reserved_by_id = ?, reserved_at = NOW(6) WHERE id = ?", r.userId, m));
+        // ck_exchange_match_completed: CHATTING 인데 수락 표시, COMPLETED 인데 수락 표시 없음
+        assertRejected("ck_exchange_match_completed", () -> jdbc.update("UPDATE exchange_match SET a_completed_at = NOW(6) WHERE id = ?", m));
+        assertRejected("ck_exchange_match_completed", () -> jdbc.update("UPDATE exchange_match SET status = 'COMPLETED' WHERE id = ?", m));
+
+        // RESERVED 를 벗어나는 UPDATE 가 reserved_* 를 비우지 않으면 DB 가 거부한다(안전망)
+        matchService.reserve(p.userId, m);
+        assertRejected("ck_exchange_match_reserved", () -> jdbc.update("UPDATE exchange_match SET status = 'CHATTING' WHERE id = ?", m));
+        assertRejected("ck_exchange_match_reserved", () -> jdbc.update(
+                "UPDATE exchange_match SET status = 'CANCELED', canceled_at = NOW(6) WHERE id = ?", m));
+        assertThat(jdbc.queryForObject("SELECT status FROM exchange_match WHERE id=?", String.class, m)).isEqualTo("RESERVED");
+        // 올바른 형태의 되돌림은 통과한다
+        assertThat(jdbc.update("UPDATE exchange_match SET status = 'CHATTING', reserved_by_id = NULL, reserved_at = NULL WHERE id = ?", m)).isEqualTo(1);
+        // 레거시 컬럼은 남아 있으나 새 코드는 쓰지 않는다
+        assertThat(count("SELECT COUNT(*) FROM exchange_match WHERE a_reserved_at IS NOT NULL OR b_reserved_at IS NOT NULL")).isZero();
     }
 
     @Test
@@ -710,7 +859,7 @@ class ExchangeMatchMysqlTest {
         jdbc.update("INSERT INTO exchange_match " + cols + " " + vals,
                 p.requestId, q.requestId, p.ticketId, q.ticketId, p.userId, q.userId, "CHATTING", null, null);
         assertRejected("uk_exchange_match_open_pair", () -> jdbc.update("INSERT INTO exchange_match " + cols + " " + vals,
-                q.requestId, p.requestId, q.ticketId, p.ticketId, q.userId, p.userId, "RESERVED", null, null));
+                q.requestId, p.requestId, q.ticketId, p.ticketId, q.userId, p.userId, "CHATTING", null, null));
         // 잠금 PK: 같은 티켓을 다른 매칭이 잠글 수 없다
         long m = jdbc.queryForObject("SELECT id FROM exchange_match", Long.class);
         jdbc.update("INSERT INTO exchange_ticket_lock (ticket_id, match_id, created_at) VALUES (?,?,NOW(6))", p.ticketId, m);

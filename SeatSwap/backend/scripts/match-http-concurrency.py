@@ -1,8 +1,8 @@
-"""매칭 생성·예약 동시성 HTTP 검증 (임시 MySQL + java -jar 로 띄운 앱 전용, 개발 DB·backend/.env 사용 금지).
+"""매칭 생성·예약(reserve/unreserve) 동시성 HTTP 검증 (임시 MySQL + java -jar 로 띄운 앱 전용, 개발 DB·backend/.env 사용 금지).
 사용: python match-http-concurrency.py [포트=18082] [라운드=30] [mysql컨테이너=seatswap-tmp-match] [DB=seatswap_http]
 앱은 TICKET_MAX_ACTIVE_PER_USER=1000 으로 띄운다(라운드마다 티켓을 새로 만들기 때문).
-검증: 같은 쌍 동시 제안 -> 201 하나 + 409 나머지 / 같은 티켓을 건 두 매칭의 동시 양쪽 수락 -> RESERVED 하나 /
-수락·취소·티켓 내리기 경쟁 -> 5xx(교착·락 대기 초과) 0건, 잠금 행과 상태 불일치 0건.
+검증: 같은 쌍 동시 제안 -> 201 하나 + 409 나머지 / 같은 티켓을 건 두 매칭의 동시 예약 -> RESERVED 하나 /
+예약·예약 취소·취소·티켓 내리기 경쟁 -> 5xx(교착·락 대기 초과) 0건, 잠금 행과 상태 불일치 0건.
 """
 import json
 import random
@@ -67,9 +67,9 @@ sid = perf["sessions"][0]["id"]
 def ticket_and_request(token, zone, col, want_cols):
     s1, t = api("POST", "/api/tickets", token, {"sessionId": sid, "zone": zone, "row": "1", "col": str(col)})
     assert s1 == 201, (s1, t)
-    ranges = [{"zone": zone, "rowFrom": "1", "rowTo": "1", "colFrom": str(c), "colTo": str(c)} for c in want_cols]
+    ranges = [{"zone": zone, "rowFrom": "1", "rowTo": "1", "colFrom": str(c), "colTo": str(c), "extraType": "ANY"} for c in want_cols]
     s2, r = api("POST", "/api/exchange/requests", token,
-                {"ticketId": t["id"], "extraType": "ANY", "wantSessions": [{"sessionId": sid, "priority": 1}], "ranges": ranges})
+                {"ticketId": t["id"], "wantSessions": [{"sessionId": sid, "priority": 1}], "ranges": ranges})
     assert s2 == 201, (s2, r)
     return t["id"], r["id"]
 
@@ -114,7 +114,7 @@ for rnd in range(ROUNDS):
     if created != 1 or conflicts != 7:
         violations.append(("A", rnd, created, conflicts, [st for _, st, _ in res]))
 
-# --- B: 같은 티켓(p)을 건 두 매칭의 동시 양쪽 수락 ---------------------------------------
+# --- B: 같은 티켓(p)을 건 두 매칭의 동시 예약 (한 명이 눌러도 RESERVED) ---------------------------------------
 for rnd in range(ROUNDS):
     zone = f"B{rnd}"
     (tp, rp) = ticket_and_request(users[0], zone, 1, [2, 3])
@@ -124,21 +124,21 @@ for rnd in range(ROUNDS):
     assert s == 201, (s, m1)
     s, m2 = api("POST", f"/api/exchange/requests/{rp}/proposals", users[0], {"targetRequestId": rr})
     assert s == 201, (s, m2)
-    calls = [("p-m1", lambda: api("POST", f"/api/exchange/matches/{m1['id']}/accept", users[0])),
-             ("q-m1", lambda: api("POST", f"/api/exchange/matches/{m1['id']}/accept", users[1])),
-             ("p-m2", lambda: api("POST", f"/api/exchange/matches/{m2['id']}/accept", users[0])),
-             ("r-m2", lambda: api("POST", f"/api/exchange/matches/{m2['id']}/accept", users[2]))]
+    calls = [("p-m1", lambda: api("POST", f"/api/exchange/matches/{m1['id']}/reserve", users[0])),
+             ("q-m1", lambda: api("POST", f"/api/exchange/matches/{m1['id']}/reserve", users[1])),
+             ("p-m2", lambda: api("POST", f"/api/exchange/matches/{m2['id']}/reserve", users[0])),
+             ("r-m2", lambda: api("POST", f"/api/exchange/matches/{m2['id']}/reserve", users[2]))]
     random.shuffle(calls)
     res = burst(calls)
-    tally("B.accept", res)
-    reserved_responses = sum(1 for _, st, b in res if st == 200 and b["status"] == "RESERVED")
+    tally("B.reserve", res)
+    reserved_responses = len({b["id"] for _, st, b in res if st == 200 and b["status"] == "RESERVED"})   # 같은 매칭을 두 사람이 눌러도 한 매칭
     others_ok = all(st in (200, 409) for _, st, _ in res)
     reserved_rows = sql(f"SELECT COUNT(*) FROM exchange_match WHERE id IN ({m1['id']},{m2['id']}) AND status='RESERVED'")[0][0]
     lock_rows = sql(f"SELECT COUNT(*) FROM exchange_ticket_lock WHERE match_id IN ({m1['id']},{m2['id']})")[0][0]
     if reserved_responses != 1 or not others_ok or reserved_rows != "1" or lock_rows != "2":
         violations.append(("B", rnd, reserved_responses, reserved_rows, lock_rows, [(l, st) for l, st, _ in res]))
 
-# --- C: 수락/취소/거절 경쟁 ---------------------------------------------------------------
+# --- C: 예약/예약 취소/취소/거절 경쟁 ---------------------------------------------------------------
 for rnd in range(ROUNDS):
     zone = f"C{rnd}"
     (tp, rp) = ticket_and_request(users[0], zone, 1, [2])
@@ -146,15 +146,33 @@ for rnd in range(ROUNDS):
     s, m = api("POST", f"/api/exchange/requests/{rp}/proposals", users[0], {"targetRequestId": rq})
     assert s == 201, (s, m)
     mid = m["id"]
-    calls = [("p-accept", lambda: api("POST", f"/api/exchange/matches/{mid}/accept", users[0])),
-             ("q-accept", lambda: api("POST", f"/api/exchange/matches/{mid}/accept", users[1])),
+    calls = [("p-reserve", lambda: api("POST", f"/api/exchange/matches/{mid}/reserve", users[0])),
+             ("q-reserve", lambda: api("POST", f"/api/exchange/matches/{mid}/reserve", users[1])),
              ("p-cancel", lambda: api("POST", f"/api/exchange/matches/{mid}/cancel", users[0])),
              ("q-reject", lambda: api("POST", f"/api/exchange/matches/{mid}/reject", users[1]))]
     random.shuffle(calls)
     res = burst(calls)
-    tally("C.accept-cancel", res)
+    tally("C.reserve-cancel", res)
 
-# --- D: 티켓 내리기 vs 양쪽 수락 -----------------------------------------------------------
+# --- E: RESERVED 매칭에서 예약 취소/재예약/채팅 종료 경쟁 ---------------------------------
+for rnd in range(ROUNDS):
+    zone = f"E{rnd}"
+    (tp, rp) = ticket_and_request(users[0], zone, 1, [2])
+    (tq, rq) = ticket_and_request(users[1], zone, 2, [1])
+    s, m = api("POST", f"/api/exchange/requests/{rp}/proposals", users[0], {"targetRequestId": rq})
+    assert s == 201, (s, m)
+    mid = m["id"]
+    s, rsv = api("POST", f"/api/exchange/matches/{mid}/reserve", users[0])
+    assert s == 200 and rsv["status"] == "RESERVED", (s, rsv)
+    calls = [("q-unreserve", lambda: api("POST", f"/api/exchange/matches/{mid}/unreserve", users[1])),
+             ("q-reserve", lambda: api("POST", f"/api/exchange/matches/{mid}/reserve", users[1])),
+             ("p-cancel", lambda: api("POST", f"/api/exchange/matches/{mid}/cancel", users[0])),
+             ("p-unreserve", lambda: api("POST", f"/api/exchange/matches/{mid}/unreserve", users[0]))]
+    random.shuffle(calls)
+    res = burst(calls)
+    tally("E.unreserve-race", res)
+
+# --- D: 티켓 내리기 vs 예약 -----------------------------------------------------------
 deact_ok = deact_409 = 0
 for rnd in range(ROUNDS):
     zone = f"D{rnd}"
@@ -168,12 +186,12 @@ for rnd in range(ROUNDS):
         time.sleep(random.uniform(0, 0.04))
         return api("DELETE", f"/api/tickets/{tq}", users[1])
 
-    calls = [("p-accept", lambda: api("POST", f"/api/exchange/matches/{mid}/accept", users[0])),
-             ("q-accept", lambda: api("POST", f"/api/exchange/matches/{mid}/accept", users[1])),
+    calls = [("p-reserve", lambda: api("POST", f"/api/exchange/matches/{mid}/reserve", users[0])),
+             ("q-reserve", lambda: api("POST", f"/api/exchange/matches/{mid}/reserve", users[1])),
              ("q-deactivate", delayed_delete)]
     random.shuffle(calls)
     res = burst(calls)
-    tally("D.deactivate-accept", res)
+    tally("D.deactivate-reserve", res)
     d = [st for l, st, _ in res if l == "q-deactivate"][0]
     deact_ok += d == 204
     deact_409 += d == 409
@@ -184,6 +202,7 @@ inv = {
     "잠금이 2행 아닌 RESERVED 매칭": sql("SELECT COUNT(*) FROM exchange_match m WHERE m.status='RESERVED' AND (SELECT COUNT(*) FROM exchange_ticket_lock l WHERE l.match_id=m.id)<>2")[0][0],
     "INACTIVE 티켓에 남은 잠금": sql("SELECT COUNT(*) FROM exchange_ticket_lock l JOIN ticket t ON t.id=l.ticket_id WHERE t.status<>'ACTIVE'")[0][0],
     "같은 쌍 열린 매칭 중복": sql("SELECT COUNT(*) FROM (SELECT 1 FROM exchange_match WHERE open_flag=1 GROUP BY request_low_id, request_high_id HAVING COUNT(*)>1) d")[0][0],
+    "RESERVED 인데 예약자·시각 없음 또는 비RESERVED 인데 예약자 있음": sql("SELECT COUNT(*) FROM exchange_match WHERE (status='RESERVED' AND (reserved_by_id IS NULL OR reserved_at IS NULL)) OR (status<>'RESERVED' AND (reserved_by_id IS NOT NULL OR reserved_at IS NOT NULL))")[0][0],
     "두 RESERVED 매칭이 공유하는 티켓": sql("SELECT COUNT(*) FROM (SELECT t FROM (SELECT ticket_a_id t FROM exchange_match WHERE status='RESERVED' UNION ALL SELECT ticket_b_id FROM exchange_match WHERE status='RESERVED') x GROUP BY t HAVING COUNT(*)>1) y")[0][0],
 }
 print(f"rounds per scenario = {ROUNDS}")

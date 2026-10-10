@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 매칭 생성·예약(수락)·거절·취소 API (FR-04 교환 흐름: 후보 선택 -> 채팅 -> 예약). 모두 로그인 필요.
+ * 매칭 생성·예약·예약 취소·거절·취소 API (FR-04 교환 흐름: 후보 선택 -> 채팅 -> 예약). 모두 로그인 필요.
  * 상태 전이 표와 오류 코드는 {@link ExchangeMatchService} Javadoc 참고. 교환 완료(COMPLETED)·채팅·이력은 후속이다.
  */
 @RestController
@@ -61,19 +61,25 @@ public class ExchangeMatchController {
                 .body(matchService.propose(principal.userId(), id, request.targetRequestId()));
     }
 
-    /** 내 쪽 예약 동의('이 사람과 교환할게요') -> 200. 양쪽이 누르면 RESERVED(두 티켓 잠금). 이미 눌렀다면 멱등 200. */
-    @PostMapping("/matches/{id}/accept")
-    public ExchangeMatchResponse accept(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
-        return matchService.accept(principal.userId(), id);
+    /** 예약 -> 200. 둘 중 한 명이 누르면 RESERVED(두 티켓 잠금). 이미 RESERVED 면 누가 눌렀든 멱등 200. */
+    @PostMapping("/matches/{id}/reserve")
+    public ExchangeMatchResponse reserve(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
+        return matchService.reserve(principal.userId(), id);
     }
 
-    /** 제안받은 쪽의 거절 -> 200 + CANCELED. 제안한 쪽은 403(취소를 사용). */
+    /** 예약 취소 -> 200 + CHATTING 복귀(잠금 해제, 수락 표시 초기화). 두 참여자 누구나, CHATTING 이면 멱등 200. */
+    @PostMapping("/matches/{id}/unreserve")
+    public ExchangeMatchResponse unreserve(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
+        return matchService.unreserve(principal.userId(), id);
+    }
+
+    /** 제안받은 쪽의 거절 -> 200 + CANCELED. 제안한 쪽은 403(취소를 사용). RESERVED 에서는 409(먼저 예약 취소). */
     @PostMapping("/matches/{id}/reject")
     public ExchangeMatchResponse reject(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
         return matchService.reject(principal.userId(), id);
     }
 
-    /** 참여자 누구나 양쪽 완료 전 취소 -> 200 + CANCELED (RESERVED 였다면 잠금 해제). */
+    /** 참여자 누구나 취소(채팅 종료) -> 200 + CANCELED. RESERVED 에서는 409(먼저 예약 취소). */
     @PostMapping("/matches/{id}/cancel")
     public ExchangeMatchResponse cancel(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
         return matchService.cancel(principal.userId(), id);

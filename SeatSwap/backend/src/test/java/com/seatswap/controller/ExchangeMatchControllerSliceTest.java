@@ -76,7 +76,7 @@ class ExchangeMatchControllerSliceTest {
                 800L, 600L,
                 new ExchangeMatchResponse.Seat("B구역", "4", "6", 8L, LocalDateTime.of(2026, 11, 2, 19, 0)),
                 "상대", "X", null, "POS", 30000, false, true,
-                LocalDateTime.of(2026, 10, 8, 12, 0, 5), null, null, null,
+                "ME", LocalDateTime.of(2026, 10, 8, 12, 0, 5), false, false, null, null,
                 LocalDateTime.of(2026, 10, 8, 11, 0, 0), LocalDateTime.of(2026, 10, 8, 12, 0, 5));
     }
 
@@ -91,7 +91,7 @@ class ExchangeMatchControllerSliceTest {
              "counterpartSeat":{"zone":"B구역","row":"4","col":"6","sessionId":8,"startsAt":"2026-11-02T19:00"},
              "counterpartNickname":"상대","myExtraType":"X","myExtraAmount":null,
              "counterpartExtraType":"POS","counterpartExtraAmount":30000,"myRequestDeleted":false,"counterpartRequestDeleted":true,
-             "myReservedAt":"2026-10-08T12:00:05","counterpartReservedAt":null,"canceledBy":null,"canceledAt":null,
+             "reservedBy":"ME","reservedAt":"2026-10-08T12:00:05","myAccepted":false,"counterpartAccepted":false,"canceledBy":null,"canceledAt":null,
              "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T12:00:05"}
             """;
 
@@ -101,7 +101,7 @@ class ExchangeMatchControllerSliceTest {
                         .content("{\"targetRequestId\":800}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(content().json("{\"message\":\"로그인이 필요합니다.\"}", true));
-        for (String action : new String[]{"accept", "reject", "cancel"}) {
+        for (String action : new String[]{"reserve", "unreserve", "reject", "cancel"}) {
             mockMvc.perform(post("/api/exchange/matches/50/" + action)).andExpect(status().isUnauthorized())
                     .andExpect(content().json("{\"message\":\"로그인이 필요합니다.\"}", true));
         }
@@ -155,13 +155,17 @@ class ExchangeMatchControllerSliceTest {
     }
 
     @Test
-    void acceptRejectCancelReturn200WithMatch() throws Exception {
-        when(matchService.accept(1L, 50L)).thenReturn(response("CHATTING"));
+    void reserveUnreserveRejectCancelReturn200WithMatch() throws Exception {
+        when(matchService.reserve(1L, 50L)).thenReturn(response("RESERVED"));
+        when(matchService.unreserve(1L, 53L)).thenReturn(response("CHATTING"));
         when(matchService.reject(1L, 51L)).thenReturn(response("CANCELED"));
         when(matchService.cancel(1L, 52L)).thenReturn(response("CANCELED"));
 
-        mockMvc.perform(auth(post("/api/exchange/matches/50/accept"))).andExpect(status().isOk())
-                .andExpect(content().json("{\"id\":50,\"status\":\"CHATTING\",\"myReservedAt\":\"2026-10-08T12:00:05\"}"));
+        mockMvc.perform(auth(post("/api/exchange/matches/50/reserve"))).andExpect(status().isOk())
+                .andExpect(content().json("{\"id\":50,\"status\":\"RESERVED\",\"reservedBy\":\"ME\",\"reservedAt\":\"2026-10-08T12:00:05\","
+                        + "\"myAccepted\":false,\"counterpartAccepted\":false}"));
+        mockMvc.perform(auth(post("/api/exchange/matches/53/unreserve"))).andExpect(status().isOk())
+                .andExpect(content().json("{\"status\":\"CHATTING\"}"));
         mockMvc.perform(auth(post("/api/exchange/matches/51/reject"))).andExpect(status().isOk())
                 .andExpect(content().json("{\"status\":\"CANCELED\"}"));
         mockMvc.perform(auth(post("/api/exchange/matches/52/cancel"))).andExpect(status().isOk())
@@ -169,29 +173,42 @@ class ExchangeMatchControllerSliceTest {
     }
 
     @Test
-    void actionsMapErrorCodes() throws Exception {
-        when(matchService.accept(1L, 61L)).thenThrow(new ForbiddenException("참여자"));
-        when(matchService.accept(1L, 62L)).thenThrow(new NotFoundException("없음"));
-        when(matchService.accept(1L, 63L)).thenThrow(new ConflictException("이미 취소된 매칭입니다.",
-                Map.of("code", "MATCH_STATE_CONFLICT", "status", "CANCELED", "action", "ACCEPT")));
-        when(matchService.cancel(1L, 64L)).thenThrow(new ConflictException("예약됨",
-                Map.of("code", "TICKET_ALREADY_RESERVED")));
+    void oldAcceptEndpointIsGone() throws Exception {
+        mockMvc.perform(auth(post("/api/exchange/matches/50/accept"))).andExpect(status().is4xxClientError());
+    }
 
-        mockMvc.perform(auth(post("/api/exchange/matches/61/accept"))).andExpect(status().isForbidden());
-        mockMvc.perform(auth(post("/api/exchange/matches/62/accept"))).andExpect(status().isNotFound());
-        mockMvc.perform(auth(post("/api/exchange/matches/63/accept"))).andExpect(status().isConflict())
+    @Test
+    void actionsMapErrorCodes() throws Exception {
+        when(matchService.reserve(1L, 61L)).thenThrow(new ForbiddenException("참여자"));
+        when(matchService.reserve(1L, 62L)).thenThrow(new NotFoundException("없음"));
+        when(matchService.reserve(1L, 63L)).thenThrow(new ConflictException("이미 취소된 매칭입니다.",
+                Map.of("code", "MATCH_STATE_CONFLICT", "status", "CANCELED", "action", "RESERVE")));
+        when(matchService.reserve(1L, 64L)).thenThrow(new ConflictException("예약됨",
+                Map.of("code", "TICKET_ALREADY_RESERVED")));
+        when(matchService.cancel(1L, 65L)).thenThrow(new ConflictException("먼저 예약을 취소해주세요.",
+                Map.of("code", "MATCH_STATE_CONFLICT", "status", "RESERVED", "action", "CANCEL")));
+
+        mockMvc.perform(auth(post("/api/exchange/matches/61/reserve"))).andExpect(status().isForbidden());
+        mockMvc.perform(auth(post("/api/exchange/matches/62/reserve"))).andExpect(status().isNotFound());
+        mockMvc.perform(auth(post("/api/exchange/matches/63/reserve"))).andExpect(status().isConflict())
                 .andExpect(content().json("""
-                        {"message":"이미 취소된 매칭입니다.","code":"MATCH_STATE_CONFLICT","status":"CANCELED","action":"ACCEPT"}
+                        {"message":"이미 취소된 매칭입니다.","code":"MATCH_STATE_CONFLICT","status":"CANCELED","action":"RESERVE"}
                         """, true));
-        mockMvc.perform(auth(post("/api/exchange/matches/64/cancel"))).andExpect(status().isConflict())
+        mockMvc.perform(auth(post("/api/exchange/matches/64/reserve"))).andExpect(status().isConflict())
                 .andExpect(content().json("{\"message\":\"예약됨\",\"code\":\"TICKET_ALREADY_RESERVED\"}", true));
+        mockMvc.perform(auth(post("/api/exchange/matches/65/cancel"))).andExpect(status().isConflict())
+                .andExpect(content().json("""
+                        {"message":"먼저 예약을 취소해주세요.","code":"MATCH_STATE_CONFLICT","status":"RESERVED","action":"CANCEL"}
+                        """, true));
     }
 
     @Test
     void nonNumericMatchIdIs400AndGetIsNotAllowed() throws Exception {
-        mockMvc.perform(auth(post("/api/exchange/matches/abc/accept"))).andExpect(status().isBadRequest());
-        mockMvc.perform(auth(get("/api/exchange/matches/50/accept"))).andExpect(status().isMethodNotAllowed());
-        verify(matchService, never()).accept(anyLong(), any());
+        mockMvc.perform(auth(post("/api/exchange/matches/abc/reserve"))).andExpect(status().isBadRequest());
+        mockMvc.perform(auth(get("/api/exchange/matches/50/reserve"))).andExpect(status().isMethodNotAllowed());
+        mockMvc.perform(auth(get("/api/exchange/matches/50/unreserve"))).andExpect(status().isMethodNotAllowed());
+        verify(matchService, never()).reserve(anyLong(), any());
+        verify(matchService, never()).unreserve(anyLong(), any());
     }
 
     // ------------------------------------------------------------------ 내 매칭 조회

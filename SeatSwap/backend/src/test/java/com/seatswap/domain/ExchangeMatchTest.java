@@ -20,13 +20,13 @@ class ExchangeMatchTest {
                 new com.seatswap.domain.WantExtra(com.seatswap.domain.ExtraType.POS, 3000));
     }
 
-    /** 상태 4종 x 동작 5종 = 20 조합 전부. 서비스 Javadoc의 전이 표와 같아야 한다. */
+    /** 상태 4종 x 동작 6종 = 24 조합 전부. 서비스 Javadoc의 전이 표와 같아야 한다(멱등 200 은 서비스가 먼저 걸러낸다). */
     @ParameterizedTest(name = "{0} + {1} -> {2}")
     @CsvSource({
-            "CHATTING,PROPOSE,false", "CHATTING,ACCEPT,true", "CHATTING,REJECT,true", "CHATTING,CANCEL,true", "CHATTING,COMPLETE,false",
-            "RESERVED,PROPOSE,false", "RESERVED,ACCEPT,true", "RESERVED,REJECT,true", "RESERVED,CANCEL,true", "RESERVED,COMPLETE,true",
-            "COMPLETED,PROPOSE,true", "COMPLETED,ACCEPT,false", "COMPLETED,REJECT,false", "COMPLETED,CANCEL,false", "COMPLETED,COMPLETE,false",
-            "CANCELED,PROPOSE,true", "CANCELED,ACCEPT,false", "CANCELED,REJECT,false", "CANCELED,CANCEL,false", "CANCELED,COMPLETE,false"
+            "CHATTING,PROPOSE,false", "CHATTING,RESERVE,true", "CHATTING,UNRESERVE,true", "CHATTING,REJECT,true", "CHATTING,CANCEL,true", "CHATTING,COMPLETE,false",
+            "RESERVED,PROPOSE,false", "RESERVED,RESERVE,true", "RESERVED,UNRESERVE,true", "RESERVED,REJECT,false", "RESERVED,CANCEL,false", "RESERVED,COMPLETE,true",
+            "COMPLETED,PROPOSE,true", "COMPLETED,RESERVE,false", "COMPLETED,UNRESERVE,false", "COMPLETED,REJECT,false", "COMPLETED,CANCEL,false", "COMPLETED,COMPLETE,false",
+            "CANCELED,PROPOSE,true", "CANCELED,RESERVE,false", "CANCELED,UNRESERVE,false", "CANCELED,REJECT,false", "CANCELED,CANCEL,false", "CANCELED,COMPLETE,false"
     })
     void transitionTable(ExchangeMatchStatus status, ExchangeMatchAction action, boolean allowed) {
         assertThat(ExchangeMatch.isAllowed(status, action)).isEqualTo(allowed);
@@ -37,8 +37,8 @@ class ExchangeMatchTest {
         ExchangeMatch m = match();
 
         assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
-        assertThat(m.getAReservedAt()).isNull();
-        assertThat(m.getBReservedAt()).isNull();
+        assertThat(m.getReservedById()).isNull();
+        assertThat(m.getReservedAt()).isNull();
         assertThat(m.getCanceledAt()).isNull();
         assertThat(m.isOpen()).isTrue();
     }
@@ -54,29 +54,51 @@ class ExchangeMatchTest {
     }
 
     @Test
-    void reservingIsPerSideAndIdempotent() {
+    void oneSideReservingMakesItReservedImmediately() {
         ExchangeMatch m = match();
 
-        m.markReserved(Side.A, NOW);
-        m.markReserved(Side.A, NOW.plusMinutes(5));
+        m.reserve(2L, NOW);
 
-        assertThat(m.getAReservedAt()).as("두 번째 누름은 시각을 바꾸지 않는다").isEqualTo(NOW);
-        assertThat(m.hasReserved(Side.B)).isFalse();
-        assertThat(m.bothReserved()).isFalse();
-        m.markReserved(Side.B, NOW.plusMinutes(1));
-        assertThat(m.bothReserved()).isTrue();
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
+        assertThat(m.getReservedById()).isEqualTo(2L);
+        assertThat(m.getReservedAt()).isEqualTo(NOW);
+        assertThat(m.isOpen()).isTrue();
     }
 
     @Test
-    void toReservedNeedsBothSides() {
+    void reserveRequiresChattingAndParticipant() {
         ExchangeMatch m = match();
-        m.markReserved(Side.A, NOW);
+        assertThatThrownBy(() -> m.reserve(3L, NOW)).isInstanceOf(IllegalArgumentException.class);
+        m.reserve(1L, NOW);
+        assertThatThrownBy(() -> m.reserve(2L, NOW)).isInstanceOf(IllegalStateException.class);
+    }
 
-        assertThatThrownBy(m::toReserved).isInstanceOf(IllegalStateException.class);
-        m.markReserved(Side.B, NOW);
-        m.toReserved();
-        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
-        assertThatThrownBy(m::toReserved).isInstanceOf(IllegalStateException.class);
+    @Test
+    void unreserveReturnsToChattingAndClearsReservationAndAcceptMarks() {
+        ExchangeMatch m = match();
+        m.reserve(1L, NOW);
+        org.springframework.test.util.ReflectionTestUtils.setField(m, "aCompletedAt", NOW);
+
+        m.unreserve();
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
+        assertThat(m.getReservedById()).isNull();
+        assertThat(m.getReservedAt()).isNull();
+        assertThat(m.getACompletedAt()).isNull();
+        assertThat(m.getBCompletedAt()).isNull();
+        assertThat(m.hasAccepted(Side.A)).isFalse();
+        // 같은 쌍이 다시 예약할 수 있다
+        m.reserve(2L, NOW.plusMinutes(1));
+        assertThat(m.getReservedById()).isEqualTo(2L);
+        assertThatThrownBy(match()::unreserve).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void reservedMatchCannotBeCanceledDirectly() {
+        ExchangeMatch m = match();
+        m.reserve(1L, NOW);
+
+        assertThatThrownBy(() -> m.cancel(1L, NOW)).isInstanceOf(IllegalStateException.class);
     }
 
     @Test

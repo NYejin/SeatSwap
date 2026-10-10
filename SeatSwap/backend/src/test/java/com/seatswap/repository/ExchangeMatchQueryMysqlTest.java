@@ -174,16 +174,37 @@ class ExchangeMatchQueryMysqlTest {
     }
 
     @Test
-    void 예약_시각과_취소_주체가_호출자_기준으로_바뀐다() {
-        jdbc.update("UPDATE exchange_match SET a_reserved_at = '2026-10-08 10:30:00', b_reserved_at = NULL WHERE id = ?", m1);
-
-        ExchangeMatchResponse mine = service.findOne(u1, m1);
-        ExchangeMatchResponse theirs = service.findOne(u2, m1);
-        assertThat(mine.myReservedAt()).isEqualTo(LocalDateTime.of(2026, 10, 8, 10, 30));
-        assertThat(mine.counterpartReservedAt()).isNull();
-        assertThat(theirs.myReservedAt()).isNull();
-        assertThat(theirs.counterpartReservedAt()).isEqualTo(LocalDateTime.of(2026, 10, 8, 10, 30));
-        assertThat(theirs.mySide()).isEqualTo("B");
+    void 예약자_예약_시각_수락_표시와_취소_주체가_호출자_기준으로_바뀐다() {
+        // m2: RESERVED, 예약자는 a측(u3), 예약 시각 10:30
+        ExchangeMatchResponse byReserver = service.findOne(u3, m2);
+        ExchangeMatchResponse byOther = service.findOne(u1, m2);
+        assertThat(byReserver.reservedBy()).isEqualTo("ME");
+        assertThat(byOther.reservedBy()).isEqualTo("COUNTERPART");
+        assertThat(byReserver.reservedAt()).isEqualTo(LocalDateTime.of(2026, 10, 8, 10, 30));
+        assertThat(byOther.reservedAt()).isEqualTo(LocalDateTime.of(2026, 10, 8, 10, 30));
+        // 예약 전(CHATTING)·취소·완료 매칭에는 예약자가 없다
+        ExchangeMatchResponse chatting = service.findOne(u1, m1);
+        assertThat(chatting.reservedBy()).isNull();
+        assertThat(chatting.reservedAt()).isNull();
+        // 목록에서도 호출자 기준으로 갈린다 (m2: 예약자 u3 = a측, u1 = b측)
+        assertThat(service.findMine(u3, "SENT", List.of("RESERVED"), 0, 20).content())
+                .extracting(ExchangeMatchResponse::reservedBy).containsExactly("ME");
+        assertThat(service.findMine(u1, "RECEIVED", List.of("RESERVED"), 0, 20).content())
+                .extracting(ExchangeMatchResponse::reservedBy).containsExactly("COUNTERPART");
+        assertThat(service.findOne(u1, m3).reservedBy()).isNull();
+        assertThat(service.findOne(u2, m4).reservedBy()).isNull();
+        // 교환 수락 표시(a/b_completed_at)는 호출자 기준 불리언: m4 는 양쪽 수락, m2 는 아직 없음
+        assertThat(service.findOne(u2, m4).myAccepted()).isTrue();
+        assertThat(service.findOne(u2, m4).counterpartAccepted()).isTrue();
+        assertThat(byReserver.myAccepted()).isFalse();
+        assertThat(byReserver.counterpartAccepted()).isFalse();
+        // RESERVED 중 한쪽(b측 u1)만 수락한 상태를 만들면 호출자 기준으로 뒤집혀 보인다
+        jdbc.update("UPDATE exchange_match SET b_completed_at = '2026-10-08 10:40:00' WHERE id = ?", m2);
+        assertThat(service.findOne(u1, m2).myAccepted()).isTrue();
+        assertThat(service.findOne(u1, m2).counterpartAccepted()).isFalse();
+        assertThat(service.findOne(u3, m2).myAccepted()).isFalse();
+        assertThat(service.findOne(u3, m2).counterpartAccepted()).isTrue();
+        assertThat(service.findOne(u2, m1).mySide()).isEqualTo("B");
 
         assertThat(service.findOne(u1, m3).canceledBy()).isEqualTo("COUNTERPART");
         assertThat(service.findOne(u3, m3).canceledBy()).isEqualTo("ME");
@@ -368,10 +389,16 @@ class ExchangeMatchQueryMysqlTest {
 
     private long match(long ra, long rb, long ta, long tb, long ua, long ub, String status, Long canceledBy, String updatedAt) {
         boolean canceled = "CANCELED".equals(status);
+        boolean reserved = "RESERVED".equals(status);
+        boolean completed = "COMPLETED".equals(status);
+        // V8 CHECK: RESERVED 는 예약자(a측)와 시각 필수, COMPLETED 는 양쪽 수락 시각 필수
         jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, status, "
-                + "canceled_by_id, canceled_at, created_at, updated_at, a_extra_type, a_extra_amount, b_extra_type, b_extra_amount) "
-                + "VALUES (?,?,?,?,?,?,?,?,?, '2026-10-08 08:00:00', ?, ?,?,?,?)",
-                ra, rb, ta, tb, ua, ub, status, canceledBy, canceled ? "2026-10-08 09:00:00" : null, updatedAt,
+                + "canceled_by_id, canceled_at, reserved_by_id, reserved_at, a_completed_at, b_completed_at, "
+                + "created_at, updated_at, a_extra_type, a_extra_amount, b_extra_type, b_extra_amount) "
+                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, '2026-10-08 08:00:00', ?, ?,?,?,?)",
+                ra, rb, ta, tb, ua, ub, status, canceledBy, canceled ? "2026-10-08 09:00:00" : null,
+                reserved ? ua : null, reserved ? "2026-10-08 10:30:00" : null,
+                completed ? "2026-10-08 11:00:00" : null, completed ? "2026-10-08 11:30:00" : null, updatedAt,
                 requestExtras.get(ra)[0], requestExtras.get(ra)[1], requestExtras.get(rb)[0], requestExtras.get(rb)[1]);
         return id();
     }

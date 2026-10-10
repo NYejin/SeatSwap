@@ -29,7 +29,7 @@ public class ExchangeMatchQueryRepository {
     private static final String SELECT = """
             SELECT STRAIGHT_JOIN m.id, m.status, m.user_a_id, m.user_b_id,
                    m.request_a_id, m.request_b_id, m.ticket_a_id, m.ticket_b_id,
-                   m.a_reserved_at, m.b_reserved_at, m.canceled_by_id, m.canceled_at, m.created_at, m.updated_at,
+                   m.reserved_by_id, m.reserved_at, m.a_completed_at, m.b_completed_at, m.canceled_by_id, m.canceled_at, m.created_at, m.updated_at,
                    ta.zone_label AS a_zone, ta.row_label AS a_row, ta.col_label AS a_col,
                    psa.id AS a_session_id, psa.starts_at AS a_starts_at,
                    tb.zone_label AS b_zone, tb.row_label AS b_row, tb.col_label AS b_col,
@@ -59,7 +59,7 @@ public class ExchangeMatchQueryRepository {
     /** 조회 전용 값. 양쪽(a/b)을 그대로 담고 호출자 기준 변환은 {@link #toResponse}가 한다. */
     public record Row(Long id, String status, Long userAId, Long userBId,
                       Long requestAId, Long requestBId, Long ticketAId, Long ticketBId,
-                      LocalDateTime aReservedAt, LocalDateTime bReservedAt, Long canceledById, LocalDateTime canceledAt,
+                      Long reservedById, LocalDateTime reservedAt, boolean aAccepted, boolean bAccepted, Long canceledById, LocalDateTime canceledAt,
                       LocalDateTime createdAt, LocalDateTime updatedAt,
                       ExchangeMatchResponse.Seat aSeat, ExchangeMatchResponse.Seat bSeat,
                       String aExtraType, Integer aExtraAmount, String bExtraType, Integer bExtraAmount,
@@ -72,6 +72,10 @@ public class ExchangeMatchQueryRepository {
             if ("CANCELED".equals(status)) {
                 canceledBy = canceledById == null ? "SYSTEM" : userId.equals(canceledById) ? "ME" : "COUNTERPART";
             }
+            String reservedBy = null;
+            if ("RESERVED".equals(status) && reservedById != null) {
+                reservedBy = userId.equals(reservedById) ? "ME" : "COUNTERPART";
+            }
             return new ExchangeMatchResponse(
                     id, status, mineIsA ? "A" : "B", mineIsA ? "SENT" : "RECEIVED",
                     mineIsA ? requestAId : requestBId, mineIsA ? ticketAId : ticketBId, mineIsA ? aSeat : bSeat,
@@ -80,7 +84,7 @@ public class ExchangeMatchQueryRepository {
                     mineIsA ? aExtraType : bExtraType, mineIsA ? aExtraAmount : bExtraAmount,
                     mineIsA ? bExtraType : aExtraType, mineIsA ? bExtraAmount : aExtraAmount,
                     mineIsA ? aRequestDeleted : bRequestDeleted, mineIsA ? bRequestDeleted : aRequestDeleted,
-                    mineIsA ? aReservedAt : bReservedAt, mineIsA ? bReservedAt : aReservedAt,
+                    reservedBy, reservedAt, mineIsA ? aAccepted : bAccepted, mineIsA ? bAccepted : aAccepted,
                     canceledBy, canceledAt, createdAt, updatedAt);
         }
     }
@@ -137,7 +141,8 @@ public class ExchangeMatchQueryRepository {
     private static Row map(ResultSet rs) throws SQLException {
         return new Row(rs.getLong("id"), rs.getString("status"), rs.getLong("user_a_id"), rs.getLong("user_b_id"),
                 rs.getLong("request_a_id"), rs.getLong("request_b_id"), rs.getLong("ticket_a_id"), rs.getLong("ticket_b_id"),
-                rs.getObject("a_reserved_at", LocalDateTime.class), rs.getObject("b_reserved_at", LocalDateTime.class),
+                (Long) rs.getObject("reserved_by_id"), rs.getObject("reserved_at", LocalDateTime.class),
+                rs.getObject("a_completed_at") != null, rs.getObject("b_completed_at") != null,
                 (Long) rs.getObject("canceled_by_id"), rs.getObject("canceled_at", LocalDateTime.class),
                 rs.getObject("created_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class),
                 new ExchangeMatchResponse.Seat(rs.getString("a_zone"), rs.getString("a_row"), rs.getString("a_col"),
