@@ -45,3 +45,18 @@ frontmatter에는 `sonnet`/`haiku`/`opus`/`fable` 별칭을 쓴다. 전체 모�
 ## worktree 격리 주의 (backend-dev, frontend-dev)
 - `isolation: worktree` 에이전트는 별도 체크아웃에서 작업한다. 변경은 메인 작업 트리에 즉시 보이지 않으며, 해당 브랜치/worktree를 병합·확인해야 반영된다.
 - worktree에는 `node_modules`가 없다. 프론트 작업 전 `SeatSwap/frontend`에서 `npm install`(또는 `npm ci`)이 필요하다. 백엔드도 첫 빌드는 의존성 다운로드가 있을 수 있다.
+
+## 워크플로우 (`.claude/workflows/*.js`)
+
+공식 문서의 dynamic workflows 기능이다(Claude Code v2.1.154 이상). 파일은 마크다운이 아니라 JavaScript이고, 첫 문장이 `export const meta = { name, description }`(리터럴만)이며 본문은 top-level `await`를 쓴다. 쓸 수 있는 전역은 `agent()`, `pipeline()`, `parallel()`, `phase()`, `log()`, `args`이고 `import()`, `Date.now()`, `Math.random()`, 인자 없는 `new Date()`는 쓸 수 없다(시각·난수는 `args`로 받는다). 실행 중 사용자 입력은 받을 수 없으므로 승인이 필요한 지점에서 워크플로우를 나눈다.
+
+| 워크플로우 | 하는 일 | 쓰기 | 에이전트 수(대략) |
+|---|---|---|---|
+| `plan-feature` | 읽기 전용 병렬 탐색 → 설계안 1건(opus) → 보고서에서 끝 | 없음 | 6 |
+| `build-feature` | 승인된 계획을 파일 집합별 구현 → 테스트 → 통합 요약 | 있음 | 파일 집합 수 + 2 |
+| `verify-feature` | 리뷰어 3명(opus) → 적대적 교차 검증(fable) → 높음·중간 지적 | 없음 | 4 |
+| `sync-docs` | HISTORY·작업일지·위키 log 갱신(haiku) + STATS 재생성 | 문서만 | 4 |
+
+- **검증 전 초안이다.** 단계별 모델 지정 옵션 이름(`model`)과 에이전트 worktree 격리 옵션은 공식 문서에서 확인하지 못했다. 사용자가 `/workflow-authoring` 스킬로 문법을 확인하고 `/workflows`에서 작은 범위로 시험 실행한 결과로 고친다. 격리가 확인되기 전에는 `build-feature`가 쓰기를 순차 실행한다(`parallelWrites`는 확인 뒤에만 켠다).
+- **MySQL 통합 테스트는 실행마다 고유한 DB 이름·컨테이너·포트를 써야 한다.** 테스트는 시작할 때 `SEATSWAP_IT_JDBC_URL`의 DB를 Flyway clean하고 안전장치는 이름이 `_it`로 끝나는지만 검사하므로, 병렬 worktree가 같은 DB를 가리키면 서로 스키마를 지운다. `build-feature`는 `args.runId`로 `seatswap_<runId>_it` 이름과 `seatswap-tmp-<runId>` 컨테이너를 만든다.
+- 규모 지침: `workflowSizeGuideline`은 조언일 뿐 상한이 아니다. 25개 넘는 에이전트나 큰 실행은 먼저 사용자 확인을 받는다. `ultracode`는 켜지 않는다.
