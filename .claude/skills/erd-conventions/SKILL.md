@@ -31,6 +31,7 @@ description: DB 엔티티/ERD 관련 작업(신규 테이블, 관계 수정, JPA
 
 - 교환 이력 `exchange_history`: 마이페이지 '교환 이력'용. 자리 정보(공연·회차·구역·열·번 텍스트)를 **스냅샷**으로 저장해 `(기존 자리) -> (바꾼 자리)`로 보여주고, `old_ticket_id`·`new_ticket_id`를 둔다.
 - 교환 완료(두 사람이 '교환 수락'): 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓(소유자 그대로, 회차·구역·열·번은 상대의 기존 티켓 값)을 INSERT한다. `TicketStatus.EXCHANGED` 추가 시 `ck_ticket_status`를 새 V 파일로 바꿔야 한다(`active_flag`는 ACTIVE일 때만 1이라 새 티켓 INSERT와 충돌하지 않는다). 매칭 행의 좌석은 항상 교환 전 자리다. EXCHANGED 티켓은 내리기 불가, 완료된 매칭은 취소 불가. 근거: `wiki/decisions/exchange-complete-new-ticket.md`.
+- 교환 완료 시 기존 티켓의 교환 요청은 CLOSED로 닫는다.
 - 교환 완료된 좌석에 걸린 다른 CHATTING 매칭은 자동 취소하지 않는다(버튼 비활성 + "이미 교환된 좌석이에요" 표시).
 - 채팅 메시지 `chat_message`, 사용자 차단 `user_block`(차단하면 후보 제외·채팅 불가; 재매칭 불가의 근거는 차단·신고뿐), 알림(새 제안·상대 예약·상대 예약 취소)이 예정이다. 컬럼·제약은 설계 시 결정(db-schema-architect). 차단 제외는 `ExchangeCandidateRepository.additionalExclusions()`에 추가한다.
 - 후기·신뢰도 테이블은 만들지 않는다. 사용자 신고 테이블은 교환 핵심 흐름 이후 설계한다. 좌석표·수정 로그·제재(`abuse_report`·`user_sanction` 등)는 동결 상태라 설계하지 않는다.

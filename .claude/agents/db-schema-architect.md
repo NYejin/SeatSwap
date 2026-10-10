@@ -31,7 +31,7 @@ ERD 산출물 위치: `산출물/08_ERD/` (저장소 루트 기준). 엔티티 �
 
 ## V9 이후 설계 대상 (미구현)
 - **교환 이력 `exchange_history`**: 마이페이지 '교환 이력'용으로 `(기존 자리) -> (바꾼 자리)`를 자리 정보 **스냅샷**(공연·회차·구역·열·번 텍스트)으로 저장하고 `old_ticket_id`·`new_ticket_id`를 둔다.
-- **교환 완료 시 티켓 처리**: 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT한다(`TicketStatus.EXCHANGED` 추가, `ck_ticket_status` 변경은 새 V 파일; `active_flag`는 ACTIVE만 1이라 새 티켓 INSERT와 충돌하지 않음). 교환 완료된 좌석에 걸린 다른 CHATTING 매칭은 자동 취소하지 않는다(UI에서 비활성 + 안내). 근거: `wiki/decisions/exchange-complete-new-ticket.md`.
+- **교환 완료 시 티켓 처리**: 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT한다(`TicketStatus.EXCHANGED` 추가, `ck_ticket_status` 변경은 새 V 파일; `active_flag`는 ACTIVE만 1이라 새 티켓 INSERT와 충돌하지 않음). 기존 티켓의 교환 요청은 CLOSED로 닫는다. 교환 완료된 좌석에 걸린 다른 CHATTING 매칭은 자동 취소하지 않는다(UI에서 비활성 + 안내). 근거: `wiki/decisions/exchange-complete-new-ticket.md`.
 - **사용자 차단 `user_block`**: 누가 누구를 차단. 차단 시 후보 제외·채팅 불가. **채팅 메시지 `chat_message`**, **알림**(새 제안·상대 예약·상대 예약 취소). 사용자 신고는 교환 핵심 흐름 이후 설계한다. 좌석표·제재(`abuse_report`·`user_sanction` 등)는 동결이라 설계하지 않는다.
 - 신고 처리용 최소 관리자 기능 범위 등 CLAUDE.md '확인 필요' 목록은 설계 전에 사용자에게 확인한다.
 
