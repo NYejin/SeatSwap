@@ -1,7 +1,7 @@
 # SeatSwap Backend (Spring Boot)
 
 ## 패키지 구조
-- domain       — JPA 엔티티 (User·Performance·PerformanceSession·Ticket, 교환 희망 쪽 ExchangeRequest·ExchangeWantRange·ExchangeWantSession, 매칭 ExchangeMatch)와 enum·값 객체 (UserRole·TicketStatus·ExtraType·ExchangeRequestStatus·ExchangeMatchStatus·ExchangeMatchAction·SeatKey). 예약 잠금(exchange_ticket_lock)은 엔티티 없이 `ExchangeTicketLockRepository`(JdbcTemplate)가 다룬다 공연장은 Performance.venueName 텍스트(V2에서 venue 테이블 삭제). 펼친 희망 좌석(exchange_want_seat)은 엔티티 없이 `ExchangeWantSeatRepository`(JdbcTemplate)가 다룬다
+- domain       — JPA 엔티티 (User·Performance·PerformanceSession·Ticket, 교환 희망 쪽 ExchangeRequest·ExchangeWantRange·ExchangeWantSession, 매칭 ExchangeMatch)와 enum·값 객체 (UserRole·TicketStatus·ExtraType·ExchangeRequestStatus·ExchangeMatchStatus·ExchangeMatchAction·SeatKey). 예약 잠금(exchange_ticket_lock)은 엔티티 없이 `ExchangeTicketLockRepository`(JdbcTemplate)가 다룬다. 공연장은 Performance.venueName 텍스트(V2에서 venue 테이블 삭제). 펼친 희망 좌석(exchange_want_seat)은 엔티티 없이 `ExchangeWantSeatRepository`(JdbcTemplate)가 다룬다
 - repository   — JpaRepository
 - service      — 비즈니스 로직
 - controller   — REST API + WebSocket(STOMP)
@@ -12,7 +12,7 @@
 
 ## 현재 상태
 - 2026-10-07 방향 전환으로 좌석표 트랙 코드와 교환·채팅·후기 등 빈 스켈레톤(컨트롤러·서비스·저장소)을 삭제했다. 좌석표 코드는 git 태그 `archive/seatmap-track-20261007`에 보관되어 있다.
-- 엔티티는 User·Performance·PerformanceSession·Ticket 4종이다. Ticket은 구역·열·번(표시용 label + 정규화 key)·상태(ACTIVE/INACTIVE)를 가지며 티켓 등록·조회·내리기 API가 있다(FR-03).
+- 엔티티는 User·Performance·PerformanceSession·Ticket과 교환 도메인 ExchangeRequest·ExchangeWantRange·ExchangeWantSession·ExchangeMatch 8종이다(예약 잠금·펼친 희망 좌석은 JdbcTemplate 저장소). Ticket은 구역·열·번(표시용 label + 정규화 key)·상태(ACTIVE/INACTIVE; `EXCHANGED`는 교환 완료 구현 때 추가)를 가지며 티켓 등록·조회·내리기 API가 있다(FR-03).
 - **회원가입/로그인/JWT 인증(FR-01)은 구현 완료**:
   - `security/JwtTokenProvider` — access/refresh 토큰 발급·검증 (jjwt 0.12.5)
   - `security/JwtAuthenticationFilter` — Authorization 헤더 검증 후 SecurityContext 설정
@@ -22,10 +22,10 @@
   - 요청 DTO는 `jakarta.validation`으로 기본 검증(이메일 형식, 비밀번호 8자 이상) 적용
 - **공연·회차 등록/조회(FR-02)는 구현 완료** (`PerformanceController`, `PerformanceService`). 공연은 회차와 함께 등록하며, 등록 후에는 아무도 제목·공연장·회차를 수정하거나 공연·회차를 삭제할 수 없다(수정은 추후 관리자 수정 제안으로만, 후속). 공연장은 공연의 텍스트 속성 `venueName`(필수, 1~100자)이다.
 - 남은 스켈레톤: `config/WebSocketConfig`는 클래스 선언과 `TODO: registerStompEndpoints(), configureMessageBroker()`만 있다 (채팅용, 미구현).
-- **티켓 등록(FR-03)은 구현 완료** (`TicketController`, `TicketService`, `SeatKeyNormalizer`). 좌석 1개를 텍스트(구역 필수, 열·번은 숫자 또는 문자)로 등록한다. 같은 회차·구역·열·번의 활성 티켓은 1개(DB `uk_ticket_active_seat`), 사용자당 활성 티켓 20개 상한(`users` 행 FOR UPDATE로 직렬화), 회차 당일 끝(다음날 0시 KST)까지만 등록할 수 있다. 교환 희망 범위·매칭·예약은 아직 없다(V4 이후). 내릴 때 예약 잠금 검사는 V4 구현 시 `TicketService.ensureCanDeactivate`에 추가한다.
-- **교환 희망 조건 등록(FR-04 교환 요청)은 구현 완료** (`ExchangeRequestController`, `ExchangeRequestService`, `WantSeatExpander`, Flyway V4). 티켓 하나에 요청 1개(추가금 유형·희망 회차 우선순위·희망 좌석 범위)를 등록·조회·수정·삭제한다. 범위는 (구역, 열 from~to, 번 from~to)로 입력하면 개별 좌석으로 펼쳐 `exchange_want_seat`에 저장한다. **매칭 후보 조회**(`GET /api/exchange/requests/{id}/candidates`, 읽기 전용)는 구현됐다. 티켓을 내리면(`DELETE /api/tickets/{id}`) 그 티켓의 교환 요청은 CLOSED로 바뀐다.
-- **매칭 생성·예약(FR-04 교환 흐름 일부)은 구현 완료** (`ExchangeMatchController`, `ExchangeMatchService`, Flyway V5). 후보를 골라 매칭(채팅 단계, CHATTING)을 만들고, 둘 중 한 명이 예약하면 RESERVED가 되어 두 티켓이 잠긴다(8차 답변, V8로 구현 완료). 예약은 둘 중 한 명이 누르면 RESERVED가 되고(두 티켓 잠금) 누구든 예약을 취소해 CHATTING으로 되돌릴 수 있다(`reserve`/`unreserve`, Flyway V8, 2026-10-10). 채팅 종료(취소)·거절은 CHATTING에서만 가능하다. **아직 없는 것**: 교환 완료(COMPLETED, 양쪽 '교환 수락'), 채팅 메시지·방, 교환 이력, 사용자 차단. (내 매칭 조회 `GET /api/exchange/matches/me`·`/{id}`는 구현됨) 아래 '매칭 API' 참고.
-- (2026-10-10 V8 예약 방식 변경 후 최신 수치: 기본 `./gradlew test`는 전체 471건 중 88건을 건너뛰고 0 실패(실행 383건), `SEATSWAP_IT_REQUIRED=true`와 `SEATSWAP_IT_*`를 주면 488건 모두 실행·0 실패(건너뜀 0). 아래는 이전 기준.) (2026-10-09 리뷰 반영 후 수치: 기본 `./gradlew test`는 전체 450건 중 79건을 건너뛰고 0 실패(실행 371건), `SEATSWAP_IT_REQUIRED=true`와 `SEATSWAP_IT_*`를 주면 467건 모두 실행·0 실패(건너뜀 0). 직전(V6/V7 첫 반영) 수치는 439건/456건. 아래 수치는 이전 기준.) (2026-10-08 내 매칭 조회 추가 후 수치: 기본 `./gradlew test`는 전체 408건 중 60건을 건너뛰고 0 실패, `SEATSWAP_IT_REQUIRED=true`와 환경변수를 주면 425건 모두 실행·0 실패. 새 `ExchangeMatchQueryMysqlTest` 12건 포함. 아래 옛 수치는 이전 기준.) 기본 `./gradlew test`는 343건을 실행하고 48건을 건너뛴다(실제 MySQL이 필요한 `ExchangeCandidateQueryTest`와 `ExchangeMatchMysqlTest`는 `SEATSWAP_IT_JDBC_URL`이 없으면 통째로 건너뛰며 테스트 리포트에 `[SKIPPED ...]` 메시지가 남는다). 환경변수를 주면 건너뛴 48건이 모두 돌아 408건 전부 실행된다. `SEATSWAP_IT_REQUIRED=true`(또는 `CI` 환경변수가 있으면)는 건너뛰지 않고 실패한다. 주의: Gradle은 환경변수를 입력으로 보지 않아 이전 결과를 재사용하므로 환경을 바꿔 다시 돌릴 때는 `./gradlew cleanTest test`를 쓴다. 아래 '매칭 후보 조회 검증' 참고.
+- **티켓 등록(FR-03)은 구현 완료** (`TicketController`, `TicketService`, `SeatKeyNormalizer`). 좌석 1개를 텍스트(구역 필수, 열·번은 숫자 또는 문자)로 등록한다. 같은 회차·구역·열·번의 활성 티켓은 1개(DB `uk_ticket_active_seat`), 사용자당 활성 티켓 20개 상한(`users` 행 FOR UPDATE로 직렬화), 회차 당일 끝(다음날 0시 KST)까지만 등록할 수 있다. 교환 희망 범위·매칭·예약은 아래 교환 항목 참고. 내릴 때 예약 잠금이면 `TicketService.ensureCanDeactivate`가 409 `TICKET_RESERVED`로 막는다.
+- **교환 희망 조건 등록(FR-04 교환 요청)은 구현 완료** (`ExchangeRequestController`, `ExchangeRequestService`, `WantSeatExpander`, Flyway V4). 티켓 하나에 미삭제 요청 1개(범위별 추가금 유형·희망 회차 우선순위·희망 좌석 범위)를 등록·조회·수정·소프트 삭제한다. 범위는 (구역, 열 from~to, 번 from~to)로 입력하면 개별 좌석으로 펼쳐 `exchange_want_seat`에 저장한다. **매칭 후보 조회**(`GET /api/exchange/requests/{id}/candidates`, 읽기 전용)는 구현됐다. 티켓을 내리면(`DELETE /api/tickets/{id}`) 그 티켓의 교환 요청은 CLOSED로 바뀐다.
+- **매칭 생성·예약(FR-04 교환 흐름 일부)은 구현 완료** (`ExchangeMatchController`, `ExchangeMatchService`, Flyway V5). 후보를 골라 매칭(채팅 단계, CHATTING)을 만들고, 둘 중 한 명이 예약하면 RESERVED가 되어 두 티켓이 잠기고, 누구든 예약을 취소해 CHATTING으로 되돌릴 수 있다(`reserve`/`unreserve`, Flyway V8). 채팅 종료(취소)·거절은 CHATTING에서만 가능하다. **아직 없는 것**: 교환 완료(COMPLETED, 양쪽 '교환 수락'), 채팅 메시지·방, 교환 이력, 후보 '예약 중' 뱃지, 알림, 사용자 차단. (내 매칭 조회 `GET /api/exchange/matches/me`·`/{id}`는 구현됨) 아래 '매칭 API' 참고.
+- 테스트 수치(2026-10-10 기준): 기본 `./gradlew test`는 전체 471건 중 88건을 건너뛰고 0 실패(실행 383건)다. 실제 MySQL이 필요한 `ExchangeCandidateQueryTest`·`ExchangeMatchMysqlTest`·`ExchangeMatchQueryMysqlTest`·마이그레이션 테스트는 `SEATSWAP_IT_JDBC_URL`이 없으면 통째로 건너뛰며 리포트에 `[SKIPPED ...]` 메시지가 남는다. `SEATSWAP_IT_REQUIRED=true`와 `SEATSWAP_IT_*`를 주면 488건 모두 실행·0 실패(건너뜀 0)다. `SEATSWAP_IT_REQUIRED=true`(또는 `CI` 환경변수가 있으면)는 건너뛰지 않고 실패한다. 주의: Gradle은 환경변수를 입력으로 보지 않아 이전 결과를 재사용하므로 환경을 바꿔 다시 돌릴 때는 `./gradlew cleanTest test`를 쓴다. 아래 '매칭 후보 조회 검증' 참고.
 
 ## 인증 API
 
@@ -125,7 +125,7 @@
 
 ## 매칭 API (후보 선택 -> 채팅 -> 예약)
 
-모두 로그인이 필요하다. 매칭은 조건 일치 판정으로 찾은 후보를 사용자가 골라 시작하며 점수화·랭킹·신뢰도는 쓰지 않는다. 흐름: 후보 선택 -> 채팅(CHATTING, 한 요청에 여러 개 동시 가능) -> **둘 중 한 명이 예약**(RESERVED, 두 티켓 잠금, **티켓당 예약 1개**, 8차 답변·V8) -> (후속) 양도 후 양쪽 '교환 수락' -> COMPLETED. 예약은 누구든(예약한 사람이 아니어도) 취소할 수 있고 취소하면 CHATTING으로 돌아가 같은 쌍이 다시 예약할 수 있다(횟수 제한·쿨다운 없음). 채팅 종료(cancel)·거절(reject)은 CHATTING에서만 가능하고 **RESERVED에서는 409 `MATCH_STATE_CONFLICT`('먼저 예약을 취소해주세요.')**다. 예약된 티켓의 새 제안·새 예약만 막히고 이미 열려 있던 다른 채팅은 유지된다. 재매칭 불가는 차단·신고뿐이며 둘 다 후속이다.
+모두 로그인이 필요하다. 매칭은 조건 일치 판정으로 찾은 후보를 사용자가 골라 시작하며 점수화·랭킹·신뢰도는 쓰지 않는다. 흐름: 후보 선택 -> 채팅(CHATTING, 한 요청에 여러 개 동시 가능) -> **둘 중 한 명이 예약**(RESERVED, 두 티켓 잠금, **티켓당 예약 1개**, V8) -> (미구현) 양도 후 양쪽 '교환 수락' -> COMPLETED. 예약은 누구든(예약한 사람이 아니어도) 취소할 수 있고 취소하면 CHATTING으로 돌아가 같은 쌍이 다시 예약할 수 있다(횟수 제한·쿨다운 없음). 채팅 종료(cancel)·거절(reject)은 CHATTING에서만 가능하고 **RESERVED에서는 409 `MATCH_STATE_CONFLICT`('먼저 예약을 취소해주세요.')**다. 예약된 티켓의 새 제안·새 예약만 막히고 이미 열려 있던 다른 채팅은 유지된다. 재매칭 불가는 차단·신고뿐이며 둘 다 후속이다.
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -160,7 +160,7 @@ curl -s -X POST localhost:8080/api/exchange/matches/401/cancel -H "Authorization
  "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T12:00:05"}
 ```
 
-**내 매칭 조회 구현 메모.** `ExchangeMatchQueryRepository`(JdbcTemplate, `STRAIGHT_JOIN`)가 매칭 1건당 한 번의 조인으로 양쪽 티켓 좌석·회차·추가금 스냅샷·요청 삭제 여부·닉네임을 읽는다(목록은 COUNT 1회 + 목록 1회, 단건 1회로 행 수와 무관). 읽기 전용 트랜잭션·잠금 없음. POST 응답(제안·수락·거절·취소)도 같은 조인으로 만들며 쓰기 트랜잭션 안에서 읽어 방금 쓴 상태를 그대로 돌려준다. **인덱스는 새로 만들지 않았다.** EXPLAIN(매칭 5,400행): SENT=`idx_exchange_match_user_a` ref, RECEIVED=`idx_exchange_match_user_b` ref, ALL=`index_merge` union(user_a, user_b), 나머지 8개 조인은 모두 PK `eq_ref`. 정렬은 사용자당 소수의 행에 대한 filesort라 전용 인덱스는 필요 없다. 사용자당 매칭이 수천 건이 되면 후속 마이그레이션에서 `(user_a_id, updated_at)`/`(user_b_id, updated_at)` 인덱스 또는 id 선조회 후 조인을 검토한다(주의: FK 인덱스에 갱신 컬럼을 넣지 말 것 규칙과 충돌하므로 FK용 단일 인덱스는 유지하고 별도로 추가). 목록은 INNER JOIN 8개, COUNT는 `exchange_match`만 세며 FK 때문에 고아 행이 없다는 전제다. **users 익명화·티켓 삭제를 도입하면 LEFT JOIN 또는 COUNT에도 같은 조인을 쓴다.** 참고: 매칭 행의 좌석은 항상 교환 전 자리다. 교환 후 자리는 새 티켓·교환 이력(후속)이 담당한다(8차 답변). V8 이후 SELECT는 `m.reserved_by_id, m.reserved_at, m.a_completed_at, m.b_completed_at`를 읽을 뿐 조인·인덱스·정렬은 그대로다.
+**내 매칭 조회 구현 메모.** `ExchangeMatchQueryRepository`(JdbcTemplate, `STRAIGHT_JOIN`)가 매칭 1건당 한 번의 조인으로 양쪽 티켓 좌석·회차·추가금 스냅샷·요청 삭제 여부·닉네임을 읽는다(목록은 COUNT 1회 + 목록 1회, 단건 1회로 행 수와 무관). 읽기 전용 트랜잭션·잠금 없음. POST 응답(제안·수락·거절·취소)도 같은 조인으로 만들며 쓰기 트랜잭션 안에서 읽어 방금 쓴 상태를 그대로 돌려준다. **인덱스는 새로 만들지 않았다.** EXPLAIN(매칭 5,400행): SENT=`idx_exchange_match_user_a` ref, RECEIVED=`idx_exchange_match_user_b` ref, ALL=`index_merge` union(user_a, user_b), 나머지 8개 조인은 모두 PK `eq_ref`. 정렬은 사용자당 소수의 행에 대한 filesort라 전용 인덱스는 필요 없다. 사용자당 매칭이 수천 건이 되면 후속 마이그레이션에서 `(user_a_id, updated_at)`/`(user_b_id, updated_at)` 인덱스 또는 id 선조회 후 조인을 검토한다(주의: FK 인덱스에 갱신 컬럼을 넣지 말 것 규칙과 충돌하므로 FK용 단일 인덱스는 유지하고 별도로 추가). 목록은 INNER JOIN 8개, COUNT는 `exchange_match`만 세며 FK 때문에 고아 행이 없다는 전제다. **users 익명화·티켓 삭제를 도입하면 LEFT JOIN 또는 COUNT에도 같은 조인을 쓴다.** 참고: 매칭 행의 좌석은 항상 교환 전 자리다. 교환 후 자리는 새 티켓·교환 이력(후속)이 담당한다. V8 이후 SELECT는 `m.reserved_by_id, m.reserved_at, m.a_completed_at, m.b_completed_at`를 읽을 뿐 조인·인덱스·정렬은 그대로다.
 
 **제안 시 재검증(쌍 단위, 후보 SQL과 같은 판정)**: 같은 공연, 상대 티켓의 회차 ∈ 내 희망 회차·내 티켓의 회차 ∈ 상대 희망 회차, 상대 좌석 ∈ 내 희망 좌석·내 좌석 ∈ 상대 희망 좌석, 추가금 유형 호환, 양쪽 요청 OPEN·티켓 ACTIVE, 상대 회차 마감 전, 다른 사용자, 양쪽 티켓 예약 잠금 없음. 후보 화면이 오래돼 조건이 바뀌었으면 422.
 
@@ -185,7 +185,7 @@ propose의 상태는 '같은 요청 쌍의 가장 최근 매칭' 기준이다. �
 | 같은 쌍의 열린 매칭이 이미 있음 (반대 방향 제안 포함) | 409 | `{message, code: MATCH_ALREADY_OPEN, matchId}` |
 | 상태 전이 불허 (이미 CANCELED/COMPLETED 등, **RESERVED에서 cancel/reject**: message `먼저 예약을 취소해주세요.`) | 409 | `{message, code: MATCH_STATE_CONFLICT, status, action}` |
 | 열린 매칭이 있는 요청 수정·삭제 (`PATCH/DELETE /api/exchange/requests/{id}`) | 409 | `{message, code: ACTIVE_MATCH_EXISTS}` |
-| (제거됨, 2026-10-09 7차 답변) 완료된 매칭 기록이 있는 요청 삭제 — 소프트 삭제라 이제 허용되며 `MATCH_HISTORY_EXISTS`는 쓰지 않는다 | - | - |
+| (제거됨) 완료된 매칭 기록이 있는 요청 삭제 — 소프트 삭제라 이제 허용되며 `MATCH_HISTORY_EXISTS`는 쓰지 않는다 | - | - |
 | 내 요청이 닫힘/티켓 내림 | 422 | `{code: TICKET_NOT_ACTIVE, message}` |
 | 내 회차 마감 (propose만; 이미 시작한 채팅의 reserve/unreserve에는 적용하지 않음) | 422 | `{code: SESSION_CLOSED, message}` |
 | 후보 조건 불충족 (자기 자신·같은 사용자·상대 요청 닫힘·좌석/회차/추가금 불일치) **또는 상대 티켓이 예약 잠금**(후보에서 빠진 것과 같게 취급) | 422 | `{code: NOT_A_CANDIDATE, message}` |
@@ -203,7 +203,7 @@ propose의 상태는 '같은 요청 쌍의 가장 최근 매칭' 기준이다. �
 ### 연동 규칙
 
 - **티켓 내리기**: 예약 잠금이 있으면 409 `TICKET_RESERVED`. 없으면 기존대로 그 티켓의 요청을 CLOSED로 닫고, 그 티켓이 참여한 **CHATTING 매칭은 시스템 취소**(`canceled_by_id` NULL, 응답 `canceledBy: SYSTEM`)한다.
-- **요청 수정·삭제**: 그 요청이 a측이든 b측이든 열린 매칭(CHATTING·RESERVED)이 있으면 409. 삭제는 취소된 매칭 행을 먼저 지운다(FK, 남길 기록 없음). COMPLETED 매칭이 있으면 409(이력 보존).
+- **요청 수정·삭제**: 그 요청이 a측이든 b측이든 RESERVED 매칭이 있으면 409 `ACTIVE_MATCH_EXISTS`(아무것도 바꾸지 않음), 없으면 CHATTING 매칭을 모두 시스템 취소한 뒤 수정·삭제한다. 삭제는 소프트 삭제라 매칭 행은 지우지 않고, COMPLETED 매칭이 있어도 삭제는 허용된다.
 - **후보 조회**: 같은 요청 쌍의 열린 매칭이 있는 상대와 예약 잠금 티켓은 후보에서 빠진다. 취소·완료된 매칭은 보지 않는다(재매칭 허용). 내 티켓이 잠겨 있으면 조회 자체가 422다. 차단 제외는 `user_block`이 없어 아직 없다.
 
 ### 동시성 (요청 행 잠금 기반)
@@ -213,9 +213,9 @@ propose의 상태는 '같은 요청 쌍의 가장 최근 매칭' 기준이다. �
 - **교착 사례(해결됨)**: FK가 쓰는 인덱스를 `(ticket_a_id, status)` 같은 복합 인덱스로 만들면 `status`만 바꾸는 UPDATE(티켓 내림으로 인한 시스템 취소)도 InnoDB가 FK 인덱스 변경으로 보고 부모 `ticket` 행에 S 잠금을 걸어, 잠금 순서 밖에서 다른 티켓을 잡다가 양쪽 수락과 교착이 났다(실제 MySQL 경쟁 테스트에서 재현). 그래서 V5의 FK 인덱스는 모두 단일 컬럼이다. 이후 `exchange_match`에 인덱스를 더할 때 FK 컬럼에 `status` 같은 갱신 컬럼을 붙이지 않는다.
 - 락 대기 실패·교착은 503 `BUSY`로 응답한다.
 
-### COMPLETED 시점의 티켓 처리 규칙 (이번 범위 밖, 후속 구현 시 따른다; 8차 답변(2026-10-09)으로 '갱신'에서 '교환됨 + 새 티켓'으로 대체)
+### COMPLETED 시점의 티켓 처리 규칙 (미구현, 구현 시 따른다)
 
-**(8차 답변 2026-10-09 확정, 구현 예정) 티켓 처리는 COMPLETED 시점(양쪽이 '교환 완료'를 누르는 순간)에 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT한다**(소유자는 그대로, 회차·구역·열·번은 상대의 기존 티켓 값). 두 기존 티켓을 먼저 `ACTIVE -> EXCHANGED`로 바꿔 `active_flag`를 NULL로 만들어 `uk_ticket_active_seat`에서 빼고 나서 새 티켓을 INSERT하므로 유일 제약 위반이 없다. 그 전에는 각자 완료 시각(`a/b_completed_at`)만 기록한다. 매칭 행의 좌석은 교환 전 자리이고 교환 후 자리는 새 티켓·교환 이력(`old_ticket_id`/`new_ticket_id`)에서 본다. 교환 이력 스냅샷 2행을 남기고, 기존 티켓에 걸린 요청은 닫으며 같은 티켓들의 다른 열린 CHATTING 매칭은 시스템 취소하고 잠금을 푼다(확인 필요 Q-15). ~~이전 확정(3차 답변)은 두 티켓의 좌석·회차를 교체하되 A를 임시 INACTIVE -> B를 A 자리로 -> A를 B 자리 + ACTIVE 순으로 처리하는 것이었고 이 규칙은 8차 답변으로 대체됨.~~ 이때도 잠금 순서는 티켓 -> 요청 -> 매칭이다. 한쪽만 완료하고 방치돼도 자동 완료·취소는 없고 7일 경과 알림만 보낸다.
+**확정 설계(구현 예정): 티켓 처리는 COMPLETED 시점(양쪽이 '교환 수락'을 누르는 순간)에 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT한다**(소유자는 그대로, 회차·구역·열·번은 상대의 기존 티켓 값). 두 기존 티켓을 먼저 `ACTIVE -> EXCHANGED`로 바꿔 `active_flag`를 NULL로 만들어 `uk_ticket_active_seat`에서 빼고 나서 새 티켓을 INSERT하므로 유일 제약 위반이 없다. 그 전에는 각자 수락 시각(`a/b_completed_at`)만 기록한다. 매칭 행의 좌석은 교환 전 자리이고 교환 후 자리는 새 티켓·교환 이력(`exchange_history`의 `old_ticket_id`/`new_ticket_id`)에서 본다. 교환 이력 스냅샷을 남기고, 기존 두 티켓의 교환 요청은 CLOSED로 닫는다(Q-15 확정). 같은 기존 티켓에 걸린 **다른 CHATTING 매칭은 자동 취소하지 않고** 그 매칭 카드에서 예약·교환 수락 버튼을 비활성화하며 "이미 교환된 좌석이에요"를 본인과 상대방 모두에게 보여준다('교환됨' 여부는 티켓 상태 EXCHANGED로 판단, 예약 잠금은 푼다). 교환 완료된 매칭은 취소할 수 없다. 잠금 순서는 티켓 -> 요청 -> 매칭이다. 한쪽만 수락하고 방치돼도 자동 완료·취소는 없고 7일 경과 알림만 보낸다. (폐기된 안: 두 티켓의 좌석·회차를 교체하는 갱신 방식)
 
 ## 매칭 후보 조회 API
 
@@ -344,16 +344,16 @@ AND NOT EXISTS (SELECT 1 FROM exchange_ticket_lock l WHERE l.ticket_id = tb.id)
 - 확장 조각 규칙(`additionalExclusions()`): 조각은 `AND`로 시작해야 하고 `?`(바인딩 파라미터)를 포함할 수 없다. 위반하면 `IllegalStateException`이며(`ExchangeCandidateSqlGuardTest`), 앞뒤 개행은 자동으로 붙는다.
 
 ## 후속 메모 (매칭 생성·예약)
-- 남은 것: ① COMPLETED(양쪽 '교환 수락', 기존 두 티켓 EXCHANGED + 새 자리 티켓 INSERT, 위 규칙. 예약 방식 `reserve`/`unreserve`는 V8로 구현 완료) ② 채팅 메시지·방(`chat_message`, WebSocketConfig) ③ 교환 이력(`exchange_history`, 마이페이지 `(기존 자리) -> (바꾼 자리)` 스냅샷) ④ 사용자 차단(`user_block`: 차단 시 후보 제외·채팅 불가, 두 사용자 사이의 열린 매칭은 시스템 취소하고 잠금 해제) ⑤ 7일 경과 알림. (내 매칭 목록·단건 조회 API는 완료)
+- 남은 것: ① COMPLETED(양쪽 '교환 수락', 기존 두 티켓 EXCHANGED + 새 자리 티켓 INSERT, 기존 티켓의 교환 요청 CLOSED, 위 규칙. 예약 방식 `reserve`/`unreserve`는 V8로 구현 완료) ② 채팅 메시지·방(`chat_message`, WebSocketConfig) ③ 교환 이력(`exchange_history`, 마이페이지 `(기존 자리) -> (바꾼 자리)` 스냅샷) ④ 사용자 차단(`user_block`: 차단 시 후보 제외·채팅 불가, 두 사용자 사이의 열린 매칭은 시스템 취소하고 잠금 해제) ⑤ 7일 경과 알림. (내 매칭 목록·단건 조회 API는 완료)
 - 회차 마감(당일 끝)이 지난 뒤에도 잠금이 남은 티켓의 자동 비활성은 스케줄러 구현 때 설계 6절 '확인 필요 3'(매칭 종료 뒤 비활성화)에 따른다.
 - 같은 요청에 열린 매칭이 여러 개 있어도 요청 수정·삭제가 막히는 점(어느 한 쪽이라도 열린 매칭이 있으면 409)은 의도다. 채팅 중에 희망 조건이 바뀌는 것을 막는다.
 - 상대 요청이 제안 직후 삭제되는 경쟁은 요청 행 잠금으로 막힌다(잠금 사이 삭제되면 404).
 
 ### 알려진 한계 (매칭 생성·예약)
-- **요청 삭제 시 CANCELED 매칭 행을 하드 삭제한다 -> 상대방의 취소 기록이 사라진다.** 채팅·신고를 도입하기 전에 소프트 삭제 또는 FK `SET NULL` + 스냅샷으로 정책을 확정해야 한다(사용자 결정 사항이라 코드는 그대로 두었다. `exchange_match`가 요청을 FK로 참조하고 `chat_message`·신고가 `match_id`를 참조할 예정이므로 지금 정책 그대로는 쓸 수 없다).
+- (해소) 요청 삭제가 소프트 삭제(V7)가 되어 매칭 행은 지워지지 않고 상대의 취소 기록이 남는다. 삭제된 요청 쪽은 응답의 `myRequestDeleted`/`counterpartRequestDeleted`로 표시한다.
 - **차단·신고 전에는 낯선 사용자의 제안(CHATTING)이 b측 요청의 수정·삭제를 막는다.** 열린 매칭이 있는 요청은 409이므로, 아무 후보나 제안해 놓으면 상대가 먼저 취소/거절(reject)해야 자기 요청을 고칠 수 있다. 차단(`user_block`)·신고가 들어오면 완화한다(정책은 사용자 결정 사항이라 동작은 유지).
 - (L2) `TicketService.deactivate`의 CHATTING 매칭 시스템 취소 UPDATE(`ticket_a_id=? and status=CHATTING`)는 REPEATABLE READ에서 `idx_exchange_match_ticket_a/b` 구간을 status 필터 전에 next-key로 잠가, 과거 CANCELED/COMPLETED 행과 인접 gap까지 잠글 수 있다(이웃 티켓 id의 INSERT가 잠시 지연될 수 있으나 교착은 아님). 규모가 커지면 `SELECT id ... FOR UPDATE`로 id를 뽑아 PK로 갱신하는 방식으로 바꾼다.
-- (L3) 한 요청에 열린 매칭이 여러 개일 때 하나가 RESERVED가 되어도 나머지 CHATTING 매칭은 그대로 남는다(자동 취소 없음, 9차 답변: 새 제안·새 예약만 막는다). 사용자가 직접 취소하거나 COMPLETED 시점에 시스템 취소한다. 다른 매칭에서 티켓이 잠긴 상태의 reserve는 409(`TICKET_ALREADY_RESERVED`)이고 이때 아무 흔적(`reserved_*`)도 남기지 않는다(어느 쪽 티켓이 잠겼는지는 응답에 싣지 않는다). 후보 화면에서 같은 쌍의 RESERVED '예약 중' 뱃지(Q-1)는 후보 카드 작업에서 하며 이번에 후보 SQL은 바꾸지 않았다. 알림(새 제안·상대가 예약·예약 취소)도 후속이다.
+- (L3) 한 요청에 열린 매칭이 여러 개일 때 하나가 RESERVED가 되어도 나머지 CHATTING 매칭은 그대로 남는다(자동 취소 없음: 새 제안·새 예약만 막는다). 사용자가 직접 취소해야 하며, 교환 완료로 기존 티켓이 EXCHANGED가 되어도 자동 취소하지 않고 버튼 비활성+"이미 교환된 좌석이에요" 안내로 처리한다. 다른 매칭에서 티켓이 잠긴 상태의 reserve는 409(`TICKET_ALREADY_RESERVED`)이고 이때 아무 흔적(`reserved_*`)도 남기지 않는다(어느 쪽 티켓이 잠겼는지는 응답에 싣지 않는다). 후보 화면에서 같은 쌍의 RESERVED '예약 중' 뱃지(Q-1)는 후보 카드 작업에서 하며 후보 SQL은 아직 바꾸지 않았다. 알림(새 제안·상대가 예약·예약 취소)도 후속이다.
 - (L7, 해소) V5의 `ck_exchange_match_canceled`는 CANCELED의 `canceled_at` 필수와 열린 상태의 `canceled_*` NULL만 강제했다. V8이 `ck_exchange_match_reserved`(RESERVED <=> `reserved_*`)와 `ck_exchange_match_completed`(CHATTING이면 수락 표시 NULL, COMPLETED이면 둘 다 NOT NULL)로 상태별 시각 일관성을 DB가 강제하게 보강했다. 남은 것: 교환 완료 구현 때 이 CHECK와 COMPLETED 전이가 맞는지 확인하고, 레거시 `a/b_reserved_at` 삭제는 충분히 뒤로 미룬다(백필 재계산 근거).
 - (L8, 해소) 응답 변환이 닉네임을 위해 `userRepository.findById`를 따로 호출하던 문제는 조인 한 번(`ExchangeMatchQueryRepository`)으로 바꿔 해소했다. 내 매칭 목록·단건 조회 API도 구현됐다. 회차 마감 후 잠금이 남은 티켓의 자동 비활성(스케줄러)은 아직 없다.
 
@@ -478,8 +478,8 @@ docker rm -f seatswap-tmp-match
 결과(V8 반영 후 2026-10-10, 50라운드): 같은 쌍 동시 제안 8개 x 50 -> 201 정확히 50건, 409 `MATCH_ALREADY_OPEN` 350건. 같은 티켓을 건 두 매칭의 동시 예약 4개 x 50 -> 매 라운드 RESERVED 정확히 1개·잠금 2행(200 100건, 409 100건). 예약/취소/거절 경쟁 4개 x 50, RESERVED에서 예약 취소·재예약·채팅 종료·예약 취소 경쟁 4개 x 50, 티켓 내리기 vs 예약 3개 x 50(내리기 204 7건 / 409 43건)에서 5xx 0건, 서버 로그에 Deadlock/ERROR 0건, DB 불변식 위반(RESERVED 아닌 매칭의 잠금, 잠금이 2행 아닌 RESERVED, INACTIVE 티켓의 잠금, 같은 쌍 열린 매칭 중복, 두 RESERVED 매칭이 공유하는 티켓) 모두 0건(V8 추가 불변식: RESERVED <=> `reserved_by_id`·`reserved_at` NOT NULL도 0건 위반). 스크립트도 `reserve`/`unreserve`와 범위별 추가금 요청 형식으로 갱신했다.
 
 ## 다음 단계
-1. 교환 도메인 구현 계속: (완료) V4 희망 범위·희망 좌석·희망 회차, 매칭 후보 조회, V5 매칭 생성·예약·거절·취소·예약 잠금, V6 추가금 범위 단위, V7 요청 소프트 삭제, V8 한 명 예약·예약 취소 / 남음: 교환 완료(COMPLETED)와 티켓 처리(기존 티켓 EXCHANGED + 새 티켓 INSERT, 8차 답변), 채팅, 교환 이력, 차단(`user_block`) 마이그레이션(**V9 이후**; 예약 방식 변경 `reserve`/`unreserve`는 V8로 완료)과 후보 제외 조건(위 후속 메모) (설계안 `산출물/08_ERD/exchange-schema-design.md`)
+1. 교환 도메인 구현 계속: (완료) V4 희망 범위·희망 좌석·희망 회차, 매칭 후보 조회, V5 매칭 생성·예약·거절·취소·예약 잠금, V6 추가금 범위 단위, V7 요청 소프트 삭제, V8 한 명 예약·예약 취소 / 남음: 교환 완료(COMPLETED)와 티켓 처리(기존 티켓 EXCHANGED + 새 티켓 INSERT), 채팅, 교환 이력, 차단(`user_block`) 마이그레이션(**V9 이후**; 예약 방식 변경 `reserve`/`unreserve`는 V8로 완료)과 후보 제외 조건(위 후속 메모) (설계안 `산출물/08_ERD/exchange-schema-design.md`)
 2. 티켓 자동 비활성(회차 당일 끝 경과, 스케줄러)과 '내 티켓 인증'
-3. (완료) 후보 제시 -> 매칭 생성 -> 양쪽 예약 동의 (8차 답변으로 '한 명 예약 / 한 명 취소 시 복귀' 방식으로 대체 예정) / 남음: 양도 후 각자 교환 완료로 확정
-4. 채팅(WebSocketConfig 구현)·후기
+3. (완료) 후보 제시 -> 매칭 생성 -> 한 명 예약/예약 취소 / 남음: 양도 후 양쪽 '교환 수락'으로 교환 완료 확정
+4. 채팅(WebSocketConfig 구현), 사용자 차단·신고 (후기 기능은 없음)
 5. 배포 시 SecurityConfig의 CORS allowed-origin을 실제 프론트 도메인으로 교체

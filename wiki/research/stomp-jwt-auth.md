@@ -3,7 +3,7 @@ title: 실시간 채팅(STOMP) JWT 인증·인가 조사
 type: research
 tags: [chat, websocket, stomp, jwt, security]
 sources: [https://docs.spring.io/spring-security/reference/servlet/integrations/websocket.html, https://docs.spring.io/spring-security/reference/6.5/servlet/integrations/websocket.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/authentication-token-based.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/handle-annotations.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/user-destination.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/overview.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/enable.html, https://docs.spring.io/spring-framework/reference/web/websocket/server.html, https://docs.spring.io/spring-framework/reference/web/websocket/stomp/configuration-performance.html, https://docs.spring.io/spring-framework/reference/web/websocket/fallback.html, https://docs.spring.io/spring/reference/6.2/web/websocket/stomp/authorization.html, https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html, https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/WebSocket, https://docs.spring.io/spring-boot/3.3/appendix/dependency-versions/coordinates.html]
-updated: 2026-10-10
+updated: 2026-10-11
 confidence: medium
 status: draft
 ---
@@ -12,7 +12,7 @@ status: draft
 
 > 이 문서는 조사 요약이며 채팅 구현 결정이 아니다. 구현 때 설계를 확정한다. 프로젝트 맥락과 확정 결정은 [CLAUDE.md](../../CLAUDE.md), 백엔드 현황은 [백엔드 README](../../SeatSwap/backend/README.md)를 본다. 여기서는 결정을 복사하지 않는다.
 
-채팅은 교환 흐름에서 매칭(`CHATTING`) 이후 단계다. 용어는 [용어집의 매칭 상태](../glossary.md) 참고.
+채팅은 교환 흐름에서 매칭(`CHATTING`) 이후 단계이며 아직 구현되지 않았다. 코드 확인(2026-10-11): `build.gradle`에 websocket 스타터 의존성만 있고 `WebSocketConfig`는 `@Configuration` 클래스에 TODO 주석뿐이다(엔드포인트·브로커·인터셉터 없음). 용어는 [용어집의 매칭 상태](../glossary.md) 참고.
 
 ## 결론
 

@@ -3,7 +3,7 @@ title: 위키 목차
 type: index
 tags: [index]
 sources: []
-updated: 2026-10-10
+updated: 2026-10-11
 confidence: high
 status: draft
 ---
@@ -14,7 +14,7 @@ SeatSwap 프로젝트의 결정 근거, 함정, 조사 결과, 용어를 모은 
 
 ## 결정
 
-- [교환 완료 시 티켓 처리: 안 2의 근거](decisions/exchange-complete-new-ticket.md): 교환 완료 때 기존 티켓을 `EXCHANGED`로 바꾸고 새 티켓을 만드는 안의 선택지와 이유.
+- [교환 완료 시 티켓 처리: 안 2의 근거](decisions/exchange-complete-new-ticket.md): 교환 완료 때 기존 티켓을 `EXCHANGED`로 바꾸고 새 티켓을 만드는 안의 선택지와 이유, Q-15(기존 티켓의 요청 CLOSED, 다른 채팅 유지) 확정 근거.
 
 ## 함정
 

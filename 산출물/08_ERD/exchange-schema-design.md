@@ -1,6 +1,6 @@
 # 교환 도메인 스키마 설계안 (V3~V8 구현 완료; V8 한 명 예약 방식은 10절)
 
-작성 2026-10-08 / 브랜치 `docs/exchange-schema-design` / 상태: **설계 확정(2026-10-08 사용자 답변 반영, 남은 확인 필요는 6절 끝), 구현은 별도 지시 후**
+작성 2026-10-08 / 브랜치 `docs/exchange-schema-design` / 상태: **V3~V8 구현 완료**(설계 확정 2026-10-08 사용자 답변 반영, 남은 확인 필요는 6절 끝). 현재 DB는 V1~V8(10개 테이블)이고 **다음 마이그레이션은 V9부터**다. 교환 수락→교환 완료(`EXCHANGED`+새 티켓+`exchange_history`)·`user_block`·`chat_message`·알림은 미구현(V9 이후). 아래 인용문은 날짜순 구현 기록이며, 본문 중 '(대체됨)'·취소선·V4/V5 시점 표기는 이력이고 현행 기준은 9절(V6·V7)·10절(V8)·1.7절 표다.
 
 > **구현 상태 (2026-10-08, 브랜치 `feature/ticket-register`, 미커밋)**: 1.1절 ticket 변경은 **V3로 구현 완료**(`V3__ticket_seat_columns.sql`, ticket 행이 있으면 SIGNAL 가드로 실패, 생성 컬럼 `active_flag`, `uk_ticket_active_seat`, `idx_ticket_user_status`; 정규화 키는 서비스 `SeatKeyNormalizer`가 NFKC·공백 제거·대문자·앞 0 제거·끝의 '열'/'번' 제거로 만든다). 티켓 등록 API(`POST /api/tickets`, `GET /api/tickets/me`, `DELETE /api/tickets/{id}`)도 구현됨. V4 희망 쪽은 아래 메모대로 구현 완료다.
 >
@@ -9,13 +9,13 @@
 > **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-want`, 미커밋)**: **V4 희망 쪽 구현 완료** — `V4__exchange_want_tables.sql`이 `exchange_request`·`exchange_want_range`·`exchange_want_seat`·`exchange_want_session` 4개 테이블을 만든다(API: `POST /api/exchange/requests`, `GET /api/exchange/requests/me`, `PATCH/DELETE /api/exchange/requests/{id}`). **매칭 쪽(차단·`exchange_match`·`exchange_ticket_lock`·`chat_message`·`exchange_history`)은 미구현이며 V5 이후**로 번호를 옮긴다(이 문서 본문의 'V4' 표기 중 매칭 쪽 테이블은 V5 이후로 읽는다). 티켓을 내리면 해당 요청이 CLOSED로 바뀌고(이후 수정 422 `TICKET_NOT_ACTIVE`), 예약 잠금 409는 매칭 구현 때 `ensureCanDeactivate`/`ensureNoActiveProposal` 훅에서 추가한다. 서버 안전 상한 5,000석·50범위(`exchange.want.*`, 초과 422 `WANT_SEAT_LIMIT_EXCEEDED`/`WANT_RANGE_LIMIT_EXCEEDED`). 리뷰 반영(테스트 254건): 자기 좌석 포함 422 `WANT_INCLUDES_OWN_SEAT`는 희망 회차가 내 티켓 회차 하나뿐일 때만이며 다른 회차가 있으면 같은 위치도 허용한다(사용자가 별도 결정 없이 추천안 채택, 이의 시 변경 가능). 상한 판정은 합집합 기준. 요청에도 지난 회차 마감 적용(422 `SESSION_CLOSED`, 희망 회차 마감은 400 `wantSessions[i].sessionId`). 열·번 부호 정수형은 400. 잠금 순서는 항상 티켓→요청. 남은 한계는 요청 응답의 열·번 범위가 정규화 값이라 원문 표기를 복원할 수 없다는 것뿐이다. V4 실제 파일에는 초안에 없던 `ck_exchange_want_range_sort`, `ck_exchange_want_session_priority`, `idx_exchange_want_range_request`, `idx_exchange_want_session_session`이 추가됐다(4.1 참고).
 > **구현 상태 갱신 (2026-10-08, 브랜치 `feature/exchange-propose-accept`, 미커밋)**: **V5 구현 완료 — `V5__exchange_match_tables.sql`이 `exchange_match`·`exchange_ticket_lock` 2개 테이블만 만든다.** `user_block`·`chat_message`·`exchange_history`는 V6 이후다(이 문서의 'V5 이후' 표기 중 이 3개는 V6 이후로 읽는다). 사용자 결정(명령 6)에 따라 요청당 '제안 1개→수락' 모델이 아니라 확정 흐름(후보 선택→채팅 여러 개 동시→양쪽 예약→각자 완료)에 매핑했다. 구현 범위는 매칭 생성·예약(accept)·거절(reject)·취소(cancel)이며 COMPLETED·채팅·교환 이력·차단은 범위 밖이다(매칭 조회 API `GET /api/exchange/matches/me`·`/{id}`는 이후 `feature/exchange-ui`에서 추가됐고 새 마이그레이션은 없다). 1.7·1.8·3절·4절의 V5 변경점은 각 절 끝의 '구현 반영 (V5)'를 본다.
 >
-> **구현 완료 (2026-10-09, `feature/range-extra`, 미커밋, 7차 답변)**: 9절의 추가금 범위 단위 이동은 **V6(`V6__exchange_extra_per_range.sql`)**, 요청 소프트 삭제는 **V7(`V7__exchange_request_soft_delete.sql`)**으로 구현됐고 현재 DB는 V1~V7(10개 테이블)이다. 사용자 확정: 겹침 충돌은 (a) 거부(422 `WANT_EXTRA_CONFLICT`, 응답 최상위 `conflicts:[[i,j]]`), 매칭 추가금 스냅샷 4컬럼 동의, 삭제된 요청은 `/requests/me`에서 숨기고 내 매칭 목록에서만 회색 '(삭제)' 표시, X–X·NEG–NEG 성립 확정. **아래 1.2~1.4·2절·4절·6절의 '요청 단위 추가금'과 `uk_exchange_request_ticket`(및 `exchange_request.extra_*`) 서술은 V4/V5 시점 기록이며 9절로 대체됐다.** 'V6 이후'로 적힌 user_block·chat_message·exchange_history는 **V8 이후**다. 구현 후 실측은 후보 4,000건 규모 응답 중앙값 약 98~107ms, EXPLAIN `type=ALL` 없음, 이관은 `MigrationV6V7MysqlTest`로 자동화(테스트 기본 439건·환경변수 포함 456건).
+> **구현 완료 (2026-10-09, `feature/range-extra`, 미커밋, 7차 답변)**: 9절의 추가금 범위 단위 이동은 **V6(`V6__exchange_extra_per_range.sql`)**, 요청 소프트 삭제는 **V7(`V7__exchange_request_soft_delete.sql`)**으로 구현됐고 현재 DB는 V1~V7(10개 테이블)이다. 사용자 확정: 겹침 충돌은 (a) 거부(422 `WANT_EXTRA_CONFLICT`, 응답 최상위 `conflicts:[[i,j]]`), 매칭 추가금 스냅샷 4컬럼 동의, 삭제된 요청은 `/requests/me`에서 숨기고 내 매칭 목록에서만 회색 '(삭제)' 표시, X–X·NEG–NEG 성립 확정. **아래 1.2~1.4·2절·4절·6절의 '요청 단위 추가금'과 `uk_exchange_request_ticket`(및 `exchange_request.extra_*`) 서술은 V4/V5 시점 기록이며 9절로 대체됐다.** 'V6 이후'로 적힌 user_block·chat_message·exchange_history는 당시에는 V8 이후였으나 V8이 한 명 예약 방식에 쓰였으므로 **V9 이후**다. (이 단락의 '현재 DB는 V1~V7'은 당시 기준이며 현재는 V1~V8이다.) 구현 후 실측은 후보 4,000건 규모 응답 중앙값 약 98~107ms, EXPLAIN `type=ALL` 없음, 이관은 `MigrationV6V7MysqlTest`로 자동화(테스트 기본 439건·환경변수 포함 456건).
 >
 > **구현 완료 (2026-10-10, `feature/exchange-reserve`, 미커밋, 9차 답변)**: 10절의 한 명 예약 방식은 **V8(`V8__exchange_match_single_reserve.sql`)** 로 구현됐고 현재 DB는 V1~V8(10개 테이블, 테이블 수 불변)이다. `exchange_match`에 `reserved_by_id`(FK users)·`reserved_at` 추가, 단일 컬럼 FK 인덱스 `idx_exchange_match_reserved_by`, CHECK 3개(`ck_exchange_match_reserved`, `ck_exchange_match_reserved_by_party`, `ck_exchange_match_completed`), `a/b_reserved_at`은 삭제하지 않고 DEPRECATED 주석(레거시), 기존 RESERVED 행은 이른 쪽을 예약자로 백필(동시각이면 a측, 둘 다 NULL이면 a측+updated_at), CHATTING 반쪽 동의는 변환하지 않음, 재실행 가능 프로시저·SIGNAL 가드(완료 시각이 상태와 안 맞으면 중단). `MigrationV8MysqlTest` 4건. 이 문서에서 `user_block`·`chat_message`·`exchange_history`·`notification`은 **V9 이후**로 읽는다. 실제 SQL은 마이그레이션 파일이 기준이고 10절 SQL은 설계 당시 초안이다.
 >
-> **8차 답변 반영 (2026-10-09, 브랜치 `docs/exchange-complete-ticket-model`, 문서만 — 코드·마이그레이션은 별도 브랜치에서 구현 예정)**: 이 문서의 두 확정이 **대체**됐다. ①**(g) 완료 시 교체**: '두 티켓의 좌석·회차 교체 + 임시 INACTIVE 순서'는 대체됨 -> 완료 시 **기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT**한다(`TicketStatus.EXCHANGED` 신규, 1.10 `exchange_history`는 `ticket_id` 대신 `old_ticket_id`·`new_ticket_id`). 매칭 행(`ticket_a_id`/`ticket_b_id`)의 좌석은 교환 전 자리이고 교환 후 자리는 새 티켓·이력에서 본다. ②**예약 방식**: 3차 답변의 '양쪽 예약 동의'(`a_reserved_at`/`b_reserved_at`)는 대체됨 -> **둘 중 한 명이 예약하면 RESERVED(두 티켓 잠금), 한 명이 예약을 취소하면 CHATTING 복귀**(`reserved_by_id`·`reserved_at` 가안, 상세는 `산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md` §3, §3A). 아래 본문의 해당 서술에는 '(8차 답변으로 대체됨)'을 표기했고, 현재 V5 스키마·코드는 아직 양쪽 동의 방식이다.
+> **8차 답변 반영 (2026-10-09, 브랜치 `docs/exchange-complete-ticket-model`, 문서만 — 코드·마이그레이션은 별도 브랜치에서 구현 예정)**: 이 문서의 두 확정이 **대체**됐다. ①**(g) 완료 시 교체**: '두 티켓의 좌석·회차 교체 + 임시 INACTIVE 순서'는 대체됨 -> 완료 시 **기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓을 INSERT**한다(`TicketStatus.EXCHANGED` 신규, 1.10 `exchange_history`는 `ticket_id` 대신 `old_ticket_id`·`new_ticket_id`). 매칭 행(`ticket_a_id`/`ticket_b_id`)의 좌석은 교환 전 자리이고 교환 후 자리는 새 티켓·이력에서 본다. ②**예약 방식**: 3차 답변의 '양쪽 예약 동의'(`a_reserved_at`/`b_reserved_at`)는 대체됨 -> **둘 중 한 명이 예약하면 RESERVED(두 티켓 잠금), 한 명이 예약을 취소하면 CHATTING 복귀**(`reserved_by_id`·`reserved_at` 가안, 상세는 `산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md` §3, §3A). 아래 본문의 해당 서술에는 '(8차 답변으로 대체됨)'을 표기했다. ②는 **V8(2026-10-10)로 구현 완료**(위 갱신)이고, ①(EXCHANGED+새 티켓)은 아직 미구현이다. 같은 날 **Q-15가 확정**됐다: 교환 완료 시 기존 티켓의 교환 요청은 CLOSED로 닫고, 그 티켓에 걸린 다른 CHATTING 매칭은 **자동 취소하지 않으며** 해당 카드의 예약·교환 수락·교환 완료 버튼을 비활성화하고 "이미 교환된 좌석이에요"를 본인과 상대방 모두에게 보여준다('교환됨' 여부는 티켓 상태 EXCHANGED로 판단).
 
-기준선: V1+V2 (users, performance, performance_session, ticket 4개 테이블). 이 문서의 SQL은 초안이며 마이그레이션 파일이 아니다.
+설계 시점 기준선: V1+V2 (users, performance, performance_session, ticket 4개 테이블; 현재는 V1~V8, 10개 테이블). 이 문서의 SQL은 초안이며 마이그레이션 파일이 아니다(실제 SQL은 `SeatSwap/backend/src/main/resources/db/migration/`이 기준).
 좌석표(`SeatMapLayout`·`uid`·`section`)에 의존하지 않는다. 후기·신뢰도·신고 테이블은 만들지 않는다(신고는 8절에서 확장 여지만 언급).
 
 ---
@@ -50,7 +50,7 @@
 | row_key | VARCHAR(20) bin | NOT NULL (신규) | 열 정규화 키(숫자는 앞 0 제거, 끝의 '열' 제거, 영문 대문자) |
 | col_label | VARCHAR(20) | NOT NULL로 변경 | 번 표시용 |
 | col_key | VARCHAR(20) bin | NOT NULL (신규) | 번 정규화 키(끝의 '번' 제거 등) |
-| status | VARCHAR(20) bin | NOT NULL DEFAULT 'ACTIVE', CHECK IN (ACTIVE, INACTIVE) | INACTIVE = 사용자가 내린 티켓(소프트 삭제; 매칭·이력이 참조하므로 물리 삭제 안 함) |
+| status | VARCHAR(20) bin | NOT NULL DEFAULT 'ACTIVE', CHECK IN (ACTIVE, INACTIVE) | INACTIVE = 사용자가 내린 티켓(소프트 삭제; 매칭·이력이 참조하므로 물리 삭제 안 함). **EXCHANGED(교환 완료로 바뀐 기존 티켓)는 교환 완료 구현 때 V9 이후에 `ck_ticket_status`를 새 V 파일로 확장해 추가한다(미구현)** |
 | active_flag | TINYINT | GENERATED STORED `IF(status='ACTIVE',1,NULL)` | 활성 유일 제약용 |
 | created_at / updated_at | DATETIME(6) | NOT NULL (신규, JPA Auditing) | |
 
@@ -62,23 +62,25 @@
 - **등록·매칭 허용 기간(k, 확정)**: 회차 당일 끝(회차 `starts_at` 다음날 0시 KST)까지 티켓 등록·매칭을 허용하고, 그 시각이 지나면 티켓을 자동으로 INACTIVE로 바꾼다(스케줄러가 `status` 갱신, 후보 SQL에도 같은 시각 조건을 넣어 지연을 방어, 컬럼 추가 없음). 티켓 내리기(INACTIVE)는 **예약 잠금이 걸려 있지 않으면 언제든** 가능하다. 잠긴 티켓은 자동 비활성에서 제외하고 매칭이 끝난 뒤 비활성화한다(설계자 기본값, 6절 확인 필요).
 - 생성 컬럼 `active_flag`는 JPA 엔티티에 매핑하지 않거나 `insertable=false, updatable=false`로 매핑한다(ddl-auto validate는 매핑된 컬럼만 검사).
 
-### 1.2 exchange_request (신규, 가칭 유지 권장) — 티켓의 교환 희망 1건
+### 1.2 exchange_request (V4, V6·V7로 변경됨) — 티켓의 교환 희망 1건
+현재 컬럼: id, ticket_id, status(OPEN/CLOSED/DELETED), deleted_at, live_flag(생성), created_at/updated_at. 추가금 컬럼은 없다(V6에서 범위로 이동). 아래 표는 V4 시점 초안이며 각 행에 현행 변경을 표기했다.
 이름: `exchange_request`가 무난. 'Ticket 1:1'이므로 `ticket_wish` 같은 이름도 가능하나 이력·매칭 용어와 맞춰 유지를 추천.
 
 | 컬럼 | 타입 | 제약 |
 |---|---|---|
 | id | BIGINT PK AI | |
-| ticket_id | BIGINT | NOT NULL, FK -> ticket, `uk_exchange_request_ticket` UNIQUE (티켓당 요청 1개) |
-| extra_type | VARCHAR(10) bin | NOT NULL, CHECK IN ('X','ANY','POS','NEG'). X = 추가금 X(지불 안 함), ANY = 상관없음, POS = 금액 > 0(받아야만 교환), NEG = 금액 < 0(낼 의향 있음) |
-| extra_amount | INT | NULL. POS/NEG일 때만 값(POS > 0, NEG < 0), X/ANY는 NULL. **매칭 계산에 쓰지 않고** 후보 목록에 참고 표시만. CHECK는 4.1 참고 |
-| status | VARCHAR(20) bin | NOT NULL DEFAULT 'OPEN', CHECK IN ('OPEN','CLOSED') (CLOSED = 완료·티켓 내림·사용자 종료) |
+| ticket_id | BIGINT | NOT NULL, FK -> ticket. ~~`uk_exchange_request_ticket` UNIQUE~~ -> **V7: `uk_exchange_request_live_ticket` (live_flag, ticket_id) + FK용 `idx_exchange_request_ticket` (ticket_id)**, 티켓당 **미삭제** 요청 1개 |
+| ~~extra_type~~ (V6에서 제거, `exchange_want_range`/`exchange_want_seat`로 이동) | VARCHAR(10) bin | NOT NULL, CHECK IN ('X','ANY','POS','NEG'). X = 추가금 X(지불 안 함), ANY = 상관없음, POS = 금액 > 0(받아야만 교환), NEG = 금액 < 0(낼 의향 있음) |
+| ~~extra_amount~~ (V6에서 제거) | INT | NULL. POS/NEG일 때만 값(POS > 0, NEG < 0), X/ANY는 NULL. **매칭 계산에 쓰지 않고** 후보 목록에 참고 표시만. CHECK는 4.1 참고 |
+| status | VARCHAR(20) bin | NOT NULL DEFAULT 'OPEN', CHECK IN ('OPEN','CLOSED') -> **V7: ('OPEN','CLOSED','DELETED')**. CLOSED = 티켓 내림 또는 교환 완료로 기존 티켓이 EXCHANGED가 됨(Q-15 확정), DELETED = 소프트 삭제(`deleted_at` 필수, 하위 행 삭제) |
+| deleted_at / live_flag | DATETIME(6) NULL / TINYINT 생성 | V7 추가. DELETED일 때만 `deleted_at` 값, `live_flag`는 DELETED면 NULL 아니면 1 |
 | created_at / updated_at | DATETIME(6) | NOT NULL |
 
 > **[대체됨: 2026-10-09 V6 — 추가금은 희망 범위 단위, 9절 참고]** 아래는 V4 시점의 요청 단위 서술이다.
 
-추가금은 **요청 단위(티켓당 1개)** 값이다. 희망 좌석(행) 단위로 금액을 달리 받지 않는다. 사용자 입력이 '내 좌석 1개 + 희망 범위 + 추가금 1개'이고, 행 단위로 두면 want_seat(파생 데이터, 수정 시 전부 재생성)에 사용자 입력이 섞이며 후보 판정이 행마다 달라져 설명·UI가 복잡해지기 때문이다. 호환 판정은 후보 SQL의 요청 쌍(a, b)에서 한 번 한다.
+~~추가금은 **요청 단위(티켓당 1개)** 값이다. 희망 좌석(행) 단위로 금액을 달리 받지 않는다.~~ (V6에서 **희망 범위 단위**로 대체. 아래는 폐기된 V4 시점 근거.) 사용자 입력이 '내 좌석 1개 + 희망 범위 + 추가금 1개'이고, 행 단위로 두면 want_seat(파생 데이터, 수정 시 전부 재생성)에 사용자 입력이 섞이며 후보 판정이 행마다 달라져 설명·UI가 복잡해지기 때문이다. 호환 판정은 후보 SQL의 요청 쌍(a, b)에서 한 번 한다.
 
-연석·3자 순환 여지: 요청이 티켓을 직접 1:1로 가리키는 것은 지금 UNIQUE 하나뿐이다. 연석은 UNIQUE 해제 + `exchange_request_ticket` 자식 테이블로, 순환은 매칭 참여자 테이블 추가로 확장 가능하며 현재 컬럼을 깨지 않는다. 요청은 구역·좌석 값을 따로 갖지 않고 티켓을 참조하므로 좌석 중복 저장이 없다.
+연석·3자 순환 여지: 요청이 티켓을 직접 1:1로 가리키는 것은 지금 UNIQUE(V7 이후는 `uk_exchange_request_live_ticket`) 하나뿐이다. 연석은 UNIQUE 해제 + `exchange_request_ticket` 자식 테이블로, 순환은 매칭 참여자 테이블 추가로 확장 가능하며 현재 컬럼을 깨지 않는다. 요청은 구역·좌석 값을 따로 갖지 않고 티켓을 참조하므로 좌석 중복 저장이 없다.
 
 ### 1.3 exchange_want_range — 사용자가 입력한 희망 범위(수정 화면 복원용)
 | 컬럼 | 타입 | 제약 |
@@ -88,7 +90,8 @@
 | zone_label / zone_key | VARCHAR(50) / bin | NOT NULL (범위 펼침 대상 아님) |
 | row_from / row_to | VARCHAR(20) bin | NOT NULL. 숫자 범위면 from~to, 문자 열은 from=to |
 | col_from / col_to | VARCHAR(20) bin | NOT NULL |
-| sort_order | SMALLINT | NOT NULL |
+| sort_order | SMALLINT | NOT NULL, CHECK >= 0 |
+| extra_type / extra_amount | VARCHAR(10) bin NOT NULL / INT NULL | **V6 추가**: 범위별 추가금(X/ANY/POS/NEG, POS>0·NEG<0, 금액은 표시용) |
 
 펼친 결과는 `exchange_want_seat`가 갖는다. 범위 수정은 해당 요청의 want_seat를 **전부 지우고 다시 펼친다**(범위가 겹쳐도 중복·부분 삭제 문제 없음, 그래서 want_seat에 range_id를 두지 않는다).
 
@@ -97,6 +100,7 @@
 |---|---|---|
 | request_id | BIGINT | FK -> exchange_request ON DELETE CASCADE |
 | zone_key / row_key / col_key | VARCHAR bin | NOT NULL |
+| extra_type / extra_amount | VARCHAR(10) bin NOT NULL / INT NULL | **V6 추가**: 이 좌석이 속한 범위의 추가금 복사본(PK 불변, 겹침 충돌은 서비스가 422 `WANT_EXTRA_CONFLICT`로 거부) |
 | | | **PRIMARY KEY (request_id, zone_key, row_key, col_key)** — 중복 방지 + 후보 조회 점조회 인덱스 |
 
 별도 id를 두지 않는다(클러스터드 PK가 곧 조회 인덱스). 공연/회차는 두지 않는다: 같은 공연 안에서 좌석 위치 문자열은 회차 간 공통으로 보고, 회차 조건은 1.5가 맡는다.
@@ -113,7 +117,7 @@
 - 희망 회차는 요청의 티켓과 **같은 공연**의 회차여야 한다(서비스 검사 + 후보 SQL에서 한 번 더 방어).
 - 본인 티켓의 회차도 희망 회차에 넣을 수 있다(같은 회차 안 교환). 후보 노출 정렬은 이 priority다.
 
-### 1.6 user_block — 사용자 차단
+### 1.6 user_block — 사용자 차단 (미구현, V9 이후)
 | 컬럼 | 타입 | 제약 |
 |---|---|---|
 | id | BIGINT PK AI | |
@@ -131,16 +135,18 @@
 | request_b_id | BIGINT | NOT NULL FK. CHECK (request_a_id <> request_b_id) |
 | user_a_id / user_b_id | BIGINT | NOT NULL FK -> users (요청에서 유도 가능하나 차단 조회와 내 매칭 목록용 비정규화) |
 | status | VARCHAR(20) bin | NOT NULL, CHECK IN ('CHATTING','RESERVED','COMPLETED','CANCELED') (4종, CLOSED 삭제) |
-| a_reserved_at / b_reserved_at | DATETIME(6) | NULL. '이 사람과 교환할게요' 누른 시각 (V5 당시 구현. **8차 답변(2026-10-09)으로 대체되어 V8에서 구현 완료**: 양쪽 동의 대신 `reserved_by_id`(FK users NULL)·`reserved_at`(NULL), RESERVED일 때만 NOT NULL로 CHECK. **V8 구현 완료, 10절**, a/b_reserved_at은 삭제하지 않고 미사용 레거시로 유지) |
-| a_completed_at / b_completed_at | DATETIME(6) | NULL. '교환 완료' 누른 시각 |
-| canceled_by_id / canceled_at | BIGINT / DATETIME(6) | NULL. CANCELED일 때만. canceled_by_id가 NULL이면 시스템 취소(차단, 좌석 교체로 인한 종료, 티켓 내림 등) |
+| reserved_by_id / reserved_at | BIGINT / DATETIME(6) | **V8 현행**: 예약한 사람(FK users, NULL)·예약 시각. RESERVED일 때만 둘 다 NOT NULL(`ck_exchange_match_reserved`), 예약자는 참여자(`ck_exchange_match_reserved_by_party`), 단일 컬럼 FK 인덱스 `idx_exchange_match_reserved_by` |
+| a_extra_type / a_extra_amount / b_extra_type / b_extra_amount | VARCHAR(10) / INT (각 측) | **V6 추가**: 매칭 시점 추가금 스냅샷 4컬럼(표시용), a측 = a가 b 좌석을 포함한 범위의 추가금, b측 반대 |
+| a_reserved_at / b_reserved_at | DATETIME(6) | NULL. **DEPRECATED 레거시(V8, 삭제하지 않고 읽지도 쓰지도 않음)**. '이 사람과 교환할게요' 누른 시각 (V5 당시 구현. **8차 답변(2026-10-09)으로 대체되어 V8에서 구현 완료**: 양쪽 동의 대신 `reserved_by_id`(FK users NULL)·`reserved_at`(NULL), RESERVED일 때만 NOT NULL로 CHECK. **V8 구현 완료, 10절**, a/b_reserved_at은 삭제하지 않고 미사용 레거시로 유지) |
+| a_completed_at / b_completed_at | DATETIME(6) | NULL. '교환 수락'(내부 값·API는 `complete`) 누른 시각. V8의 `ck_exchange_match_completed`: CHATTING이면 둘 다 NULL, COMPLETED이면 둘 다 NOT NULL. 예약 취소 시 초기화 |
+| canceled_by_id / canceled_at | BIGINT / DATETIME(6) | NULL. CANCELED일 때만. canceled_by_id가 NULL이면 시스템 취소(요청 수정·삭제, 티켓 내림, 훗날 차단 등; 현재 시스템 취소는 CHATTING 매칭만 대상) |
 | created_at / updated_at | DATETIME(6) | NOT NULL |
 | request_low_id, request_high_id | BIGINT GENERATED STORED | LEAST/GREATEST(request_a_id, request_b_id) |
 | open_flag | TINYINT GENERATED STORED | `IF(status IN ('CHATTING','RESERVED'),1,NULL)` |
 
 - `uk_exchange_match_open_pair` UNIQUE (request_low_id, request_high_id, open_flag): 같은 요청 쌍의 열린 매칭 1개(방향 무관, 중복 채팅방 방지).
 - ~~`idx_exchange_match_user_a` (user_a_id, status), `idx_exchange_match_user_b` (user_b_id, status)~~ -> V5에서 단일 컬럼 `(user_a_id)`/`(user_b_id)`로 변경(3.4): 내 매칭 목록. 한 요청의 채팅 여러 개는 허용(요청당 열린 매칭 수 제한 없음). `idx_exchange_match_request_b` (request_b_id)는 FK용.
-- 상태 의미: CHATTING(채팅, 예약 대기) -> RESERVED(양쪽 예약 완료, 두 티켓 잠김, 이후 티켓팅 사이트에서 양도 진행 — V5 당시 구현. **8차 답변(2026-10-09)으로 대체되어 V8·`feature/exchange-reserve`에서 구현 완료**: 둘 중 한 명이 예약하면 RESERVED, 한 명이 예약을 취소하면 CHATTING으로 복귀하고 잠금이 풀리며 같은 쌍도 재예약 가능) -> COMPLETED(양쪽 모두 완료). 'TRANSFERRING' 같은 별도 양도 상태는 두지 않는다: 양도는 서비스 밖에서 일어나며 RESERVED + 각자 완료 시각으로 충분하다. CANCELED = 취소(사용자 또는 시스템). **취소는 재매칭 불가가 아니다**: 상태만 원상태로 돌아가고(잠금 해제, 티켓은 다시 후보 대상) 같은 상대와 새 매칭을 다시 열 수 있다(`open_flag`가 NULL이 되어 유일 제약에 걸리지 않음). 양쪽 완료 전에는 누구든 취소할 수 있다. 한쪽만 완료한 매칭은 자동 완료·자동 취소가 없고 7일 경과 알림만 보낸다(`a/b_completed_at`과 `updated_at`으로 조회, 별도 컬럼 없음). 양쪽 완료로 두 티켓의 좌석이 바뀌면 그 티켓들의 다른 열린 매칭은 시스템이 CANCELED(canceled_by_id NULL)로 바꾼다 (**8차 답변(2026-10-09)로 정정**: 좌석이 바뀌는 것이 아니라 기존 티켓이 EXCHANGED가 되므로 그 티켓·요청의 다른 CHATTING 매칭을 시스템 취소한다, 확인 필요 Q-15).
+- 상태 의미: CHATTING(채팅, 예약 대기) -> RESERVED(양쪽 예약 완료, 두 티켓 잠김, 이후 티켓팅 사이트에서 양도 진행 — V5 당시 구현. **8차 답변(2026-10-09)으로 대체되어 V8·`feature/exchange-reserve`에서 구현 완료**: 둘 중 한 명이 예약하면 RESERVED, 한 명이 예약을 취소하면 CHATTING으로 복귀하고 잠금이 풀리며 같은 쌍도 재예약 가능) -> COMPLETED(양쪽 모두 완료). 'TRANSFERRING' 같은 별도 양도 상태는 두지 않는다: 양도는 서비스 밖에서 일어나며 RESERVED + 각자 완료 시각으로 충분하다. CANCELED = 취소(사용자 또는 시스템). **취소는 재매칭 불가가 아니다**: 상태만 원상태로 돌아가고(잠금 해제, 티켓은 다시 후보 대상) 같은 상대와 새 매칭을 다시 열 수 있다(`open_flag`가 NULL이 되어 유일 제약에 걸리지 않음). 양쪽 완료 전에는 누구든 취소할 수 있다. 한쪽만 완료한 매칭은 자동 완료·자동 취소가 없고 7일 경과 알림만 보낸다(`a/b_completed_at`과 `updated_at`으로 조회, 별도 컬럼 없음). ~~양쪽 완료로 두 티켓의 좌석이 바뀌면 그 티켓들의 다른 열린 매칭은 시스템이 CANCELED(canceled_by_id NULL)로 바꾼다~~ (**Q-15 확정으로 폐기**: 양쪽 완료 시 기존 두 티켓이 EXCHANGED가 되고 그 티켓의 교환 요청은 **CLOSED**로 닫는다. 그 티켓에 걸린 **다른 CHATTING 매칭은 자동 취소하지 않는다** — 그 카드에서 예약·교환 수락·교환 완료 버튼을 비활성화하고 "이미 교환된 좌석이에요"를 본인과 상대방 모두에게 보여준다. '교환됨' 여부는 티켓 상태 EXCHANGED로 판단. 미구현.)
 - 점수·랭킹·신뢰도 컬럼 없음. 조건 일치는 저장하지 않는다.
 
 **구현 반영 (V5, 2026-10-08, `V5__exchange_match_tables.sql`) — 위 초안과의 차이**
@@ -158,11 +164,11 @@
 | match_id | BIGINT | NOT NULL, FK -> exchange_match, idx |
 | created_at | DATETIME(6) | NOT NULL |
 
-예약 확정 시 매칭 한 건의 두 티켓 행을 한 트랜잭션에서 INSERT(티켓 id 오름차순). 취소·종료·완료 때 DELETE. PK 충돌 = '이미 다른 매칭에서 예약됨'(409 `TICKET_ALREADY_RESERVED`). 근거는 3절.
+예약(한 명이 `reserve`) 시 매칭 한 건의 두 티켓 행을 한 트랜잭션에서 INSERT(티켓 id 오름차순). 예약 취소(`unreserve`)·완료 때 DELETE(RESERVED 중에는 cancel/reject가 막히므로 사용자 취소 경로에서는 잠금이 없다). PK 충돌 = '이미 다른 매칭에서 예약됨'(409 `TICKET_ALREADY_RESERVED`). 근거는 3절.
 
 **구현 반영 (V5)**: 두 FK(`fk_exchange_ticket_lock_ticket`, `fk_exchange_ticket_lock_match`)를 **ON DELETE CASCADE로 확정**했다(부모 행 삭제 시 잠금도 함께 삭제). 요청 삭제 정책은 4절 참고.
 
-### 1.9 chat_message — 채팅 메시지 (최소안)
+### 1.9 chat_message — 채팅 메시지 (최소안, 미구현, V9 이후)
 | 컬럼 | 타입 | 제약 |
 |---|---|---|
 | id | BIGINT PK AI | |
@@ -173,7 +179,7 @@
 
 채팅 구현 단계에서 확정해도 되는 부분이며 이 설계의 핵심은 아니다. 차단 중이면 서비스에서 전송 거부.
 
-### 1.10 exchange_history — 교환 이력 스냅샷 (사용자당 1행)
+### 1.10 exchange_history — 교환 이력 스냅샷 (사용자당 1행, 미구현, V9 이후)
 | 컬럼 | 타입 | 제약 |
 |---|---|---|
 | id | BIGINT PK AI | |
@@ -192,7 +198,7 @@
 마이페이지는 `(from) -> (to)`를 이 테이블만 읽어 그린다(티켓이 이후 다시 바뀌어도 불변).
 
 ### 1.11 관계 요약
-User 1:N Ticket / Performance; PerformanceSession 1:N Ticket; Ticket 1:1 ExchangeRequest; ExchangeRequest 1:N want_range / want_seat / want_session; ExchangeRequest 1:N ExchangeMatch(a측·b측); ExchangeMatch 1:N exchange_ticket_lock(최대 2) / chat_message / exchange_history(최대 2); User N:M User(user_block).
+User 1:N Ticket / Performance; PerformanceSession 1:N Ticket; Ticket 1:0..1 미삭제 ExchangeRequest(V7, DELETED 요청 행은 남을 수 있어 물리적으로는 1:N); ExchangeRequest 1:N want_range / want_seat / want_session; ExchangeRequest 1:N ExchangeMatch(a측·b측); ExchangeMatch 1:N exchange_ticket_lock(최대 2) / chat_message / exchange_history(최대 2); User N:M User(user_block).
 
 ### 1.12 좌석 정규화 규칙 (확정 a)
 - 서비스가 입력을 정규화해 `*_key`에 저장하고 원문은 `*_label`에 둔다. 규칙: 유니코드 NFKC(전각->반각), 양끝 공백 제거, 구역은 내부 공백까지 제거, 영문 대문자화, 열·번은 끝의 '열'/'번' 제거, 순수 숫자는 앞의 0 제거("03"→"3").
@@ -201,6 +207,8 @@ User 1:N Ticket / Performance; PerformanceSession 1:N Ticket; Ticket 1:1 Exchang
 ---
 
 ## 2. 매칭 후보 조회 SQL 초안
+
+> **V4/V5 시점 초안이다. 현행 SQL은 9.8절(추가금은 `wa.extra_type`/`wb.extra_type` 범위 단위, `b.live_flag = 1`, `STRAIGHT_JOIN`)이며 아래 `a.extra_type`·`b.extra_type` 참조와 `uk_exchange_request_ticket`는 더 이상 없다.**
 
 파라미터 `:reqId` = 내 요청. 결과 한 행 = 후보 한 명(조인 키들이 모두 유일이라 중복 행이 생기지 않는다: want_session (request, session) PK, want_seat (request, 키) PK).
 
@@ -274,9 +282,9 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 | wsa (희망 회차, 보통 1~10건) | ref | `exchange_want_session` PK (request_id, …) |
 | wa (희망 좌석 n건) | ref | `exchange_want_seat` PK 앞부분 request_id |
 | tb | ref, 상수 4컬럼 + active_flag | `uk_ticket_active_seat` (session, zone, row, col, active_flag): 점조회 |
-| b | eq_ref | `uk_exchange_request_ticket` |
+| b | eq_ref | ~~`uk_exchange_request_ticket`~~ -> V7 이후 `uk_exchange_request_live_ticket` (live_flag, ticket_id) |
 | wsb, wb | eq_ref | 각 PK 전체 |
-| NOT EXISTS 서브쿼리 | ref / eq_ref | `uk_user_block_pair`, `idx_user_block_blocked`, `uk_exchange_match_open_pair`, `exchange_ticket_lock` PK |
+| NOT EXISTS 서브쿼리 | ref / eq_ref | `uk_user_block_pair`, `idx_user_block_blocked`(user_block 구현 후), `uk_exchange_match_open_pair`, `exchange_ticket_lock` PK |
 
 - 작업량 ≈ (희망 좌석 수 n) × (희망 회차 수 s) 번의 tb 점조회. 예: 90석 × 3회차 = 270회, 각 점조회 뒤에 b/wsb/wb 점조회가 이어지므로 대부분 인덱스 룩업으로 끝난다. 사용자 대상 상한이 없으므로 n이 커지면 조회가 비례해 느려져 내부 안전 상한(확정 b, 6절)을 둔다.
 - 조인 순서를 '내 희망 좌석 -> 상대 티켓'으로 잡은 이유: 내 희망이 보통 상대 전체 티켓보다 작고, tb 접근이 전부 상수 동등 비교로 끝난다. 역방향(상대 희망에서 내 좌석 찾기)은 wb PK 점조회로 이미 처리한다.
@@ -308,7 +316,7 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 ### 3.3 그 밖의 경합
 - 사용자당 활성 티켓 20개 상한: 등록 트랜잭션에서 `SELECT … FROM users WHERE id=? FOR UPDATE`로 사용자 행을 잠근 뒤 COUNT(활성)+INSERT. (사용자 한 명 단위 직렬화라 비용 낮음. 생성 컬럼으로는 상한을 표현할 수 없다.)
 - 열린 매칭 쌍 중복: `uk_exchange_match_open_pair`로 DB 보장.
-- 쌍방 예약 동시 클릭: 예약 요청 시각 UPDATE 후 '상대 시각도 있나' 판정을 매칭 행 `FOR UPDATE` 아래에서 수행.
+- ~~쌍방 예약 동시 클릭: 예약 요청 시각 UPDATE 후 '상대 시각도 있나' 판정을 매칭 행 `FOR UPDATE` 아래에서 수행.~~ (V8로 대체: 한 명 예약 방식. 두 사람 동시 `reserve`는 같은 티켓 행 잠금(id↑)에 직렬화되어 먼저 잡은 쪽이 RESERVED로 만들고 나중 쪽은 멱등 200, 다른 매칭의 같은 티켓 예약은 409 `TICKET_ALREADY_RESERVED`. 10.6 참고.)
 - 완료 교체(확정 g, 두 사람이 모두 완료를 누르는 순간): 두 티켓 + 매칭 행을 id 순으로 잠금. ~~티켓 교체는 좌석 유일 제약 때문에 A를 임시 INACTIVE -> B를 A의 좌석으로 -> A를 B의 좌석 + ACTIVE 순으로 한 트랜잭션에서 처리한다(한 UPDATE 문에서 서로 맞교환하면 행 단위 검사로 중간에 유일 위반).~~ (**8차 답변(2026-10-09)으로 대체됨 — 임시 INACTIVE 순서 폐기**: 두 기존 티켓을 먼저 `ACTIVE -> EXCHANGED`로 UPDATE해 `active_flag`를 NULL로 만들어 `uk_ticket_active_seat`에서 빼고, 그 뒤 각 사용자에게 새 `ACTIVE` 티켓을 INSERT한다. 잠금 순서(티켓 id↑ → 요청 id↑ → 매칭)는 그대로.)
 - 동시 두 사람이 같은 좌석 등록: 3.1이 하나만 통과시킴.
 
@@ -320,19 +328,19 @@ LIMIT :size OFFSET :offset;                      -- 후속: keyset(priority, sta
 
 ## 4. Flyway 계획
 
-- 다음 번호 **V3**. 파일은 둘로 나누는 것을 권장한다(MySQL DDL은 트랜잭션이 아니라 중간 실패 시 앞선 변경이 남으므로 실패 범위를 줄임).
+- (설계 시점 계획 — 실제로는 V3~V8로 나뉘어 구현됐고 **다음 번호는 V9**다.) 당시 다음 번호는 V3. 파일은 둘로 나누는 것을 권장한다(MySQL DDL은 트랜잭션이 아니라 중간 실패 시 앞선 변경이 남으므로 실패 범위를 줄임).
   - `V3__ticket_seat_columns.sql`: 1.1의 ticket 변경.
-  - `V4__exchange_domain.sql`: 1.2~1.10 신규 테이블(요청·희망·차단·매칭·잠금·채팅·이력). 신고 테이블 번호는 선점하지 않는다.
+  - `V4__exchange_domain.sql`: 1.2~1.10 신규 테이블(요청·희망·차단·매칭·잠금·채팅·이력). 신고 테이블 번호는 선점하지 않는다. (실제: V4 = 희망 4개, V5 = 매칭·잠금, 나머지 user_block·chat_message·exchange_history는 V9 이후.)
 - **기존 ticket 행 이관·가드 필요 여부**
   - 조회 결과: **확인하지 못함**(Docker 데몬 미기동). 확인 쿼리 `SELECT COUNT(*) FROM ticket;` (컨테이너 `seatswap-mysql`, 사용자 `seatswap`, 비밀번호는 `SeatSwap/.env`의 `DB_PASSWORD`).
   - ticket은 엔티티만 있고 API가 없으므로 정상 환경에서는 0행일 가능성이 높다. 그러나 신규 `zone_label/zone_key` NOT NULL에 채울 값이 없다(기존 행은 구역 정보가 없음).
   - 추천: V3 맨 앞에 V2와 같은 `SIGNAL SQLSTATE '45000'` 가드로 **ticket 행이 있으면 실패**하고 '테스트 행을 삭제한 뒤 `flyway repair` 후 재시도'를 안내한다. 대안은 구역을 `'미입력'`으로 채우는 이관인데 같은 회차·번호 중복에서 활성 유일 제약 위반 위험이 있어 비추천(이 판단은 위 확인 결과가 0이면 무의미해지므로 구현 직전에 행 수를 다시 확인한다).
   - 가드와 별개로 `row_label/col_label`을 NOT NULL로 바꾸는 단계도 NULL 행이 있으면 실패하므로 같은 가드가 막아준다.
-- **V5 구현 (2026-10-08)**: `V5__exchange_match_tables.sql` = `exchange_match` + `exchange_ticket_lock`만. 위 `V4__exchange_domain.sql`의 나머지(`user_block`·`chat_message`·`exchange_history`)는 **V9 이후**로 미룬다(V6·V7은 범위별 추가금·요청 소프트 삭제에 사용됨).
+- **V5 구현 (2026-10-08)**: `V5__exchange_match_tables.sql` = `exchange_match` + `exchange_ticket_lock`만. 위 `V4__exchange_domain.sql`의 나머지(`user_block`·`chat_message`·`exchange_history`)는 **V9 이후**로 미룬다(V6·V7은 범위별 추가금·요청 소프트 삭제, V8은 한 명 예약에 사용됨).
 - **요청 삭제 정책 (V5 훅 채움; V7에서 소프트 삭제로 대체됨 — `MATCH_HISTORY_EXISTS` 제거, 9절 참고)**: 열린 매칭(CHATTING/RESERVED)이 있는 요청은 PATCH/DELETE 모두 409 `ACTIVE_MATCH_EXISTS`. 닫힌 요청을 삭제할 때는 CANCELED 매칭 행을 먼저 삭제하고, COMPLETED 매칭이 하나라도 있으면 409 `MATCH_HISTORY_EXISTS`(이력 보존). 잠긴 티켓(RESERVED 매칭)을 내리면 409 `TICKET_RESERVED`; 잠기지 않았다면 요청을 CLOSED로 바꾸고 그 티켓의 CHATTING 매칭을 시스템 취소(canceled_by_id NULL)한다.
-- 엔티티 영향(backend-dev): `Ticket`에 필드 추가(zone/row/col label·key, status, 시각), 신규 엔티티 8개(ExchangeRequest, ExchangeWantRange, ExchangeWantSeat(복합키), ExchangeWantSession(복합키), UserBlock, ExchangeMatch, ExchangeTicketLock, ChatMessage, ExchangeHistory — 채팅은 후순위). 생성 컬럼은 매핑하지 않거나 읽기 전용.
+- (설계 시점 목록, 일부 구현 완료) 엔티티 영향(backend-dev): `Ticket`에 필드 추가(zone/row/col label·key, status, 시각), 신규 엔티티 8개(ExchangeRequest, ExchangeWantRange, ExchangeWantSeat(복합키), ExchangeWantSession(복합키), UserBlock, ExchangeMatch, ExchangeTicketLock, ChatMessage, ExchangeHistory — 채팅은 후순위). 생성 컬럼은 매핑하지 않거나 읽기 전용.
 
-### 4.1 V3/V4 초안 SQL (설계 문서 안에서만 사용, 파일 아님)
+### 4.1 V3/V4 초안 SQL (설계 문서 안에서만 사용, 파일 아님; V4 시점 초안이라 `exchange_request`의 `extra_*`·`uk_exchange_request_ticket`·status 2종은 V6·V7로 바뀌었다)
 ```sql
 -- V3 (초안)
 -- [가드] ticket 행이 있으면 SIGNAL 로 실패 (V2 의 프로시저 패턴)
@@ -400,7 +408,7 @@ CREATE TABLE exchange_ticket_lock (
 ---
 
 ## 5. ERD 반영
-`산출물/08_ERD/erd.dot`에 신규·변경 테이블을 **'예정'** (노란 배경 `#FFF2CC` / 주황 헤더 `#F4B183`)으로 추가했다. 기존 4개 테이블은 현재 색 유지, ticket은 현재 컬럼 + 예정 컬럼 행(노란)으로 표시. 이 환경에 graphviz `dot`이 없어 PNG 생성·렌더 확인은 못 했고 문법(따옴표, HTML 라벨 닫힘, 엣지 대상 노드 존재)만 점검했다. 한계: 레이아웃 겹침 여부는 `dot -Tpng erd.dot -o ERD.png` 실행 후 눈으로 확인해야 한다. chat_message와 exchange_history, 잠금 테이블까지 포함해 노드가 늘어 rankdir=LR에서 가로가 길어질 수 있다.
+`산출물/08_ERD/erd.dot`은 현재 V1~V8의 10개 테이블을 파란 헤더(`#BDD7EE`)로, **예정(V9 이후)** 테이블 `user_block`·`chat_message`·`exchange_history`를 노란 배경 `#FFF2CC` / 주황 헤더 `#F4B183`과 점선 관계로 구분해 그린다(처음 작성 시에는 교환 테이블 전체가 예정 표기였고 구현되면서 현재 색으로 바뀌었다). 예정인 `EXCHANGED`(ticket status)는 노트로 표시한다. 이 환경에 graphviz `dot`이 없어 PNG 생성·렌더 확인은 못 했고 문법(따옴표, HTML 라벨 닫힘, 엣지 대상 노드 존재)만 점검했다. 한계: 레이아웃 겹침 여부는 `dot -Tpng erd.dot -o ERD.png` 실행 후 눈으로 확인해야 한다. chat_message와 exchange_history, 잠금 테이블까지 포함해 노드가 늘어 rankdir=LR에서 가로가 길어질 수 있다.
 
 ---
 
@@ -411,7 +419,7 @@ CREATE TABLE exchange_ticket_lock (
 | a. 구역 | 구역 필수 텍스트. 표시용 `zone_label`과 정규화 `zone_key`를 분리 저장(1.12 규칙). 자동완성·구역 테이블 없음 |
 | b. 펼침 상한 | 사용자 대상 상한 없음. 내부 안전 상한만 설정값으로 둔다(기본 제안: 요청당 희망 좌석 5,000건, 범위 입력 50개, 초과 시 400) |
 | c. 회차 | 희망 회차를 최소 1개 명시(저장은 항상 명시 행) + 사용자 우선순위. 화면 기본값은 전 회차 체크, 내 회차 1순위 |
-| d. 추가금 | 값 유형 4가지(아래 호환표), 금액은 계산에 쓰지 않고 후보 목록에 참고 표시. 요청 단위 값(V6로 범위 단위로 대체) |
+| d. 추가금 | 값 유형 4가지(아래 호환표), 금액은 계산에 쓰지 않고 후보 목록에 참고 표시. ~~요청 단위 값~~ -> **V6로 희망 범위 단위로 대체** |
 | e. 중복 좌석 | 활성 티켓 1개 유일(생성 컬럼 UNIQUE) + 안내 팝업의 '내 티켓 인증' 링크. 기존 보유자 정보는 노출하지 않는다 |
 | f. 문자 열 | 숫자 열·번만 `3~5` 범위, 문자 열은 하나씩 추가 |
 | g. 완료 시 교체 | 두 사람이 모두 '교환 완료'를 누르는 순간 한 트랜잭션에서 두 티켓 교체 + 이력 2행. 그 전에는 각자 완료 시각만 기록 (**8차 답변(2026-10-09)으로 대체됨**: '두 티켓 교체'는 '기존 두 티켓 EXCHANGED + 각자 새 자리 티켓 INSERT + 이력 2행(old/new 티켓 id)'으로, 임시 INACTIVE 순서는 폐기) |
@@ -420,7 +428,7 @@ CREATE TABLE exchange_ticket_lock (
 | j. 취소·한쪽 완료 | 취소는 상태만 원상태로(재매칭 가능, CANCELED/CLOSED 구분 삭제). 한쪽만 완료한 매칭은 자동 완료·취소 없이 7일 경과 알림만, 양쪽 완료 전에는 누구든 취소 가능 |
 | k. 허용 기간 | 회차 당일 끝(다음날 0시 KST)까지 등록·매칭, 이후 자동 INACTIVE. 티켓 내리기는 예약 중이 아니면 언제든 |
 
-### d 호환표 (요청 a, b 유형 조합)
+### d 호환표 (a, b 측 희망 범위의 추가금 유형 조합; V4 시점에는 요청 단위였음)
 | a \ b | X | ANY | POS | NEG |
 |---|---|---|---|---|
 | **X** | 성립(*) | 성립 | **불성립** (받아야 하는데 상대가 안 냄) | 성립 |
@@ -428,7 +436,7 @@ CREATE TABLE exchange_ticket_lock (
 | **POS** | **불성립** | 성립 | **불성립** | 성립 |
 | **NEG** | 성립 | 성립 | 성립 | 성립(*) |
 
-(*) 사용자가 명시하지 않은 조합(X-X, NEG-NEG). 아무도 받아야 하지 않으므로 성립으로 둔 기본값이다. 불성립은 `POS`가 한쪽에 있고 다른 쪽이 `POS` 또는 `X`인 경우뿐이다(후보 SQL 두 줄).
+(*) 사용자가 명시하지 않았던 조합(X-X, NEG-NEG)이었으나 2026-10-09 7차 답변으로 성립 확정. 아무도 받아야 하지 않으므로 성립이다. 불성립은 `POS`가 한쪽에 있고 다른 쪽이 `POS` 또는 `X`인 경우뿐이다(후보 SQL 두 줄).
 
 ### 남은 확인 필요
 1. **X-X, NEG-NEG 조합 성립 여부**: 2026-10-09 7차 답변으로 **성립 확정**(해소).
@@ -439,14 +447,14 @@ CREATE TABLE exchange_ticket_lock (
 ---
 
 ## 7. 영향 범위 요약 (backend-dev / doc-writer 전달용)
-- backend-dev(사용자 답변 후): V3, V4 작성, `Ticket` 필드 확장, 신규 엔티티, 정규화 유틸, 범위 펼침(서비스), 후보 조회(네이티브/QueryDSL), 예약 락 트랜잭션. `RepositoryQueryValidationTest` 확장.
+- (설계 시점 전달용 — V3~V8 구현 완료, 남은 것은 교환 완료·이력·차단·채팅·알림) backend-dev(사용자 답변 후): V3, V4 작성, `Ticket` 필드 확장, 신규 엔티티, 정규화 유틸, 범위 펼침(서비스), 후보 조회(네이티브/QueryDSL), 예약 락 트랜잭션. `RepositoryQueryValidationTest` 확장.
 - doc-writer: 요구사항정의서의 교환 흐름(상태 4종, 취소 후 재매칭 가능), 추가금 규칙(4유형 호환표), 사용자 차단, 교환 이력, 화면(티켓 등록의 구역 필수 입력, 희망 범위·회차 우선순위, 후보 목록)을 이 설계 확정 후 반영. erd-conventions 스킬의 '텍스트 좌석 입력 기반 매칭 스키마 방향' 절도 확정 이름으로 갱신.
 - 영향 없는 것: users, performance, performance_session 스키마 불변.
 
 ## 8. 신고 확장 여지 (설계하지 않음)
 신고는 교환 핵심 흐름 이후에 추가한다. 나중에 `exchange_match.id`·`users.id`를 참조하는 `user_report(reporter_id, target_user_id, match_id NULL, reason, status…)` 테이블을 새 V 파일로 붙이면 되고, 현재 스키마는 match_id·user_id 참조 키가 이미 있어 변경이 필요 없다. 차단과 신고는 별개 테이블로 둔다. 재매칭 불가는 차단과 신고에만 걸리므로 신고 착수 시 후보 SQL에 신고 대상 쌍 제외 조건을 추가한다(확인 필요).
 
-**마이그레이션(V3, V4) 및 엔티티 구현은 별도 지시 전까지 금지(이 문서는 설계만).**
+~~마이그레이션(V3, V4) 및 엔티티 구현은 별도 지시 전까지 금지(이 문서는 설계만).~~ (설계 시점 문구. V3~V8은 구현 완료. 남은 V9 이후 항목은 설계·사용자 확인 후 구현한다.)
 
 ---
 
@@ -600,7 +608,7 @@ ORDER BY wsa.priority ASC, b.created_at DESC, b.id DESC LIMIT ? OFFSET ?
 | 12 | 티켓 기준 요청 조회(내 티켓 목록의 '요청 있음' 표시 등) | ticket_id로 요청을 찾는 곳은 미삭제 기준으로 |
 
 ### 9.10 Flyway 계획 · 락 · 동시성
-- **번호/분리**: **V6 = 추가금 범위 이동**(9.5), **V7 = 요청 소프트 삭제**(9.6). 나누는 이유: MySQL DDL은 문 단위로만 원자적이라 중간 실패 시 앞 변경이 남는다 -> 실패 범위 축소, 리뷰·롤포워드 용이, 두 변경이 서로 독립. 같은 릴리스에 함께 나가도 된다. **영향**: 기존 문서의 'V6 이후'(user_block·chat_message·exchange_history)는 **V8 이후**로 밀린다.
+- **번호/분리**: **V6 = 추가금 범위 이동**(9.5), **V7 = 요청 소프트 삭제**(9.6). 나누는 이유: MySQL DDL은 문 단위로만 원자적이라 중간 실패 시 앞 변경이 남는다 -> 실패 범위 축소, 리뷰·롤포워드 용이, 두 변경이 서로 독립. 같은 릴리스에 함께 나가도 된다. **영향**: 기존 문서의 'V6 이후'(user_block·chat_message·exchange_history)는 당시 'V8 이후'로 밀린다고 적었으나, V8이 한 명 예약에 쓰였으므로 **V9 이후**다.
 - **롤백 곤란 요소**: ①V6의 요청 컬럼 DROP은 되돌릴 수 없다(복원하려면 새 마이그레이션으로 범위에서 역이관하며, 범위별 값이 달라졌으면 정보 손실 -> 백업 복원). ②V7을 되돌리면 UNIQUE(ticket_id) 복원 시 DELETED 행(같은 티켓 중복)이 있으면 실패하므로 먼저 처리해야 한다. Flyway Community에는 undo가 없으므로 실패 시 정책은 `flyway repair` + 새 V 파일(롤포워드), 운영은 마이그레이션 전 백업이다.
 - V1~V5는 수정하지 않는다. `ddl-auto=validate`가 엔티티와 맞아야 하므로 엔티티 변경과 V6/V7이 같은 PR에 들어가야 한다.
 - **락 순서는 티켓 -> 요청 -> 매칭 유지**. 요청 수정·삭제는 지금도 요청 행만 잠그므로(`findByIdForUpdate`) 여기에 매칭 행 갱신(CHATTING 시스템 취소)이 붙어도 요청 -> 매칭으로 전체 순서의 부분 순서라 엇갈리지 않는다. 매칭 행은 **id 오름차순**으로 잠근다(두 요청의 편집이 같은 매칭을 건드려도 같은 순서). 예약 경로(티켓 id 오름차순 -> 요청 -> 매칭)와도 순환이 없다. 이 경로에서 **티켓 행을 새로 잠그지 않는다**(기존 주석 규칙 유지).
@@ -621,12 +629,12 @@ ORDER BY wsa.priority ASC, b.created_at DESC, b.id DESC LIMIT ? OFFSET ?
 | 매칭 추가금 | 매칭 행에 a/b 스냅샷 컬럼 4개 (사용자 확정) | 요청에서 추가금이 사라지고 하위 행이 삭제되므로 기록 보존에 필요 |
 | 시스템 취소 | `canceled_by_id` NULL, 스키마 변경 없음 (취소 사유 컬럼은 채팅/시스템 메시지 도입 때 판단) | V5 CHECK가 허용 |
 | 완료 이력 있는 요청 삭제 | 허용(409 `MATCH_HISTORY_EXISTS` 제거) | 소프트 삭제라 기록이 보존됨 |
-| V 번호 | V6(추가금), V7(소프트 삭제), user_block 등은 V8+ | 9.10 |
+| V 번호 | V6(추가금), V7(소프트 삭제), user_block 등은 당시 V8+ (현재는 V8이 한 명 예약이라 V9+) | 9.10 |
 
 ### 9.12 역할별 영향 요약 (구현 완료, 기록용)
 - **backend-dev**: 엔티티 `ExchangeRequest`(extra 제거, `DELETED`/`deletedAt`, `UNIQUE_TICKET` 상수 교체), `ExchangeWantRange`·`ExchangeWantSeat`(extra 추가), `ExchangeMatch`(스냅샷 4컬럼), 생성 컬럼 `live_flag`는 읽기 전용/비매핑. `WantSeatExpander`의 범위별 추가금·겹침 충돌 검사(422 `WANT_EXTRA_CONFLICT`), 요청 DTO(요청 단위 `extraType`/`extraAmount` 제거 -> `ranges[i].extraType/extraAmount`, 오류 키 `ranges[i].extraType`), `ExchangeRequestService` create/update/delete(9.9 #2~#8), 후보 SQL(9.8)과 `Row` 레코드, `ExchangeMatchQueryRepository`(9.9 #9), 매칭 생성 시 스냅샷 복사, 테스트(`ExchangeCandidateQueryTest`·`ExchangeRequestControllerSliceTest`·`ExchangeMatchQueryMysqlTest` 등 extra를 쓰는 backend 테스트), 후보 EXPLAIN 재측정과 README 갱신.
 - **frontend**: 희망 조건 폼(`ExchangeRequestFormPage`, `ExtraFields`)의 추가금 입력을 요청 하나에서 **범위 행마다**로 이동(유형 + POS/NEG일 때 금액), 겹침 422 오류 표시, 후보 목록(`CandidatesPage`)은 내/상대 적용 추가금 표시(필드 의미는 유지하되 범위 기준), 내 매칭 목록의 '(삭제)' 회색 표기, 요청 삭제 확인 문구(진행 중 채팅 자동 취소, 예약 중이면 불가), `types/exchange.ts` 변경.
-- **doc-writer**: 이 절 반영(요구사항 추가금 규칙을 범위 단위로, 요청 삭제 = 소프트 삭제, X–X·NEG–NEG 성립 확정, CLAUDE.md '확인 필요'에서 해당 항목 제거), 'V6 이후' 표기를 'V8 이후'로 정정.
+- **doc-writer**: 이 절 반영(요구사항 추가금 규칙을 범위 단위로, 요청 삭제 = 소프트 삭제, X–X·NEG–NEG 성립 확정, CLAUDE.md '확인 필요'에서 해당 항목 제거), 'V6 이후' 표기를 정정(현재는 'V9 이후').
 
 ### 9.13 사용자 확인 질문 (추천안 포함)
 1. **겹치는 범위의 추가금 충돌**: 추천 (a) 거부(유형·금액이 다르면 422, 완전히 같은 겹침만 허용). 대안 b(순서 우선, 숨은 규칙), c(여러 행 허용, 후보 SQL·PK 복잡).
@@ -832,6 +840,7 @@ DROP PROCEDURE v8_single_reserve;
 | 락 순서 | 티켓 id↑ -> 요청 id↑ -> 매칭 (변경 없음) | 3.4 |
 | 후보 SQL | 변경 없음(Q-1은 R1-1에서) | 사용자 지시 |
 | V 번호 | V8 = 이 변경. user_block·chat_message·exchange_history·`TicketStatus.EXCHANGED`(필요 시 ticket CHECK 확장)는 V9 이후 | 번호는 먼저 구현하는 쪽이 V8 |
+| 교환 완료 후 다른 채팅 (Q-15 확정, 미구현) | 기존 티켓의 교환 요청은 CLOSED, 다른 CHATTING 매칭은 자동 취소하지 않고 버튼 비활성+"이미 교환된 좌석이에요" 안내(본인·상대 모두) | 후속요구사항 문서 Q-15 |
 
 ### 10.10 구현 담당별 영향 요약 (사용자 확인 후)
 - **backend-dev**: `V8__exchange_match_single_reserve.sql`(10.4), `ExchangeMatch`(필드 `reservedById`·`reservedAt` 추가, `aReservedAt`/`bReservedAt` 매핑 제거, `reserve`/`unreserve`, `cancel`은 CHATTING 한정), `ExchangeMatchAction`(ACCEPT -> RESERVE, UNRESERVE 추가), `ExchangeMatchService`(reserve/unreserve 10.6, reject·cancel의 RESERVED 거부, 락 순서 불변), `ExchangeMatchController`(`/reserve`, `/unreserve`, `/accept` 제거), `ExchangeMatchQueryRepository`·`Row`·`ExchangeMatchResponse`(10.7), `ExchangeMatchRepository`의 예약 관련 쿼리, 테스트 전면 수정(`accept` 기반 시나리오), `MigrationV8MysqlTest`·MySQL 동시 reserve 경쟁(2인 동시, 서로 다른 매칭 같은 티켓) 테스트, README(매칭 API 표·전이표·L3·L7) 갱신.
@@ -844,4 +853,4 @@ DROP PROCEDURE v8_single_reserve;
 
 (그 외 — 백필 이른 시각 기준, 레거시 컬럼 유지, 남용 방지 없음, 반쪽 동의 CHATTING 행은 변환하지 않고 표시만 사라짐, 후보 SQL 불변 — 은 사용자 확정 또는 추천안으로 두었고 이의가 있으면 알려 주세요.)
 
-**사용자 확인 전 구현 금지**: 위 10절 승인 전에는 V8 마이그레이션 파일·엔티티·서비스·프론트 코드를 작성하지 않는다.
+~~사용자 확인 전 구현 금지: 위 10절 승인 전에는 V8 마이그레이션 파일·엔티티·서비스·프론트 코드를 작성하지 않는다.~~ (설계 시점 문구. 2026-10-10 사용자 확정으로 V8 구현 완료. 질문 1·2는 추천대로 확정: `ck_exchange_match_completed` 포함, `myAccepted`/`counterpartAccepted` 추가.)

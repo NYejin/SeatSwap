@@ -16,3 +16,6 @@ llm-wiki 스킬, researcher·wiki-curator 에이전트, `scripts/lint-wiki.mjs`�
 
 ## [2026-10-10] ingest | 실시간 채팅(STOMP) JWT 인증·인가 조사
 `wiki/research/stomp-jwt-auth.md`를 추가했다. 출처는 researcher 웹 조사 보고서이며 confidence는 medium이다.
+
+## [2026-10-11] lint | 낡은 서술 정리와 Q-15 확정 반영
+교환 완료 결정 페이지의 Q-15를 열린 질문에서 확정으로 고치고, 용어집·함정·STOMP 조사의 낡은 서술(EXCHANGED/CHECK 확장 시점, 채팅 미구현)을 코드 기준으로 정정했다.
