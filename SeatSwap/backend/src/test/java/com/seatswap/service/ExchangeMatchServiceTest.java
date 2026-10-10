@@ -1,5 +1,6 @@
 package com.seatswap.service;
 
+import com.seatswap.domain.ExchangeHistory;
 import com.seatswap.domain.ExchangeMatch;
 import com.seatswap.domain.ExchangeMatchAction;
 import com.seatswap.domain.ExchangeMatchStatus;
@@ -18,6 +19,7 @@ import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.repository.ExchangeCandidateRepository;
+import com.seatswap.repository.ExchangeHistoryRepository;
 import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
 import com.seatswap.repository.ExchangeTicketLockRepository;
@@ -69,6 +71,7 @@ class ExchangeMatchServiceTest {
     private TicketRepository ticketRepository;
     private ExchangeTicketLockRepository lockRepository;
     private ExchangeCandidateRepository candidateRepository;
+    private ExchangeHistoryRepository historyRepository;
     private ExchangeMatchQueryRepository queryRepository;
     /** 가장 최근에 저장·등록된 매칭(조인 조회 mock 이 이 상태로 응답 행을 만든다). */
     private ExchangeMatch tracked;
@@ -92,9 +95,10 @@ class ExchangeMatchServiceTest {
         ticketRepository = mock(TicketRepository.class);
         lockRepository = mock(ExchangeTicketLockRepository.class);
         candidateRepository = mock(ExchangeCandidateRepository.class);
+        historyRepository = mock(ExchangeHistoryRepository.class);
         queryRepository = mock(ExchangeMatchQueryRepository.class);
         service = new ExchangeMatchService(matchRepository, requestRepository, ticketRepository, lockRepository,
-                candidateRepository, queryRepository, PerformanceFixtures.timePolicy(),
+                candidateRepository, historyRepository, queryRepository, PerformanceFixtures.timePolicy(),
                 PerformanceFixtures.noopTransactionManager());
 
         myTicket = ticket(MY_TICKET, me, openSession);
@@ -131,7 +135,7 @@ class ExchangeMatchServiceTest {
                 m.getRequestAId(), m.getRequestBId(), m.getTicketAId(), m.getTicketBId(),
                 m.getReservedById(), m.getReservedAt(), m.getACompletedAt() != null, m.getBCompletedAt() != null, m.getCanceledById(), m.getCanceledAt(),
                 m.getCreatedAt(), m.getUpdatedAt(), mine, mine, m.getAExtraType().name(), m.getAExtraAmount(),
-                m.getBExtraType().name(), m.getBExtraAmount(), false, false, "나", "상대");
+                m.getBExtraType().name(), m.getBExtraAmount(), false, false, false, false, false, false, "나", "상대");
     }
 
     private ExchangeMatchResponse toResponse(ExchangeMatch m, long userId) {
@@ -649,5 +653,228 @@ class ExchangeMatchServiceTest {
         existingMatch(ExchangeMatchStatus.COMPLETED);
         assertThatThrownBy(() -> service.cancel(1L, MATCH)).hasMessage("이미 교환이 완료된 매칭입니다.");
         assertThatThrownBy(() -> service.unreserve(1L, MATCH)).hasMessage("이미 교환이 완료된 매칭입니다.");
+    }
+
+    // ------------------------------------------------------------------ 교환 수락·교환 완료 (V9)
+
+    private static final long NEW_TICKET_BASE = 1000L;
+
+    /** 서로 다른 좌석(내 A-3-5 / 상대 B-7-9)의 티켓으로 바꾸고 완료 경로의 저장소 mock 을 준비한다. */
+    private void prepareCompletion() {
+        theirTicket = ticket(THEIR_TICKET, other, openSession);
+        ReflectionTestUtils.setField(theirTicket, "zoneLabel", "B");
+        ReflectionTestUtils.setField(theirTicket, "zoneKey", "B");
+        ReflectionTestUtils.setField(theirTicket, "rowLabel", "7");
+        ReflectionTestUtils.setField(theirTicket, "rowKey", "7");
+        ReflectionTestUtils.setField(theirTicket, "colLabel", "9");
+        ReflectionTestUtils.setField(theirTicket, "colKey", "9");
+        when(ticketRepository.findByIdForUpdate(THEIR_TICKET)).thenReturn(Optional.of(theirTicket));
+        when(ticketRepository.findWithSessionById(MY_TICKET)).thenReturn(Optional.of(myTicket));
+        when(ticketRepository.findWithSessionById(THEIR_TICKET)).thenReturn(Optional.of(theirTicket));
+        when(lockRepository.countByMatchId(MATCH)).thenReturn(2L);
+        when(lockRepository.deleteByMatchId(MATCH)).thenReturn(2);
+        java.util.concurrent.atomic.AtomicLong ids = new java.util.concurrent.atomic.AtomicLong(NEW_TICKET_BASE);
+        when(ticketRepository.saveAndFlush(any(Ticket.class))).thenAnswer(inv -> {
+            Ticket t = inv.getArgument(0);
+            ReflectionTestUtils.setField(t, "id", ids.incrementAndGet());
+            return t;
+        });
+    }
+
+    @Test
+    void 첫_수락은_내_수락_시각만_기록하고_RESERVED를_유지한다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        prepareCompletion();
+
+        ExchangeMatchResponse response = service.complete(1L, MATCH);
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
+        assertThat(m.getACompletedAt()).isEqualTo(NOW);
+        assertThat(m.getBCompletedAt()).isNull();
+        assertThat(m.getReservedById()).isEqualTo(1L);
+        assertThat(response.myAccepted()).isTrue();
+        assertThat(response.counterpartAccepted()).isFalse();
+        verify(matchRepository).saveAndFlush(m);
+        verify(ticketRepository, never()).flush();
+        verify(ticketRepository, never()).saveAndFlush(any(Ticket.class));
+        verify(historyRepository, never()).save(any());
+        verify(requestRepository, never()).closeByTicketId(anyLong(), any());
+        verify(lockRepository, never()).deleteByMatchId(anyLong());
+        assertThat(myTicket.getStatus()).isEqualTo(TicketStatus.ACTIVE);
+    }
+
+    @Test
+    void 내가_이미_수락했으면_멱등_200이고_아무것도_쓰지_않는다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        ReflectionTestUtils.setField(m, "aCompletedAt", NOW.minusMinutes(5));
+        prepareCompletion();
+
+        ExchangeMatchResponse response = service.complete(1L, MATCH);
+
+        assertThat(response.status()).isEqualTo("RESERVED");
+        assertThat(response.myAccepted()).isTrue();
+        assertThat(m.getACompletedAt()).as("수락 시각이 덮어써지지 않는다").isEqualTo(NOW.minusMinutes(5));
+        verify(matchRepository, never()).saveAndFlush(any());
+        verify(ticketRepository, never()).flush();
+        verify(historyRepository, never()).save(any());
+    }
+
+    @Test
+    void 두번째_수락이면_한_트랜잭션에서_티켓_EXCHANGED_flush_새티켓_이력_요청닫기_잠금해제_COMPLETED_순서로_처리한다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        ReflectionTestUtils.setField(m, "bCompletedAt", NOW.minusMinutes(5));
+        prepareCompletion();
+
+        ExchangeMatchResponse response = service.complete(1L, MATCH);
+
+        // 잠금 순서: 티켓 id↑ -> 요청 id↑ -> 매칭
+        InOrder order = inOrder(ticketRepository, requestRepository, matchRepository, historyRepository, lockRepository);
+        order.verify(ticketRepository).findByIdForUpdate(THEIR_TICKET);
+        order.verify(ticketRepository).findByIdForUpdate(MY_TICKET);
+        order.verify(requestRepository).findByIdForUpdate(THEIR_REQ);
+        order.verify(requestRepository).findByIdForUpdate(MY_REQ);
+        order.verify(matchRepository).findByIdForUpdate(MATCH);
+        // 기존 티켓 EXCHANGED 를 flush 한 뒤에야 새 티켓을 INSERT 한다(uk_ticket_active_seat)
+        order.verify(ticketRepository).flush();
+        order.verify(ticketRepository, org.mockito.Mockito.times(2)).saveAndFlush(any(Ticket.class));
+        order.verify(historyRepository, org.mockito.Mockito.times(2)).save(any(ExchangeHistory.class));
+        order.verify(historyRepository).flush();
+        order.verify(requestRepository).closeByTicketId(eq(MY_TICKET), any());
+        order.verify(requestRepository).closeByTicketId(eq(THEIR_TICKET), any());
+        order.verify(lockRepository).deleteByMatchId(MATCH);
+        order.verify(matchRepository).saveAndFlush(m);
+
+        assertThat(myTicket.getStatus()).isEqualTo(TicketStatus.EXCHANGED);
+        assertThat(theirTicket.getStatus()).isEqualTo(TicketStatus.EXCHANGED);
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.COMPLETED);
+        assertThat(m.getReservedById()).isNull();
+        assertThat(m.getReservedAt()).isNull();
+        assertThat(m.getACompletedAt()).isEqualTo(NOW);
+        assertThat(m.getBCompletedAt()).isEqualTo(NOW.minusMinutes(5));
+        assertThat(m.getTicketAId()).as("매칭 행은 교환 전 티켓을 계속 가리킨다").isEqualTo(MY_TICKET);
+
+        // 새 티켓: 소유자는 그대로, 좌석은 상대의 기존 티켓 값
+        org.mockito.ArgumentCaptor<Ticket> newTickets = org.mockito.ArgumentCaptor.forClass(Ticket.class);
+        verify(ticketRepository, org.mockito.Mockito.times(2)).saveAndFlush(newTickets.capture());
+        Ticket mineNew = newTickets.getAllValues().get(0);
+        Ticket theirNew = newTickets.getAllValues().get(1);
+        assertThat(mineNew.getUser().getId()).isEqualTo(1L);
+        assertThat(mineNew.getZoneKey()).isEqualTo("B");
+        assertThat(mineNew.getRowLabel()).isEqualTo("7");
+        assertThat(mineNew.getColKey()).isEqualTo("9");
+        assertThat(mineNew.isActive()).isTrue();
+        assertThat(theirNew.getUser().getId()).isEqualTo(2L);
+        assertThat(theirNew.getZoneKey()).isEqualTo("A");
+        assertThat(theirNew.getRowLabel()).isEqualTo("3");
+        assertThat(theirNew.getColKey()).isEqualTo("5");
+
+        // 이력 2행: (기존 자리) -> (바꾼 자리) 스냅샷과 old/new_ticket_id
+        org.mockito.ArgumentCaptor<ExchangeHistory> histories = org.mockito.ArgumentCaptor.forClass(ExchangeHistory.class);
+        verify(historyRepository, org.mockito.Mockito.times(2)).save(histories.capture());
+        ExchangeHistory mine = histories.getAllValues().stream().filter(h -> h.getUserId() == 1L).findFirst().orElseThrow();
+        assertThat(mine.getMatchId()).isEqualTo(MATCH);
+        assertThat(mine.getOldTicketId()).isEqualTo(MY_TICKET);
+        assertThat(mine.getNewTicketId()).isEqualTo(mineNew.getId());
+        assertThat(mine.getPerformanceId()).isEqualTo(10L);
+        assertThat(mine.getPerformanceTitle()).isEqualTo("공연 10");
+        assertThat(mine.getVenueName()).isEqualTo("KSPO DOME");
+        assertThat(mine.getOldStartsAt()).isEqualTo(openSession.getStartsAt());
+        assertThat(mine.getOldZoneLabel() + mine.getOldRowLabel() + mine.getOldColLabel()).isEqualTo("A35");
+        assertThat(mine.getNewZoneLabel() + mine.getNewRowLabel() + mine.getNewColLabel()).isEqualTo("B79");
+        ExchangeHistory theirs = histories.getAllValues().stream().filter(h -> h.getUserId() == 2L).findFirst().orElseThrow();
+        assertThat(theirs.getOldTicketId()).isEqualTo(THEIR_TICKET);
+        assertThat(theirs.getNewTicketId()).isEqualTo(theirNew.getId());
+        assertThat(theirs.getOldZoneLabel() + theirs.getOldRowLabel() + theirs.getOldColLabel()).isEqualTo("B79");
+        assertThat(theirs.getNewZoneLabel() + theirs.getNewRowLabel() + theirs.getNewColLabel()).isEqualTo("A35");
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(response.myAccepted()).isTrue();
+        assertThat(response.counterpartAccepted()).isTrue();
+        // 다른 CHATTING 매칭은 취소하지 않는다(Q-15)
+        verify(matchRepository, never()).cancelChattingByTicketA(anyLong(), any());
+        verify(matchRepository, never()).cancelChattingByTicketB(anyLong(), any());
+    }
+
+    @Test
+    void 상대가_먼저_수락하고_b측이_두번째로_눌러도_완료된다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        ReflectionTestUtils.setField(m, "aCompletedAt", NOW.minusMinutes(5));
+        prepareCompletion();
+
+        ExchangeMatchResponse response = service.complete(2L, MATCH);
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.COMPLETED);
+        assertThat(m.getBCompletedAt()).isEqualTo(NOW);
+        assertThat(response.status()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void 예약_전_CHATTING에서는_409이고_예약을_먼저_하라는_문구다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
+        prepareCompletion();
+
+        assertThatThrownBy(() -> service.complete(1L, MATCH)).isInstanceOfSatisfying(ConflictException.class, e -> {
+            assertThat(e.getMessage()).isEqualTo("예약한 뒤에 교환 수락할 수 있어요.");
+            assertThat(e.getDetails()).containsEntry("code", "MATCH_STATE_CONFLICT")
+                    .containsEntry("status", "CHATTING").containsEntry("action", "COMPLETE");
+        });
+        assertThat(m.getACompletedAt()).isNull();
+        verify(matchRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void CANCELED_COMPLETED_매칭의_교환_수락은_409이고_비참여자는_404다() {
+        existingMatch(ExchangeMatchStatus.CANCELED);
+        assertThatThrownBy(() -> service.complete(1L, MATCH)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "MATCH_STATE_CONFLICT").containsEntry("status", "CANCELED"));
+        existingMatch(ExchangeMatchStatus.COMPLETED);
+        assertThatThrownBy(() -> service.complete(2L, MATCH)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "MATCH_STATE_CONFLICT").containsEntry("status", "COMPLETED"));
+        existingMatch(ExchangeMatchStatus.RESERVED);
+        assertThatThrownBy(() -> service.complete(99L, MATCH)).isInstanceOf(NotFoundException.class);
+        when(matchRepository.findById(404L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.complete(1L, 404L)).isInstanceOf(NotFoundException.class);
+        verify(matchRepository, never()).saveAndFlush(any());
+        verify(ticketRepository, never()).flush();
+    }
+
+    @Test
+    void 불변식이_깨진_RESERVED는_IllegalStateException으로_되돌리고_아무것도_쓰지_않는다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        ReflectionTestUtils.setField(m, "bCompletedAt", NOW.minusMinutes(5));
+        prepareCompletion();
+
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.INACTIVE);
+        assertThatThrownBy(() -> service.complete(1L, MATCH)).isInstanceOf(IllegalStateException.class);
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.ACTIVE);
+
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.CLOSED);
+        assertThatThrownBy(() -> service.complete(1L, MATCH)).isInstanceOf(IllegalStateException.class);
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.OPEN);
+
+        when(lockRepository.countByMatchId(MATCH)).thenReturn(1L);
+        assertThatThrownBy(() -> service.complete(1L, MATCH)).isInstanceOf(IllegalStateException.class);
+
+        verify(matchRepository, never()).saveAndFlush(any());
+        verify(ticketRepository, never()).flush();
+        assertThat(m.getACompletedAt()).isNull();
+    }
+
+    @Test
+    void 교환_완료로_EXCHANGED가_된_티켓이_걸린_매칭은_reserve가_TICKET_EXCHANGED_409다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
+        ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.EXCHANGED);
+
+        assertThatThrownBy(() -> service.reserve(1L, MATCH)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_EXCHANGED"));
+        ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.ACTIVE);
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.EXCHANGED);
+        assertThatThrownBy(() -> service.reserve(2L, MATCH)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_EXCHANGED"));
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
+        verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
+        // 거절·채팅 종료는 그대로 가능하다
+        assertThat(service.cancel(1L, MATCH).status()).isEqualTo("CANCELED");
     }
 }

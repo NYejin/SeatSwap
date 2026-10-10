@@ -17,10 +17,10 @@ import java.time.LocalDateTime;
  * request_low_id / request_high_id / open_flag 는 DB 생성 컬럼이라 매핑하지 않는다
  * (uk_exchange_match_open_pair 가 '같은 요청 쌍의 열린 매칭 1개'를 보장한다).
  *
- * 상태: CHATTING(채팅, 예약 전) -> RESERVED(한 명이 예약, 두 티켓 잠금) -> COMPLETED(양쪽 교환 수락, 구현 예정), 예약한 사람이든 상대든 누구나
+ * 상태: CHATTING(채팅, 예약 전) -> RESERVED(한 명이 예약, 두 티켓 잠금) -> COMPLETED(양쪽 교환 수락), 예약한 사람이든 상대든 누구나
  * RESERVED -> CHATTING 으로 되돌릴 수 있고(unreserve), CHATTING 에서만 취소·거절(CANCELED)된다.
  * 상태 전이는 {@link #isAllowed(ExchangeMatchStatus, ExchangeMatchAction)} 한 곳에서 정의한다.
- * COMPLETED 시점(8차 답변, 2026-10-09)에는 한 트랜잭션에서 기존 두 티켓을 EXCHANGED 로 바꾸고 각자 새 자리 티켓을 만든다는 규칙이 있다(구현 예정, 이번 범위 밖, 서비스 Javadoc 참고).
+ * COMPLETED 시점에는 한 트랜잭션에서 기존 두 티켓을 EXCHANGED 로 바꾸고 각자 새 자리 티켓을 만든다(서비스 Javadoc 참고).
  */
 @Entity
 @Table(name = "exchange_match")
@@ -133,7 +133,7 @@ public class ExchangeMatch {
      * <pre>
      *            PROPOSE  RESERVE   UNRESERVE  REJECT(b측)  CANCEL  COMPLETE
      * CHATTING   불허     허용       멱등 200   허용         허용    불허(예약 전)
-     * RESERVED   불허     멱등 200   허용       불허         불허    허용(미구현)
+     * RESERVED   불허     멱등 200   허용       불허         불허    허용
      * COMPLETED  허용     불허       불허       불허         불허    불허
      * CANCELED   허용     불허       불허       불허         불허    불허
      * </pre>
@@ -194,7 +194,44 @@ public class ExchangeMatch {
         canceledAt = now;
     }
 
-    /** 호출자 쪽 교환 수락 표시(a/b_completed_at). 교환 수락 기능은 이번 범위 밖이라 현재는 항상 false 다. */
+    /**
+     * 교환 수락 표시: 호출자 쪽 a/b_completed_at 을 기록한다(RESERVED 에서만). 이미 수락했으면 아무것도 바꾸지 않는다(멱등).
+     * 상태는 RESERVED 그대로다(ck_exchange_match_completed 는 COMPLETED 에서만 둘 다 NOT NULL 을 요구한다).
+     */
+    public void markAccepted(Side side, LocalDateTime now) {
+        if (status != ExchangeMatchStatus.RESERVED) {
+            throw new IllegalStateException("RESERVED 매칭만 교환 수락할 수 있습니다: " + status);
+        }
+        if (side == null) {
+            throw new IllegalArgumentException("매칭 참여자만 교환 수락할 수 있습니다.");
+        }
+        if (hasAccepted(side)) {
+            return;
+        }
+        if (side == Side.A) {
+            aCompletedAt = now;
+        } else {
+            bCompletedAt = now;
+        }
+    }
+
+    /**
+     * 양쪽이 모두 수락한 순간 RESERVED -> COMPLETED. 같은 문장에서 reserved_by_id·reserved_at 을 NULL 로 만든다(ck_exchange_match_reserved).
+     * 매칭 행의 티켓 id 는 교환 전 티켓 그대로다. 티켓·이력·요청·잠금 처리는 서비스가 같은 트랜잭션에서 한다.
+     */
+    public void complete(LocalDateTime now) {
+        if (status != ExchangeMatchStatus.RESERVED) {
+            throw new IllegalStateException("RESERVED 매칭만 완료할 수 있습니다: " + status);
+        }
+        if (aCompletedAt == null || bCompletedAt == null) {
+            throw new IllegalStateException("양쪽이 모두 교환 수락해야 완료할 수 있습니다.");
+        }
+        status = ExchangeMatchStatus.COMPLETED;
+        reservedById = null;
+        reservedAt = null;
+    }
+
+    /** 호출자 쪽 교환 수락 표시(a/b_completed_at)가 있는가. */
     public boolean hasAccepted(Side side) {
         return (side == Side.A ? aCompletedAt : bCompletedAt) != null;
     }

@@ -23,7 +23,7 @@ import java.util.List;
 
 /**
  * 매칭 생성·예약·예약 취소·거절·취소 API (FR-04 교환 흐름: 후보 선택 -> 채팅 -> 예약). 모두 로그인 필요.
- * 상태 전이 표와 오류 코드는 {@link ExchangeMatchService} Javadoc 참고. 교환 완료(COMPLETED)·채팅·이력은 후속이다.
+ * 상태 전이 표와 오류 코드는 {@link ExchangeMatchService} Javadoc 참고. 교환 수락(complete)으로 COMPLETED 가 되며, 채팅·이력 조회 API 는 후속이다.
  */
 @RestController
 @RequestMapping("/api/exchange")
@@ -71,6 +71,15 @@ public class ExchangeMatchController {
     @PostMapping("/matches/{id}/unreserve")
     public ExchangeMatchResponse unreserve(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
         return matchService.unreserve(principal.userId(), id);
+    }
+
+    /**
+     * 교환 수락 -> 200. RESERVED 에서 참여자가 누른다(본문 없음). 상대가 아직이면 내 수락만 기록하고, 상대가 이미 수락했으면 같은 트랜잭션에서 COMPLETED
+     * (기존 티켓 EXCHANGED + 새 티켓 + 교환 이력). 내가 이미 수락했으면 멱등 200. CHATTING 은 409(예약 먼저), CANCELED·COMPLETED 도 409, 비참여자 404.
+     */
+    @PostMapping("/matches/{id}/complete")
+    public ExchangeMatchResponse complete(@PathVariable Long id, @AuthenticationPrincipal AuthUserPrincipal principal) {
+        return matchService.complete(principal.userId(), id);
     }
 
     /** 제안받은 쪽의 거절 -> 200 + CANCELED. 제안한 쪽은 403(취소를 사용). RESERVED 에서는 409(먼저 예약 취소). */

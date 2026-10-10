@@ -49,6 +49,8 @@ public class TicketService {
     static final String SESSION_CLOSED_MESSAGE = "회차 당일이 지나 티켓을 등록할 수 없습니다.";
     static final String TICKET_NOT_FOUND_MESSAGE = "티켓을 찾을 수 없습니다.";
     static final String TICKET_RESERVED_CODE = "TICKET_RESERVED";
+    static final String TICKET_EXCHANGED_CODE = "TICKET_EXCHANGED";
+    static final String TICKET_EXCHANGED_MESSAGE = "교환이 완료된 티켓은 내릴 수 없습니다. 교환으로 받은 새 티켓을 이용해주세요.";
     static final String TICKET_RESERVED_MESSAGE = "교환이 예약된 티켓은 내릴 수 없습니다. 먼저 예약(매칭)을 취소해주세요.";
 
     private final TicketRepository ticketRepository;
@@ -160,7 +162,7 @@ public class TicketService {
      * 이미 INACTIVE면 그대로 성공(멱등). 내릴 수 없는 상태(예약 잠금 등) 검사는 ensureCanDeactivate 에 모은다.
      * 티켓 행을 FOR UPDATE 로 잠가(트랜잭션의 첫 쿼리) 같은 티켓의 교환 요청 등록과 직렬화하고,
      * 그 티켓의 교환 요청은 CLOSED 로 바꾸고(설계 1.2: CLOSED = 티켓 내림), 그 티켓이 참여한 CHATTING 매칭은
-     * 시스템 취소(canceled_by NULL)한다. 예약 잠금이 걸린 티켓(RESERVED)은 409 TICKET_RESERVED 로 내릴 수 없다.
+     * 시스템 취소(canceled_by NULL)한다. 예약 잠금이 걸린 티켓(RESERVED)은 409 TICKET_RESERVED, 교환 완료로 EXCHANGED 가 된 티켓은 409 TICKET_EXCHANGED 로 내릴 수 없다.
      * 잠금 순서는 티켓 -> 요청 -> 매칭이다.
      */
     @Transactional
@@ -168,6 +170,10 @@ public class TicketService {
         Ticket ticket = ticketRepository.findByIdForUpdate(ticketId)
                 .filter(t -> t.isOwnedBy(userId))
                 .orElseThrow(() -> new NotFoundException(TICKET_NOT_FOUND_MESSAGE));
+        if (ticket.isExchanged()) {
+            // 교환 완료로 닫힌 기존 티켓: 내릴 수 없다(INACTIVE 로 되돌리면 이력과 어긋난다). INACTIVE 는 아래처럼 멱등 204.
+            throw new ConflictException(TICKET_EXCHANGED_MESSAGE, Map.of("code", TICKET_EXCHANGED_CODE));
+        }
         if (!ticket.isActive()) {
             return;
         }

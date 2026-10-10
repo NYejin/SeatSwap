@@ -75,7 +75,7 @@ class ExchangeMatchControllerSliceTest {
                 new ExchangeMatchResponse.Seat("A구역", "3", "5", 7L, LocalDateTime.of(2026, 11, 1, 19, 0)),
                 800L, 600L,
                 new ExchangeMatchResponse.Seat("B구역", "4", "6", 8L, LocalDateTime.of(2026, 11, 2, 19, 0)),
-                "상대", "X", null, "POS", 30000, false, true,
+                "상대", "X", null, "POS", 30000, false, true, false, true, false, true,
                 "ME", LocalDateTime.of(2026, 10, 8, 12, 0, 5), false, false, null, null,
                 LocalDateTime.of(2026, 10, 8, 11, 0, 0), LocalDateTime.of(2026, 10, 8, 12, 0, 5));
     }
@@ -90,7 +90,7 @@ class ExchangeMatchControllerSliceTest {
              "counterpartRequestId":800,"counterpartTicketId":600,
              "counterpartSeat":{"zone":"B구역","row":"4","col":"6","sessionId":8,"startsAt":"2026-11-02T19:00"},
              "counterpartNickname":"상대","myExtraType":"X","myExtraAmount":null,
-             "counterpartExtraType":"POS","counterpartExtraAmount":30000,"myRequestDeleted":false,"counterpartRequestDeleted":true,
+             "counterpartExtraType":"POS","counterpartExtraAmount":30000,"myRequestDeleted":false,"counterpartRequestDeleted":true,"myTicketExchanged":false,"counterpartTicketExchanged":true,"myTicketReservedElsewhere":false,"counterpartTicketReservedElsewhere":true,
              "reservedBy":"ME","reservedAt":"2026-10-08T12:00:05","myAccepted":false,"counterpartAccepted":false,"canceledBy":null,"canceledAt":null,
              "createdAt":"2026-10-08T11:00:00","updatedAt":"2026-10-08T12:00:05"}
             """;
@@ -262,5 +262,28 @@ class ExchangeMatchControllerSliceTest {
         mockMvc.perform(auth(get("/api/exchange/matches/51"))).andExpect(status().isNotFound())
                 .andExpect(content().json("{\"message\":\"매칭을 찾을 수 없습니다.\"}", true));
         mockMvc.perform(auth(get("/api/exchange/matches/abc"))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void completeReturns200WithMatchAndRequiresLogin() throws Exception {
+        mockMvc.perform(post("/api/exchange/matches/50/complete")).andExpect(status().isUnauthorized());
+        when(matchService.complete(1L, 50L)).thenReturn(response("COMPLETED"));
+
+        mockMvc.perform(auth(post("/api/exchange/matches/50/complete"))).andExpect(status().isOk())
+                .andExpect(content().json("{\"id\":50,\"status\":\"COMPLETED\",\"myTicketExchanged\":false,"
+                        + "\"counterpartTicketExchanged\":true,\"myTicketReservedElsewhere\":false,\"counterpartTicketReservedElsewhere\":true}"));
+    }
+
+    @Test
+    void completeMapsErrorCodes() throws Exception {
+        when(matchService.complete(1L, 71L)).thenThrow(new NotFoundException("없음"));
+        when(matchService.complete(1L, 72L)).thenThrow(new ConflictException("예약한 뒤에 교환 수락할 수 있어요.",
+                Map.of("code", "MATCH_STATE_CONFLICT", "status", "CHATTING", "action", "COMPLETE")));
+
+        mockMvc.perform(auth(post("/api/exchange/matches/71/complete"))).andExpect(status().isNotFound());
+        mockMvc.perform(auth(post("/api/exchange/matches/72/complete"))).andExpect(status().isConflict())
+                .andExpect(content().json("""
+                        {"message":"예약한 뒤에 교환 수락할 수 있어요.","code":"MATCH_STATE_CONFLICT","status":"CHATTING","action":"COMPLETE"}
+                        """, true));
     }
 }

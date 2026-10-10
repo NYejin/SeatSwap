@@ -10,7 +10,8 @@ const CODE_MESSAGES: Record<string, string> = {
   NOT_A_CANDIDATE: "조건이 바뀌어 더 이상 후보가 아니에요. 후보 목록을 새로 확인해 주세요.",
   TICKET_LOCKED: "내 티켓이 다른 상대와 예약되어 있어요. 그 예약을 취소하기 전에는 새로 제안할 수 없어요.",
   TICKET_ALREADY_RESERVED: "이미 다른 교환으로 예약된 티켓이에요. 그 예약이 취소되면 다시 예약할 수 있어요.",
-  // MATCH_STATE_CONFLICT는 서버 message를 그대로 쓴다 (예약 중 채팅 종료 등 상황별 문구)
+  TICKET_EXCHANGED: "이미 교환된 좌석이에요. 이 좌석으로는 예약하거나 내릴 수 없어요.",
+  // MATCH_STATE_CONFLICT는 서버 message를 그대로 쓴다 (예약 중 채팅 종료, 예약 전 교환 수락 등 상황별 문구)
   ACTIVE_MATCH_EXISTS: "예약된 교환이 있어 변경할 수 없어요. 먼저 예약을 취소해주세요.",
   TICKET_NOT_ACTIVE: "내린 티켓이거나 닫힌 교환 요청이에요.",
   SESSION_CLOSED: "회차 당일이 지나 마감된 티켓이에요.",
