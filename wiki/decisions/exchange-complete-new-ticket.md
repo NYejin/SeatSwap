@@ -3,9 +3,9 @@ title: 교환 완료 시 티켓 처리: 안 2의 근거
 type: decision
 tags: [교환, 티켓, 유니크키, 8차답변]
 sources: [산출물/04_요구사항정의서/후속요구사항_제안알림_교환됨_공연정보입력.md, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/README.md, CLAUDE.md]
-updated: 2026-10-10
+updated: 2026-10-11
 confidence: high
-status: draft
+status: stable
 ---
 
 # 교환 완료 시 티켓 처리: 안 2의 근거
@@ -48,8 +48,11 @@ INSERT를 먼저 하면 상대의 기존 티켓이 아직 같은 좌석을 점�
 
 확정이지만 미구현이다. `feature/exchange-complete`에서 구현할 예정이다. 현재 `TicketStatus`에는 `EXCHANGED`가 없고(`ACTIVE`, `INACTIVE`) 서비스·엔티티 Javadoc에 "구현 예정"으로만 적혀 있다. 대체된 이전 서술은 설계 문서(`산출물/08_ERD/exchange-schema-design.md`)의 3.3절 취소선 부분, 표의 6행·확정 g 행에 취소선과 대체 표기로 남아 있다.
 
-## 남은 열린 질문: Q-15
+## 확정: Q-15 (교환 완료 시 기존 티켓에 걸린 요청과 채팅)
 
-질문은 "교환 완료 시 기존 티켓에 걸린 요청을 닫고 그 요청의 다른 진행 중 채팅을 자동 취소할까요?"이다. 문서에는 권장 기본값 "그렇게 한다"(요구사항 문서 §3.4 5번, §7 Q-15)로만 적혀 있고 답변 칸은 비어 있다.
+확정 내용은 [CLAUDE.md](../../CLAUDE.md)의 "교환 수락·교환 완료" 항목이 기준이다. 근거만 적는다.
 
-사용자 답변(전달받은 내용, 확인 필요): 다른 채팅을 자동 취소하지 않고, 버튼을 비활성화하며 '이미 교환된 좌석이에요'를 표시한다. 이 답변은 아직 문서에 반영되지 않았다. 위 문서들은 여전히 자동 취소(기본안)로 적혀 있으므로, 반영 전까지 두 서술이 충돌한다. 문서가 갱신되면 이 절도 고친다.
+- 교환 완료 후 기존 두 티켓은 `EXCHANGED`가 되어 더 이상 내 자리가 아니므로, 그 티켓의 교환 요청은 같은 트랜잭션에서 `CLOSED`로 닫는다.
+- 그 티켓에 걸린 다른 `CHATTING` 매칭은 자동 취소하지 않는다. 카드의 예약·교환 수락·교환 완료 버튼을 비활성화하고 "이미 교환된 좌석이에요"를 양쪽에 보여주며, 판단은 티켓 상태 `EXCHANGED`로 한다.
+- 이전에는 요구사항 문서 §3.4 5번, §7 Q-15의 권장 기본값(다른 채팅까지 자동 취소)이 열린 질문으로 남아 있었고, 사용자 답변으로 자동 취소가 폐기됐다. 요청 CLOSED는 기본안 그대로 확정됐다. 문서 반영 상태는 [HISTORY.md](../../HISTORY.md)의 2026-10-10, 2026-10-11 항목 참고.
+- 요청 CLOSED 쿼리는 `status = OPEN` 조건을 유지해야 한다 ([함정 3절](../gotchas/lock-order-and-index-pitfalls.md)).

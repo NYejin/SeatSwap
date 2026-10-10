@@ -3,7 +3,7 @@ title: 잠금 순서와 인덱스·유니크 키 함정
 type: gotcha
 tags: [mysql, 교착, 인덱스, flyway, 동시성]
 sources: [산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/db/migration/V8__exchange_match_single_reserve.sql, CLAUDE.md]
-updated: 2026-10-10
+updated: 2026-10-11
 confidence: high
 status: draft
 ---
@@ -39,7 +39,7 @@ status: draft
 
 함정:
 - 매칭 쌍 유니크는 a, b 순서가 달라도 같은 쌍으로 잡도록 `LEAST`/`GREATEST` 생성 컬럼을 쓴다.
-- 티켓 상태에 새 값(`EXCHANGED`)을 추가하면 `active_flag`는 NULL이 되어 자동으로 슬롯을 비운다. 다만 `ck_ticket_status`는 확장해야 한다.
+- 티켓 상태에 새 값(`EXCHANGED`)을 추가하면 `active_flag`는 NULL이 되어 자동으로 슬롯을 비운다. 다만 `ck_ticket_status`(V3, `ACTIVE`·`INACTIVE`만 허용)는 확장해야 하며, 확장은 V9 이후 새 마이그레이션에서 한다(아직 없음).
 - 한 티켓이 어떤 매칭에서는 a측, 다른 매칭에서는 b측일 수 있어 매칭 테이블의 유니크 하나로는 티켓당 예약 1개를 못 막는다. 그래서 `exchange_ticket_lock`의 PK(`ticket_id`)를 쓴다 (설계 3.2절).
 - 생성 컬럼은 UPDATE 대상이 아니다. 요청 CLOSED 처리 쿼리는 `status = OPEN` 조건을 유지해야 한다. 없으면 DELETED 요청을 되살려 `live_flag`가 1이 되고 유일 키를 위반할 수 있다 (`ExchangeRequestRepository` 주석).
 - RESERVED를 벗어나는 모든 UPDATE는 같은 문장에서 `reserved_by_id`·`reserved_at`을 NULL로 만들어야 `ck_exchange_match_reserved`를 통과한다 (V8 주석).
