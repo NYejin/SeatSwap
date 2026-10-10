@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
  * request_low_id / request_high_id / open_flag 는 DB 생성 컬럼이라 매핑하지 않는다
  * (uk_exchange_match_open_pair 가 '같은 요청 쌍의 열린 매칭 1개'를 보장한다).
  *
+ * 상태: CHATTING(채팅, 예약 전) -> RESERVED(한 명이 예약, 두 티켓 잠금) -> COMPLETED(양쪽 교환 수락, 구현 예정), 예약한 사람이든 상대든 누구나
+ * RESERVED -> CHATTING 으로 되돌릴 수 있고(unreserve), CHATTING 에서만 취소·거절(CANCELED)된다.
  * 상태 전이는 {@link #isAllowed(ExchangeMatchStatus, ExchangeMatchAction)} 한 곳에서 정의한다.
  * COMPLETED 시점(8차 답변, 2026-10-09)에는 한 트랜잭션에서 기존 두 티켓을 EXCHANGED 로 바꾸고 각자 새 자리 티켓을 만든다는 규칙이 있다(구현 예정, 이번 범위 밖, 서비스 Javadoc 참고).
  */
@@ -76,11 +78,14 @@ public class ExchangeMatch {
     @Column(name = "b_extra_amount", updatable = false)
     private Integer bExtraAmount;
 
-    @Column(name = "a_reserved_at")
-    private LocalDateTime aReservedAt;
+    // a_reserved_at / b_reserved_at 는 V8 부터 미사용(레거시) 컬럼이라 매핑하지 않는다.
 
-    @Column(name = "b_reserved_at")
-    private LocalDateTime bReservedAt;
+    /** 예약한 사람(a 또는 b 측 사용자). RESERVED 일 때만 값이 있다(ck_exchange_match_reserved). */
+    @Column(name = "reserved_by_id")
+    private Long reservedById;
+
+    @Column(name = "reserved_at")
+    private LocalDateTime reservedAt;
 
     @Column(name = "a_completed_at")
     private LocalDateTime aCompletedAt;
@@ -122,20 +127,24 @@ public class ExchangeMatch {
     }
 
     /**
-     * 허용 상태 전이 표. PROPOSE 의 상태는 '같은 요청 쌍의 가장 최근 매칭' 상태이며 열린 매칭(CHATTING·RESERVED)이 있으면
-     * 새 매칭을 만들 수 없다(취소·완료된 뒤에는 다시 가능).
+     * 허용 상태 전이 표 (8·9차 답변). PROPOSE 의 상태는 '같은 요청 쌍의 가장 최근 매칭' 상태이며 열린 매칭(CHATTING·RESERVED)이 있으면
+     * 새 매칭을 만들 수 없다(취소·완료된 뒤에는 다시 가능). 멱등 처리(RESERVED 에서 reserve, CHATTING 에서 unreserve)는 서비스가 상태를 보고
+     * 먼저 걸러내므로 표에서는 '멱등'으로 적고 {@code isAllowed} 는 열린 상태에서 true 를 돌려준다.
      * <pre>
-     *            PROPOSE  ACCEPT      REJECT(b측)  CANCEL  COMPLETE
-     * CHATTING   불허     허용        허용         허용    불허(예약 전)
-     * RESERVED   불허     멱등 200    허용         허용    허용(미구현)
-     * COMPLETED  허용     불허        불허         불허    불허
-     * CANCELED   허용     불허        불허         불허    불허
+     *            PROPOSE  RESERVE   UNRESERVE  REJECT(b측)  CANCEL  COMPLETE
+     * CHATTING   불허     허용       멱등 200   허용         허용    불허(예약 전)
+     * RESERVED   불허     멱등 200   허용       불허         불허    허용(미구현)
+     * COMPLETED  허용     불허       불허       불허         불허    불허
+     * CANCELED   허용     불허       불허       불허         불허    불허
      * </pre>
+     * 멱등 200 인 경우(RESERVED 에서 reserve, CHATTING 에서 unreserve)는 허용(true)을 반환하며 서비스가 상태 변경 없이 현재 상태를 응답한다.
+     * RESERVED 에서 reject·cancel 은 막고 먼저 예약을 취소해야 한다(409 MATCH_STATE_CONFLICT).
      */
     public static boolean isAllowed(ExchangeMatchStatus status, ExchangeMatchAction action) {
         return switch (action) {
             case PROPOSE -> !status.isOpen();
-            case ACCEPT, REJECT, CANCEL -> status.isOpen();
+            case RESERVE, UNRESERVE -> status.isOpen();
+            case REJECT, CANCEL -> status == ExchangeMatchStatus.CHATTING;
             case COMPLETE -> status == ExchangeMatchStatus.RESERVED;
         };
     }
@@ -150,46 +159,44 @@ public class ExchangeMatch {
         return userId.equals(userBId) ? Side.B : null;
     }
 
-    public LocalDateTime reservedAt(Side side) {
-        return side == Side.A ? aReservedAt : bReservedAt;
-    }
-
-    public boolean hasReserved(Side side) {
-        return reservedAt(side) != null;
-    }
-
-    public boolean bothReserved() {
-        return aReservedAt != null && bReservedAt != null;
-    }
-
-    /** 호출자 쪽 '이 사람과 교환할게요'. 이미 눌렀다면 아무 일도 하지 않는다(멱등). */
-    public void markReserved(Side side, LocalDateTime now) {
-        if (hasReserved(side)) {
-            return;
+    /** 호출자 쪽 예약: CHATTING -> RESERVED. 두 티켓의 잠금 INSERT 는 서비스가 같은 트랜잭션에서 한다. */
+    public void reserve(Long userId, LocalDateTime now) {
+        if (status != ExchangeMatchStatus.CHATTING) {
+            throw new IllegalStateException("CHATTING 매칭만 예약할 수 있습니다: " + status);
         }
-        if (side == Side.A) {
-            aReservedAt = now;
-        } else {
-            bReservedAt = now;
-        }
-    }
-
-    /** 양쪽이 모두 눌렀을 때 RESERVED 로 전환한다(두 티켓의 잠금 INSERT 는 서비스가 같은 트랜잭션에서 한다). */
-    public void toReserved() {
-        if (status != ExchangeMatchStatus.CHATTING || !bothReserved()) {
-            throw new IllegalStateException("양쪽이 예약에 동의한 CHATTING 매칭만 RESERVED 가 될 수 있습니다.");
+        if (sideOf(userId) == null) {
+            throw new IllegalArgumentException("매칭 참여자만 예약할 수 있습니다.");
         }
         status = ExchangeMatchStatus.RESERVED;
+        reservedById = userId;
+        reservedAt = now;
     }
 
-    /** 취소·거절. canceledById 가 null 이면 시스템 취소. 열린 매칭만 취소할 수 있다. */
+    /** 예약 취소: RESERVED -> CHATTING. 예약 표시와 교환 수락(a/b_completed_at) 표시를 한 번에 비운다(ck_exchange_match_reserved·completed). */
+    public void unreserve() {
+        if (status != ExchangeMatchStatus.RESERVED) {
+            throw new IllegalStateException("RESERVED 매칭만 예약을 취소할 수 있습니다: " + status);
+        }
+        status = ExchangeMatchStatus.CHATTING;
+        reservedById = null;
+        reservedAt = null;
+        aCompletedAt = null;
+        bCompletedAt = null;
+    }
+
+    /** 취소·거절. canceledById 가 null 이면 시스템 취소. CHATTING 만 취소할 수 있다(RESERVED 는 먼저 unreserve). */
     public void cancel(Long canceledById, LocalDateTime now) {
-        if (!status.isOpen()) {
-            throw new IllegalStateException("열린 매칭만 취소할 수 있습니다: " + status);
+        if (status != ExchangeMatchStatus.CHATTING) {
+            throw new IllegalStateException("CHATTING 매칭만 취소할 수 있습니다: " + status);
         }
         status = ExchangeMatchStatus.CANCELED;
         this.canceledById = canceledById;
         canceledAt = now;
+    }
+
+    /** 호출자 쪽 교환 수락 표시(a/b_completed_at). 교환 수락 기능은 이번 범위 밖이라 현재는 항상 false 다. */
+    public boolean hasAccepted(Side side) {
+        return (side == Side.A ? aCompletedAt : bCompletedAt) != null;
     }
 
     public boolean isOpen() {

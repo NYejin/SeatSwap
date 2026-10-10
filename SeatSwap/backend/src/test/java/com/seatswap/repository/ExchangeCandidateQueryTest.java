@@ -502,9 +502,13 @@ class ExchangeCandidateQueryTest {
     /** a(제안자)·b 사이의 매칭 행을 직접 넣는다. CANCELED 는 CHECK 때문에 canceled_at 도 채운다. */
     private long match(Req a, Req b, String status) {
         jdbc.update("INSERT INTO exchange_match (request_a_id, request_b_id, ticket_a_id, ticket_b_id, user_a_id, user_b_id, "
-                        + "status, canceled_at, created_at, updated_at, a_extra_type, b_extra_type) VALUES (?,?,?,?,?,?,?,?,NOW(6),NOW(6),'ANY','ANY')",
+                        + "status, canceled_at, reserved_by_id, reserved_at, a_completed_at, b_completed_at, created_at, updated_at, a_extra_type, b_extra_type) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW(6),NOW(6),'ANY','ANY')",
                 a.id, b.id, a.ticketId, b.ticketId, a.userId, b.userId, status,
-                status.equals("CANCELED") ? java.sql.Timestamp.valueOf(BASE) : null);
+                status.equals("CANCELED") ? java.sql.Timestamp.valueOf(BASE) : null,
+                // V8 CHECK: RESERVED 는 예약자·시각 필수, COMPLETED 는 양쪽 수락 시각 필수
+                status.equals("RESERVED") ? a.userId : null, status.equals("RESERVED") ? java.sql.Timestamp.valueOf(BASE) : null,
+                status.equals("COMPLETED") ? java.sql.Timestamp.valueOf(BASE) : null, status.equals("COMPLETED") ? java.sql.Timestamp.valueOf(BASE) : null);
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
     }
 
@@ -572,7 +576,7 @@ class ExchangeCandidateQueryTest {
         assertThat(repository.countCandidates(a.id, TODAY)).isZero();
 
         jdbc.update("DELETE FROM exchange_ticket_lock WHERE match_id = ?", m);   // 예약 취소로 잠금 해제
-        jdbc.update("UPDATE exchange_match SET status='CANCELED', canceled_at=NOW(6) WHERE id=?", m);
+        jdbc.update("UPDATE exchange_match SET status='CANCELED', canceled_at=NOW(6), reserved_by_id=NULL, reserved_at=NULL WHERE id=?", m);
         assertThat(candidateIds(a)).containsExactly(b.id);
     }
 

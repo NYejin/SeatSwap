@@ -10,7 +10,7 @@ import type {
 } from "../types/exchange";
 
 // 교환 희망 조건·후보·매칭 (FR-04). 모두 로그인 필요. 계약은 SeatSwap/backend/README.md.
-// 매칭 응답(제안·동의·거절·취소·목록·단건)은 모두 같은 ExchangeMatch 모양이다.
+// 매칭 응답(제안·예약·예약 취소·거절·종료·목록·단건)은 모두 같은 ExchangeMatch 모양이다.
 export const exchangeApi = {
   // ---- 희망 조건 ----
   /** GET /api/exchange/requests/me?ticketId= — 내 요청 목록 (배열, id 오름차순) */
@@ -63,9 +63,15 @@ export const exchangeApi = {
     return data;
   },
 
-  /** POST /api/exchange/matches/{id}/accept — '이 사람과 교환할게요' (예약 동의) */
-  async accept(matchId: number): Promise<ExchangeMatch> {
-    const { data } = await apiClient.post<ExchangeMatch>(`/exchange/matches/${matchId}/accept`);
+  /** POST /api/exchange/matches/{id}/reserve — 예약하기. 둘 중 한 명이 누르면 RESERVED(두 티켓 잠금) */
+  async reserve(matchId: number): Promise<ExchangeMatch> {
+    const { data } = await apiClient.post<ExchangeMatch>(`/exchange/matches/${matchId}/reserve`);
+    return data;
+  },
+
+  /** POST /api/exchange/matches/{id}/unreserve — 예약 취소. 둘 중 누구나, 매칭은 CHATTING으로 복귀 */
+  async unreserve(matchId: number): Promise<ExchangeMatch> {
+    const { data } = await apiClient.post<ExchangeMatch>(`/exchange/matches/${matchId}/unreserve`);
     return data;
   },
 

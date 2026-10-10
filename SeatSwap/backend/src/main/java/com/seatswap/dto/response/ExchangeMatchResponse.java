@@ -12,7 +12,9 @@ import java.time.LocalDateTime;
  * myExtraType/Amount, counterpartExtraType/Amount 는 매칭이 만들어질 때 저장한 추가금 스냅샷(유형 X/ANY/POS/NEG + 참고용 금액)이다. 내 쪽은
  * 내 희망 범위 중 상대 좌석을 포함한 범위의 값, 상대 쪽은 상대 범위 중 내 좌석을 포함한 범위의 값이며 이후 요청이 바뀌어도 변하지 않는다(매칭 판정에 금액은 쓰이지 않는다).
  * myRequestDeleted / counterpartRequestDeleted 는 그 쪽 교환 요청이 삭제(DELETED)됐는지다(삭제돼도 매칭 기록은 남는다).
- * myReservedAt / counterpartReservedAt 이 null 이 아니면 그쪽이 '이 사람과 교환할게요'를 누른 것이다.
+ * reservedBy 는 RESERVED 일 때 예약한 사람: ME / COUNTERPART (그 외 상태는 null), reservedAt 은 그 시각(RESERVED 일 때만 값).
+ * 예약은 둘 중 한 명이 하고 누구든 취소할 수 있다(8차 답변). myAccepted / counterpartAccepted 는 '교환 수락'(a/b_completed_at) 표시이며
+ * 교환 수락 기능이 아직 없어 지금은 항상 false 다(예약 취소 시 초기화된다).
  * status 가 RESERVED 이면 두 티켓이 잠겨 있다. canceledBy 는 CANCELED 일 때만: ME / COUNTERPART / SYSTEM.
  */
 public record ExchangeMatchResponse(
@@ -33,10 +35,11 @@ public record ExchangeMatchResponse(
         Integer counterpartExtraAmount,
         boolean myRequestDeleted,
         boolean counterpartRequestDeleted,
+        String reservedBy,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
-        LocalDateTime myReservedAt,
-        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
-        LocalDateTime counterpartReservedAt,
+        LocalDateTime reservedAt,
+        boolean myAccepted,
+        boolean counterpartAccepted,
         String canceledBy,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
         LocalDateTime canceledAt,

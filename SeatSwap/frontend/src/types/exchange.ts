@@ -100,8 +100,9 @@ export interface MatchSeat {
 }
 
 /**
- * 매칭 (호출자 기준). POST proposals/accept/reject/cancel 응답, GET /matches/me 항목, GET /matches/{id}가 같은 모양이다.
- * myReservedAt/counterpartReservedAt이 null이 아니면 그쪽이 '이 사람과 교환할게요'를 누른 것이다.
+ * 매칭 (호출자 기준). POST proposals/reserve/unreserve/reject/cancel 응답, GET /matches/me 항목, GET /matches/{id}가 같은 모양이다.
+ * RESERVED일 때 reservedBy가 예약한 쪽이다(ME 또는 COUNTERPART, 그 외 null).
+ * myAccepted/counterpartAccepted는 '교환 수락' 여부(교환 수락 기능 구현 전에는 서버가 항상 false).
  */
 export interface ExchangeMatch {
   id: number;
@@ -122,8 +123,10 @@ export interface ExchangeMatch {
   /** 요청이 소프트 삭제됐는지 (삭제되면 채팅 단계 매칭은 자동 취소된다) */
   myRequestDeleted: boolean;
   counterpartRequestDeleted: boolean;
-  myReservedAt: string | null;
-  counterpartReservedAt: string | null;
+  reservedBy: "ME" | "COUNTERPART" | null;
+  reservedAt: string | null;
+  myAccepted: boolean;
+  counterpartAccepted: boolean;
   canceledBy: CanceledBy | null;
   canceledAt: string | null;
   createdAt: string;

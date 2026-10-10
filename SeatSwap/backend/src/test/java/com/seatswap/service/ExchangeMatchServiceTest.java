@@ -129,7 +129,7 @@ class ExchangeMatchServiceTest {
         ExchangeMatchResponse.Seat mine = new ExchangeMatchResponse.Seat("A", "3", "5", 7L, openSession.getStartsAt());
         return new ExchangeMatchQueryRepository.Row(m.getId(), m.getStatus().name(), m.getUserAId(), m.getUserBId(),
                 m.getRequestAId(), m.getRequestBId(), m.getTicketAId(), m.getTicketBId(),
-                m.getAReservedAt(), m.getBReservedAt(), m.getCanceledById(), m.getCanceledAt(),
+                m.getReservedById(), m.getReservedAt(), m.getACompletedAt() != null, m.getBCompletedAt() != null, m.getCanceledById(), m.getCanceledAt(),
                 m.getCreatedAt(), m.getUpdatedAt(), mine, mine, m.getAExtraType().name(), m.getAExtraAmount(),
                 m.getBExtraType().name(), m.getBExtraAmount(), false, false, "나", "상대");
     }
@@ -155,9 +155,13 @@ class ExchangeMatchServiceTest {
         ExchangeMatch m = ExchangeMatch.propose(MY_REQ, THEIR_REQ, MY_TICKET, THEIR_TICKET, 1L, 2L, EXTRA_MY, EXTRA_THEIR);
         ReflectionTestUtils.setField(m, "id", MATCH);
         ReflectionTestUtils.setField(m, "status", status);
-        if (status == ExchangeMatchStatus.RESERVED || status == ExchangeMatchStatus.COMPLETED) {
-            ReflectionTestUtils.setField(m, "aReservedAt", NOW.minusHours(2));
-            ReflectionTestUtils.setField(m, "bReservedAt", NOW.minusHours(1));
+        if (status == ExchangeMatchStatus.RESERVED) {
+            ReflectionTestUtils.setField(m, "reservedById", 1L);   // 예약자는 a측(1번)
+            ReflectionTestUtils.setField(m, "reservedAt", NOW.minusHours(1));
+        }
+        if (status == ExchangeMatchStatus.COMPLETED) {
+            ReflectionTestUtils.setField(m, "aCompletedAt", NOW.minusHours(2));
+            ReflectionTestUtils.setField(m, "bCompletedAt", NOW.minusHours(1));
         }
         if (status == ExchangeMatchStatus.CANCELED) {
             ReflectionTestUtils.setField(m, "canceledAt", NOW.minusHours(1));
@@ -181,7 +185,8 @@ class ExchangeMatchServiceTest {
         assertThat(response.counterpartRequestId()).isEqualTo(THEIR_REQ);
         assertThat(response.counterpartTicketId()).isEqualTo(THEIR_TICKET);
         assertThat(response.counterpartNickname()).isEqualTo("상대");
-        assertThat(response.myReservedAt()).isNull();
+        assertThat(response.reservedBy()).isNull();
+        assertThat(response.reservedAt()).isNull();
         assertThat(response.canceledBy()).isNull();
 
         InOrder order = inOrder(ticketRepository, requestRepository, matchRepository);
@@ -351,33 +356,22 @@ class ExchangeMatchServiceTest {
                 .isInstanceOfSatisfying(BusinessRuleException.class, e -> assertThat(e.getCode()).isEqualTo(code));
     }
 
-    // ------------------------------------------------------------------ 수락(예약 동의)
+    // ------------------------------------------------------------------ 예약 (한 명이 누르면 RESERVED)
 
     @Test
-    void 한쪽만_수락하면_CHATTING을_유지하고_누른_시각만_기록하며_잠금은_없다() {
+    void 한쪽이_예약하면_바로_RESERVED가_되고_두_티켓_잠금을_id_오름차순으로_넣는다() {
         ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
 
-        ExchangeMatchResponse response = service.accept(1L, MATCH);
-
-        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
-        assertThat(m.getAReservedAt()).isEqualTo(NOW);
-        assertThat(m.getBReservedAt()).isNull();
-        assertThat(response.status()).isEqualTo("CHATTING");
-        assertThat(response.myReservedAt()).isEqualTo(NOW);
-        assertThat(response.counterpartReservedAt()).isNull();
-        verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void 양쪽이_수락하면_RESERVED가_되고_두_티켓_잠금을_id_오름차순으로_넣는다() {
-        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
-        ReflectionTestUtils.setField(m, "aReservedAt", NOW.minusMinutes(3));
-
-        ExchangeMatchResponse response = service.accept(2L, MATCH);   // b 가 두 번째로 누른다
+        ExchangeMatchResponse response = service.reserve(2L, MATCH);   // b 만 눌러도 예약된다
 
         assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
+        assertThat(m.getReservedById()).isEqualTo(2L);
+        assertThat(m.getReservedAt()).isEqualTo(NOW);
         assertThat(response.status()).isEqualTo("RESERVED");
         assertThat(response.mySide()).isEqualTo("B");
+        assertThat(response.reservedBy()).isEqualTo("ME");
+        assertThat(response.reservedAt()).isEqualTo(NOW);
+        assertThat(toResponse(m, 1L).reservedBy()).isEqualTo("COUNTERPART");
         InOrder order = inOrder(ticketRepository, requestRepository, matchRepository, lockRepository);
         order.verify(ticketRepository).findByIdForUpdate(THEIR_TICKET);
         order.verify(ticketRepository).findByIdForUpdate(MY_TICKET);
@@ -389,57 +383,103 @@ class ExchangeMatchServiceTest {
     }
 
     @Test
-    void 이미_누른_쪽이_다시_수락하면_멱등으로_200이고_아무것도_바꾸지_않는다() {
-        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
-        ReflectionTestUtils.setField(m, "aReservedAt", NOW.minusMinutes(3));
+    void 이미_RESERVED면_누가_눌러도_멱등_200이고_아무것도_쓰지_않는다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
 
-        ExchangeMatchResponse response = service.accept(1L, MATCH);
+        ExchangeMatchResponse byOther = service.reserve(2L, MATCH);
+        ExchangeMatchResponse byReserver = service.reserve(1L, MATCH);
 
-        assertThat(response.myReservedAt()).isEqualTo(NOW.minusMinutes(3));
-        assertThat(m.getAReservedAt()).isEqualTo(NOW.minusMinutes(3));
+        assertThat(byOther.status()).isEqualTo("RESERVED");
+        assertThat(byOther.reservedBy()).as("예약자는 그대로 a측").isEqualTo("COUNTERPART");
+        assertThat(byReserver.reservedBy()).isEqualTo("ME");
+        assertThat(m.getReservedById()).isEqualTo(1L);
         verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
         verify(lockRepository, never()).existsAnyByTicketIds(any());
+        verify(matchRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    void RESERVED에서_다시_수락해도_멱등_200이고_잠금을_다시_넣지_않는다() {
-        existingMatch(ExchangeMatchStatus.RESERVED);
-
-        assertThat(service.accept(2L, MATCH).status()).isEqualTo("RESERVED");
-        verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void 티켓이_다른_매칭에서_이미_잠겼으면_409이고_누름도_기록하지_않는다() {
+    void 티켓이_다른_매칭에서_이미_잠겼으면_409이고_상태를_바꾸지_않는다() {
         ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
-        ReflectionTestUtils.setField(m, "aReservedAt", NOW.minusMinutes(3));
         when(lockRepository.existsAnyByTicketIds(anyCollection())).thenReturn(true);
 
-        assertThatThrownBy(() -> service.accept(2L, MATCH))
+        assertThatThrownBy(() -> service.reserve(2L, MATCH))
                 .isInstanceOfSatisfying(ConflictException.class,
                         e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_ALREADY_RESERVED"));
 
         assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
-        assertThat(m.getBReservedAt()).isNull();
+        assertThat(m.getReservedById()).isNull();
         verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
     }
 
     @Test
     void 잠금_INSERT가_PK_충돌이면_409로_바꾼다() {
-        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
-        ReflectionTestUtils.setField(m, "aReservedAt", NOW.minusMinutes(3));
+        existingMatch(ExchangeMatchStatus.CHATTING);
         doThrow(new DuplicateKeyException("dup")).when(lockRepository).insert(eq(MY_TICKET), eq(MATCH), any());
 
-        assertThatThrownBy(() -> service.accept(2L, MATCH))
+        assertThatThrownBy(() -> service.reserve(2L, MATCH))
                 .isInstanceOfSatisfying(ConflictException.class,
                         e -> assertThat(e.getDetails()).containsEntry("code", "TICKET_ALREADY_RESERVED"));
+    }
+
+    @Test
+    void 예약은_두_티켓_ACTIVE와_두_요청_OPEN을_다시_확인한다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
+
+        ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.INACTIVE);
+        assertThatThrownBy(() -> service.reserve(1L, MATCH)).isInstanceOfSatisfying(BusinessRuleException.class,
+                e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_ACTIVE"));
+        ReflectionTestUtils.setField(theirTicket, "status", TicketStatus.ACTIVE);
+
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.INACTIVE);
+        assertThatThrownBy(() -> service.reserve(2L, MATCH)).isInstanceOf(BusinessRuleException.class);
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.ACTIVE);
+
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.CLOSED);
+        assertThatThrownBy(() -> service.reserve(1L, MATCH)).isInstanceOfSatisfying(BusinessRuleException.class,
+                e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_ACTIVE"));
+
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.DELETED);
+        assertThatThrownBy(() -> service.reserve(1L, MATCH)).isInstanceOfSatisfying(ConflictException.class,
+                e -> assertThat(e.getDetails()).containsEntry("code", "REQUEST_DELETED"));
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.OPEN);
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
+        verify(lockRepository, never()).insert(anyLong(), anyLong(), any());
+        assertThat(service.reserve(1L, MATCH).status()).as("정상이면 예약된다").isEqualTo("RESERVED");
+    }
+
+    @Test
+    void 닫힌_요청이어도_멱등_reserve_unreserve_cancel_reject는_검증하지_않는다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        when(lockRepository.deleteByMatchId(MATCH)).thenReturn(2);
+        ReflectionTestUtils.setField(myTicket, "status", TicketStatus.INACTIVE);
+        ReflectionTestUtils.setField(theirRequest, "status", ExchangeRequestStatus.DELETED);
+
+        assertThat(service.reserve(2L, MATCH).status()).as("멱등 reserve").isEqualTo("RESERVED");
+        assertThat(service.unreserve(2L, MATCH).status()).as("unreserve 는 항상 가능").isEqualTo("CHATTING");
+        assertThat(service.reject(2L, MATCH).status()).isEqualTo("CANCELED");
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CANCELED);
+        existingMatch(ExchangeMatchStatus.CHATTING);
+        assertThat(service.cancel(1L, MATCH).status()).isEqualTo("CANCELED");
+    }
+
+    @Test
+    void 회차_마감이_지난_매칭도_예약할_수_있다() {
+        // 6차 확정: 이미 시작한 채팅의 reserve 에는 회차 마감 검사를 하지 않는다
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
+        ReflectionTestUtils.setField(myTicket, "performanceSession", closedSession);
+
+        assertThat(service.reserve(1L, MATCH).status()).isEqualTo("RESERVED");
+        assertThat(m.getReservedById()).isEqualTo(1L);
     }
 
     @Test
     void 매칭_비참여자는_없는_매칭과_같은_404() {
         existingMatch(ExchangeMatchStatus.CHATTING);
 
-        for (ExchangeMatchAction action : List.of(ExchangeMatchAction.ACCEPT, ExchangeMatchAction.REJECT, ExchangeMatchAction.CANCEL)) {
+        for (ExchangeMatchAction action : List.of(ExchangeMatchAction.RESERVE, ExchangeMatchAction.UNRESERVE,
+                ExchangeMatchAction.REJECT, ExchangeMatchAction.CANCEL)) {
             assertThatThrownBy(() -> run(action, 3L, MATCH)).isInstanceOf(NotFoundException.class)
                     .hasMessage(ExchangeMatchService.MATCH_NOT_FOUND_MESSAGE);
             assertThatThrownBy(() -> run(action, 1L, 999L)).isInstanceOf(NotFoundException.class);
@@ -447,10 +487,61 @@ class ExchangeMatchServiceTest {
         verify(ticketRepository, never()).findByIdForUpdate(anyLong());
     }
 
+    // ------------------------------------------------------------------ 예약 취소
+
+    @Test
+    void 예약한_사람이_아니어도_예약_취소로_CHATTING_복귀_잠금_삭제_표시_초기화() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        ReflectionTestUtils.setField(m, "bCompletedAt", NOW.minusMinutes(1));   // 한쪽이 교환 수락을 눌러 둔 상태
+        when(lockRepository.deleteByMatchId(MATCH)).thenReturn(2);
+
+        ExchangeMatchResponse response = service.unreserve(2L, MATCH);   // 예약자는 a(1번), 취소는 b
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CHATTING);
+        assertThat(m.getReservedById()).isNull();
+        assertThat(m.getReservedAt()).isNull();
+        assertThat(m.getBCompletedAt()).isNull();
+        assertThat(m.getACompletedAt()).isNull();
+        assertThat(response.status()).isEqualTo("CHATTING");
+        assertThat(response.reservedBy()).isNull();
+        assertThat(response.myAccepted()).isFalse();
+        assertThat(response.counterpartAccepted()).isFalse();
+        verify(lockRepository).deleteByMatchId(MATCH);
+    }
+
+    @Test
+    void 예약_취소_뒤_같은_쌍이_다시_예약할_수_있다() {
+        ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
+        when(lockRepository.deleteByMatchId(MATCH)).thenReturn(2);
+        service.unreserve(1L, MATCH);
+
+        ExchangeMatchResponse again = service.reserve(2L, MATCH);
+
+        assertThat(again.status()).isEqualTo("RESERVED");
+        assertThat(m.getReservedById()).isEqualTo(2L);
+    }
+
+    @Test
+    void CHATTING에서_예약_취소는_멱등_200이고_아무것도_바꾸지_않는다() {
+        existingMatch(ExchangeMatchStatus.CHATTING);
+
+        assertThat(service.unreserve(1L, MATCH).status()).isEqualTo("CHATTING");
+        verify(lockRepository, never()).deleteByMatchId(anyLong());
+        verify(matchRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 잠금이_2행이_아니면_예약_취소를_되돌리려_예외를_던진다() {
+        existingMatch(ExchangeMatchStatus.RESERVED);
+        when(lockRepository.deleteByMatchId(MATCH)).thenReturn(1);
+
+        assertThatThrownBy(() -> service.unreserve(1L, MATCH)).isInstanceOf(IllegalStateException.class);
+    }
+
     // ------------------------------------------------------------------ 거절·취소
 
     @Test
-    void 제안받은_쪽은_거절할_수_있고_CANCELED로_바뀌며_잠금_해제를_호출한다() {
+    void 제안받은_쪽은_거절할_수_있고_CANCELED로_바뀐다() {
         ExchangeMatch m = existingMatch(ExchangeMatchStatus.CHATTING);
 
         ExchangeMatchResponse response = service.reject(2L, MATCH);
@@ -459,7 +550,7 @@ class ExchangeMatchServiceTest {
         assertThat(m.getCanceledById()).isEqualTo(2L);
         assertThat(m.getCanceledAt()).isEqualTo(NOW);
         assertThat(response.canceledBy()).isEqualTo("ME");
-        verify(lockRepository).deleteByMatchId(MATCH);
+        verify(lockRepository, never()).deleteByMatchId(anyLong());
     }
 
     @Test
@@ -486,13 +577,20 @@ class ExchangeMatchServiceTest {
     }
 
     @Test
-    void RESERVED에서_취소하면_잠금을_해제한다() {
+    void RESERVED에서는_취소와_거절이_모두_409이고_먼저_예약을_취소하라는_문구다() {
         ExchangeMatch m = existingMatch(ExchangeMatchStatus.RESERVED);
 
-        service.cancel(2L, MATCH);
-
-        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.CANCELED);
-        verify(lockRepository).deleteByMatchId(MATCH);
+        for (ExchangeMatchAction action : List.of(ExchangeMatchAction.CANCEL, ExchangeMatchAction.REJECT)) {
+            long actor = action == ExchangeMatchAction.REJECT ? 2L : 1L;
+            assertThatThrownBy(() -> run(action, actor, MATCH))
+                    .isInstanceOfSatisfying(ConflictException.class, e -> {
+                        assertThat(e.getMessage()).isEqualTo("먼저 예약을 취소해주세요.");
+                        assertThat(e.getDetails()).containsEntry("code", "MATCH_STATE_CONFLICT")
+                                .containsEntry("status", "RESERVED").containsEntry("action", action.name());
+                    });
+        }
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
+        verify(lockRepository, never()).deleteByMatchId(anyLong());
     }
 
     @Test
@@ -506,7 +604,8 @@ class ExchangeMatchServiceTest {
 
     private ExchangeMatchResponse run(ExchangeMatchAction action, long userId, long matchId) {
         return switch (action) {
-            case ACCEPT -> service.accept(userId, matchId);
+            case RESERVE -> service.reserve(userId, matchId);
+            case UNRESERVE -> service.unreserve(userId, matchId);
             case REJECT -> service.reject(userId, matchId);
             case CANCEL -> service.cancel(userId, matchId);
             default -> throw new IllegalArgumentException(action.name());
@@ -514,20 +613,22 @@ class ExchangeMatchServiceTest {
     }
 
     @Test
-    void 전이_표_상태4종_x_동작3종_서비스_경로_전체() {
+    void 전이_표_상태4종_x_동작4종_서비스_경로_전체() {
         for (ExchangeMatchStatus status : ExchangeMatchStatus.values()) {
-            for (ExchangeMatchAction action : List.of(ExchangeMatchAction.ACCEPT, ExchangeMatchAction.REJECT, ExchangeMatchAction.CANCEL)) {
-                existingMatch(status);
+            for (ExchangeMatchAction action : List.of(ExchangeMatchAction.RESERVE, ExchangeMatchAction.UNRESERVE,
+                    ExchangeMatchAction.REJECT, ExchangeMatchAction.CANCEL)) {
+                ExchangeMatch m = existingMatch(status);
+                when(lockRepository.deleteByMatchId(MATCH)).thenReturn(2);
                 long actor = action == ExchangeMatchAction.REJECT ? 2L : 1L;   // reject 는 b측만
                 boolean allowed = ExchangeMatch.isAllowed(status, action);
                 if (allowed) {
                     ExchangeMatchResponse response = run(action, actor, MATCH);
-                    if (action == ExchangeMatchAction.ACCEPT) {
-                        // CHATTING 은 한쪽 수락(CHATTING 유지), RESERVED 는 멱등
-                        assertThat(response.status()).as(status + " + " + action).isEqualTo(status.name());
-                    } else {
-                        assertThat(response.status()).as(status + " + " + action).isEqualTo("CANCELED");
-                    }
+                    String expected = switch (action) {
+                        case RESERVE -> "RESERVED";
+                        case UNRESERVE -> "CHATTING";
+                        default -> "CANCELED";
+                    };
+                    assertThat(response.status()).as(status + " + " + action).isEqualTo(expected);
                 } else {
                     assertThatThrownBy(() -> run(action, actor, MATCH)).as(status + " + " + action)
                             .isInstanceOfSatisfying(ConflictException.class, e -> {
@@ -535,6 +636,7 @@ class ExchangeMatchServiceTest {
                                         .containsEntry("status", status.name()).containsEntry("action", action.name());
                                 assertThat(e.getMessage()).isNotBlank();
                             });
+                    assertThat(m.getStatus()).as("불허 전이는 상태를 바꾸지 않는다").isEqualTo(status);
                 }
             }
         }
@@ -543,8 +645,9 @@ class ExchangeMatchServiceTest {
     @Test
     void 취소된_매칭과_완료된_매칭의_불허_메시지는_한국어로_구분된다() {
         existingMatch(ExchangeMatchStatus.CANCELED);
-        assertThatThrownBy(() -> service.accept(1L, MATCH)).hasMessage("이미 취소된 매칭입니다.");
+        assertThatThrownBy(() -> service.reserve(1L, MATCH)).hasMessage("이미 취소된 매칭입니다.");
         existingMatch(ExchangeMatchStatus.COMPLETED);
         assertThatThrownBy(() -> service.cancel(1L, MATCH)).hasMessage("이미 교환이 완료된 매칭입니다.");
+        assertThatThrownBy(() -> service.unreserve(1L, MATCH)).hasMessage("이미 교환이 완료된 매칭입니다.");
     }
 }
