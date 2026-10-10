@@ -1,0 +1,29 @@
+---
+title: 위키 목차
+type: index
+tags: [index]
+sources: []
+updated: 2026-10-10
+confidence: high
+status: draft
+---
+
+# 위키 목차
+
+SeatSwap 프로젝트의 결정 근거, 함정, 조사 결과, 용어를 모은 위키다. 사용법과 스키마는 [llm-wiki 스킬](../.claude/skills/llm-wiki/SKILL.md), 작업 기록은 [log.md](log.md)에 있다. 확정 결정 본문은 [CLAUDE.md](../CLAUDE.md)가 기준이다.
+
+## 결정
+
+- [교환 완료 시 티켓 처리: 안 2의 근거](decisions/exchange-complete-new-ticket.md): 교환 완료 때 기존 티켓을 `EXCHANGED`로 바꾸고 새 티켓을 만드는 안의 선택지와 이유.
+
+## 함정
+
+- [잠금 순서와 인덱스·유니크 키 함정](gotchas/lock-order-and-index-pitfalls.md): 교환 도메인(MySQL)의 잠금 순서 규약, 인덱스·유니크 키로 겪은 교착 등.
+
+## 조사
+
+- [실시간 채팅(STOMP) JWT 인증·인가 조사](research/stomp-jwt-auth.md): CONNECT 인증, 토큰 만료, 구독·전송 인가, Origin·크기 제한. 조사 요약이며 구현 결정이 아니다.
+
+## 용어집
+
+- [용어집](glossary.md): 매칭 상태, 교환 요청·희망 조건, 추가금, 티켓과 마감 등 고유 용어.

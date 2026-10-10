@@ -1,0 +1,66 @@
+---
+title: 잠금 순서와 인덱스·유니크 키 함정
+type: gotcha
+tags: [mysql, 교착, 인덱스, flyway, 동시성]
+sources: [산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/db/migration/V8__exchange_match_single_reserve.sql, CLAUDE.md]
+updated: 2026-10-10
+confidence: high
+status: draft
+---
+
+# 잠금 순서와 인덱스·유니크 키 함정
+
+교환 도메인(MySQL 8, InnoDB)에서 겪었거나 설계로 막은 함정 모음이다. 코드를 읽으면 알 수 있는 세부는 생략하고 이유와 재현 조건만 둔다. 용어는 [용어집](../glossary.md), 티켓 처리 순서와 유니크 키의 관계는 [교환 완료 시 티켓 처리](../decisions/exchange-complete-new-ticket.md) 참고.
+
+## 1. 잠금 순서 규약
+
+- 항상 티켓(id 오름차순), 요청(id 오름차순), 매칭 순이다 (`SeatSwap/backend/README.md` "동시성" 절).
+- 요청만 잠그는 update/delete 경로에서는 티켓을 잠그지 않는다 ([CLAUDE.md](../../CLAUDE.md)의 교환 희망 조건 항목에도 같은 규약이 적혀 있다).
+- `users` 행은 티켓 이후에 잡는다. 새 코드에서 users 행을 X 잠금한 뒤 티켓·요청을 잠그지 않는다. 지금은 `TicketService.create`가 users 행을 먼저 잡고 티켓은 INSERT만 해서 순환이 없다. 앞으로 차단(`user_block`) 서비스도 users X 잠금 뒤에 티켓·요청·매칭을 잠그면 안 된다.
+- 잠금 읽기가 트랜잭션의 첫 쿼리들이 되게 한다. 불변 컬럼(티켓 id, 사용자 id)은 트랜잭션 밖에서 먼저 읽어 잠금 대상을 정한다. REPEATABLE READ 스냅샷이 잠금 뒤에 시작해야 최신 상태를 본다.
+
+## 2. FK 인덱스에 갱신 컬럼을 붙이면 교착 (실제 재현)
+
+- 증상: V5 작업 중 동시성 테스트에서 교착이 재현됐다. 초안의 `(ticket_a_id, status)` 같은 복합 인덱스가 FK 인덱스로 쓰이면, `status`만 바꾸는 UPDATE(티켓 내림에 의한 시스템 취소 등)도 InnoDB가 FK 인덱스 변경으로 보고 부모 행(`ticket`, `users`)에 S 잠금을 건다. 그러면 잠금 순서 밖에서 다른 티켓 행을 잡게 되어 양쪽 수락 경로와 교착이 났다.
+- 해결: FK가 쓰는 인덱스는 단일 컬럼으로 둔다 (`idx_exchange_match_ticket_a (ticket_a_id)` 등, V5). 상태 필터가 필요하면 별도 인덱스로 분리한다. 규칙 출처는 설계 문서 3.4절.
+- V7의 유니크 키 `uk_exchange_request_live_ticket (live_flag, ticket_id)`: 앞자리를 `live_flag`로 둔 이유가 같다. `(ticket_id, live_flag)` 순서였다면 그 인덱스가 FK 인덱스로 쓰여 DELETED 전환 때 `live_flag`가 바뀌며 부모 `ticket` 행에 S 잠금이 걸려 티켓, 요청 순서 밖에서 교착할 수 있다. `ticket_id`가 선두가 아니면 FK 인덱스가 될 수 없다. 그래서 FK 전용 `idx_exchange_request_ticket (ticket_id)`를 따로 둔다.
+- V8의 `reserved_by_id` FK도 단일 컬럼 인덱스(`idx_exchange_match_reserved_by`)다. 이 FK에는 ON DELETE/UPDATE 동작을 붙이지 않았다 (CHECK에 쓰이는 컬럼이라 MySQL이 거부한다고 V8 주석에 적혀 있다).
+- `reserved_by_id` 갱신은 users 행에 S 잠금을 걸지만, 잠금 순서의 맨 끝이고 users 행을 X로 잡고 매칭을 기다리는 곳이 없어 순환이 없다 (README).
+
+## 3. 생성 컬럼 + UNIQUE로 "활성 행만 유일" 표현
+
+생성 컬럼이 조건을 만족하면 1, 아니면 NULL이고, MySQL 유니크는 NULL을 비교에서 제외하는 성질을 쓴다. 락·갭 락 없이 DB가 보장하고 소프트 삭제와 잘 맞는다 (설계 문서 3.1절의 비교표에서 추천안).
+
+| 생성 컬럼 | 유니크 키 | 보장 |
+|---|---|---|
+| `ticket.active_flag` (`status='ACTIVE'`일 때 1) | `uk_ticket_active_seat (회차, 구역키, 열키, 번키, active_flag)` (V3) | 같은 회차·좌석의 활성 티켓 1개 |
+| `exchange_request.live_flag` (`status<>'DELETED'`일 때 1) | `uk_exchange_request_live_ticket (live_flag, ticket_id)` (V7) | 티켓당 미삭제 요청 1개, 삭제 후 새 요청 가능 |
+| `exchange_match.open_flag` (CHATTING·RESERVED일 때 1) | `uk_exchange_match_open_pair (request_low_id, request_high_id, open_flag)` (V5) | 같은 요청 쌍의 열린 매칭 1개 (방향 무관, LEAST/GREATEST로 정규화) |
+
+함정:
+- 매칭 쌍 유니크는 a, b 순서가 달라도 같은 쌍으로 잡도록 `LEAST`/`GREATEST` 생성 컬럼을 쓴다.
+- 티켓 상태에 새 값(`EXCHANGED`)을 추가하면 `active_flag`는 NULL이 되어 자동으로 슬롯을 비운다. 다만 `ck_ticket_status`는 확장해야 한다.
+- 한 티켓이 어떤 매칭에서는 a측, 다른 매칭에서는 b측일 수 있어 매칭 테이블의 유니크 하나로는 티켓당 예약 1개를 못 막는다. 그래서 `exchange_ticket_lock`의 PK(`ticket_id`)를 쓴다 (설계 3.2절).
+- 생성 컬럼은 UPDATE 대상이 아니다. 요청 CLOSED 처리 쿼리는 `status = OPEN` 조건을 유지해야 한다. 없으면 DELETED 요청을 되살려 `live_flag`가 1이 되고 유일 키를 위반할 수 있다 (`ExchangeRequestRepository` 주석).
+- RESERVED를 벗어나는 모든 UPDATE는 같은 문장에서 `reserved_by_id`·`reserved_at`을 NULL로 만들어야 `ck_exchange_match_reserved`를 통과한다 (V8 주석).
+
+## 4. 후보 조회 SQL: STRAIGHT_JOIN
+
+- 사정: 힌트 없이는 요청이 100~1,000건일 때도 옵티마이저가 상대 요청(`exchange_request`)을 `type=ALL`로 전체 스캔하며 시작했다. 작업량이 전체 요청 수에 비례한다.
+- 해결: 조인 순서를 내 요청, 내 희망 회차·좌석, 상대 티켓, 상대 요청, 상대 희망 회차·좌석으로 고정했다. 작업량은 내 희망 좌석 수 x 희망 회차 수에 비례하고 전체 요청 수의 영향은 거의 없다.
+- 트레이드오프: 희망 좌석이 아주 많은 요청은 약간 느리다 (README 실측: 희망 2,400석, 요청 1,000건에서 DB 시간 12ms에서 27ms). 희망 좌석이 적은 요청은 8ms에서 1ms로 빨라진다. 통계가 바뀌어도 계획이 흔들리지 않는 쪽을 택했다.
+- 후보가 수천 건을 넘거나 서버 시간이 기준(중앙값 300ms, p95 1초)을 넘으면 keyset 페이징으로 전환을 재검토한다. 기준 전문은 README "STRAIGHT_JOIN 유지" 절.
+
+## 5. 로컬 개발 DB(3306) 오염 방지
+
+- `./gradlew bootRun`은 `backend/.env`를 읽어 환경변수를 주입하며, `build.gradle`의 `bootRun` 태스크가 `environment(key, value)`로 주입하므로 셸에서 직접 지정한 환경변수(DB 주소 등)보다 `.env` 값이 우선한다고 본다 (태스크 환경에 설정되는 방식이라는 점은 코드로 확인했고, 실제 덮어쓰기 재현은 하지 않았다). 임시 DB로 검증하려다 개발 DB(3306)에 붙는 사고가 이 경로로 난다.
+- 그래서 임시 DB 검증은 `bootRun`을 쓰지 않는다. `./gradlew bootJar` 후 `java -jar`에 `SPRING_DATASOURCE_URL` 등 환경변수를 직접 지정하고, 임시 MySQL 컨테이너(예: 포트 13306~13310)를 쓰고, 끝나면 컨테이너를 삭제한다. 앱 종료는 해당 프로세스 PID만 한다. 절차 전문은 `SeatSwap/backend/README.md` "수동 검증 시나리오" 절.
+- 실제 MySQL 통합 테스트(`ExchangeCandidateQueryTest`, `ExchangeMatchMysqlTest`)는 `SEATSWAP_IT_*` 환경변수가 있을 때만 돈다. localhost와 DB 이름 `_it` 접미사를 확인한 뒤에만 Flyway clean/TRUNCATE를 하는 안전장치가 있다 (README).
+- 이전 스키마가 남은 로컬 DB는 `docker compose down -v`로 비운 뒤 적용한다 ([CLAUDE.md](../../CLAUDE.md)).
+
+## 6. 적용된 Flyway 마이그레이션은 수정하지 않는다
+
+- Flyway는 체크섬을 저장하므로 적용된 파일을 고치면 기동 시 체크섬 불일치로 앱이 뜨지 않는다 (CLAUDE.md의 티켓 등록 항목: 로컬 DB에 V3가 적용돼 있어 V3 파일을 수정하면 기동되지 않는다).
+- 스키마 변경은 새 V 파일로만 한다 (README 규칙). 낡은 주석도 그대로 둔다. 예: V5 주석의 "양쪽이 눌러야 RESERVED" 설명은 V8로 낡았고, V8 주석에 변경 사실을 적었다.
+- V2·V6·V7·V8은 중간 실패 후 `flyway repair`로 이어서 재적용할 수 있게 INFORMATION_SCHEMA 가드 프로시저 패턴을 쓴다. V3·V8은 데이터가 조건에 안 맞으면 아무것도 바꾸기 전에 `SIGNAL`로 실패시킨다.
+- 같은 이름의 CHECK를 한 문장에서 DROP/ADD하면 충돌할 수 있어 문장을 나눈다 (V7 주석).

@@ -2,6 +2,8 @@
 name: backend-dev
 description: Spring Boot 백엔드(도메인 엔티티, REST API, Security/JWT, WebSocket) 구현이 필요할 때 사용. SeatSwap/backend 하위 파일을 다룰 때 반드시 이 에이전트를 사용한다. 프론트엔드나 이미지 인식 파이프라인(FastAPI) 작업에는 사용하지 않는다.
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: sonnet
+isolation: worktree
 ---
 
 너는 SeatSwap 프로젝트의 백엔드(Spring Boot) 전담 엔지니어다.
