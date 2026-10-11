@@ -1,5 +1,6 @@
 package com.seatswap.service;
 
+import com.seatswap.domain.ExchangeHistory;
 import com.seatswap.domain.ExchangeMatch;
 import com.seatswap.domain.ExchangeMatch.Side;
 import com.seatswap.domain.ExchangeMatchAction;
@@ -12,6 +13,7 @@ import com.seatswap.exception.ConflictException;
 import com.seatswap.exception.ForbiddenException;
 import com.seatswap.exception.NotFoundException;
 import com.seatswap.repository.ExchangeCandidateRepository;
+import com.seatswap.repository.ExchangeHistoryRepository;
 import com.seatswap.repository.ExchangeMatchQueryRepository;
 import com.seatswap.repository.ExchangeMatchRepository;
 import com.seatswap.repository.ExchangeRequestRepository;
@@ -32,14 +34,14 @@ import java.util.Map;
  * 매칭 생성(후보 선택 -> 채팅 시작)과 예약·예약 취소·거절·취소 (설계 1.7, 1.8, 3절, 10절).
  * 매칭은 조건 일치 판정으로 찾은 후보를 사용자가 골라 시작하고 점수화·랭킹·신뢰도는 쓰지 않는다. 흐름은
  * 후보 선택 -> 채팅(CHATTING, 한 요청에 여러 개 동시) -> 둘 중 한 명이 예약(RESERVED, 두 티켓 잠금, 티켓당 1개, 8차 답변)
- * -> (이번 범위 밖) 양도 후 양쪽 '교환 수락' -> COMPLETED. 예약은 누구든 취소할 수 있고(CHATTING 복귀, 매칭·채팅 유지, 같은 쌍 재예약 가능, 횟수 제한 없음),
+ * -> 양도 후 양쪽 '교환 수락'(complete) -> COMPLETED. 예약은 누구든 취소할 수 있고(CHATTING 복귀, 매칭·채팅 유지, 같은 쌍 재예약 가능, 횟수 제한 없음),
  * 채팅 종료(cancel)·거절(reject)은 예약 취소 후에만 가능하다. 재매칭 불가는 차단·신고뿐이다.
  *
  * <h3>허용/불허 상태 전이 표 ({@link ExchangeMatch#isAllowed})</h3>
  * <pre>
  *            PROPOSE  RESERVE   UNRESERVE  REJECT(b측)  CANCEL  COMPLETE
  * CHATTING   409      허용       멱등 200   허용         허용    409 (예약 전)
- * RESERVED   409      멱등 200   허용       409          409     허용 (미구현)
+ * RESERVED   409      멱등 200   허용       409          409     허용 (내가 이미 수락했으면 멱등 200)
  * COMPLETED  허용*    409        409        409          409     409
  * CANCELED   허용*    409        409        409          409     409
  * </pre>
@@ -57,6 +59,9 @@ import java.util.Map;
  *   <li>reserve: 두 참여자 누구나. CHATTING 이면 즉시 RESERVED(reserved_by_id = 호출자, reserved_at)가 되고 두 티켓에 exchange_ticket_lock 을
  *       티켓 id 오름차순으로 한 트랜잭션에서 INSERT 한다. 이미 RESERVED 면 누가 눌렀든 멱등 200(아무것도 쓰지 않음). 어느 티켓이든 이미 다른 매칭에서
  *       잠겼으면 409 TICKET_ALREADY_RESERVED (같은 티켓의 두 매칭이 동시에 예약하려 하면 하나만 RESERVED). 회차 마감 검사는 하지 않는다(6차 확정).</li>
+ *   <li>complete: 예약된(RESERVED) 매칭에서 참여자가 '교환 수락'. 첫 수락(상대 미수락)은 내 수락 시각(a/b_completed_at)만 기록하고 RESERVED 를 유지한다.
+ *       상대가 이미 수락했으면 같은 트랜잭션에서 완료한다(아래 COMPLETED 참고). 내가 이미 수락했으면 멱등 200(쓰기 없음). CHATTING 이면 409(예약한 뒤에 교환 수락할 수 있어요),
+ *       CANCELED·COMPLETED 도 409 MATCH_STATE_CONFLICT. 회차 마감 검사와 사용자당 활성 티켓 20개 상한 검사는 하지 않는다(교환은 활성 수를 바꾸지 않는다).</li>
  *   <li>unreserve: 두 참여자 누구나(예약한 사람이 아니어도). RESERVED -> CHATTING, reserved_*·a/b_completed_at 초기화, 잠금 2행 삭제. CHATTING 이면 멱등 200.</li>
  *   <li>reject: 제안받은 쪽(b)이 CHATTING 에서 거절. cancel: 참여자 누구나 CHATTING 에서 취소. 둘 다 결과는 CANCELED (canceled_by = 호출자).
  *       RESERVED 에서는 둘 다 409 이다. reject 를 제안자(a)가 부르면 403. 매칭 참여자가 아니면 없는 매칭과 같은 404(존재 은닉).</li>
@@ -70,10 +75,12 @@ import java.util.Map;
  * 최종 방어선은 DB 제약이다: uk_exchange_match_open_pair(같은 쌍 열린 매칭 1개), exchange_ticket_lock PK(티켓당 예약 1개), ck_exchange_match_reserved(V8).
  * 불변식: exchange_ticket_lock 행이 있는 매칭 <=> status = RESERVED, 그리고 정확히 2행.
  *
- * <h3>COMPLETED(이번 범위 밖)와 티켓 처리 규칙 (8차 답변, 2026-10-09, 구현 예정)</h3>
- * <b>COMPLETED 시점(양쪽이 '교환 수락'을 누르는 순간)에 한 트랜잭션에서 기존 두 티켓을 EXCHANGED 로 바꾸고 각자 새 자리 티켓을 INSERT</b>한다. 한쪽만 수락했을 때
- * 먼저 처리하면 안 되므로 그 전에는 수락 시각(a/b_completed_at)만 기록한다. 기존 티켓을 먼저 EXCHANGED 로 바꿔 uk_ticket_active_seat 에서 빼므로 임시 INACTIVE 순서는 필요 없다.
- * 이력 스냅샷 2행(old_ticket_id/new_ticket_id)을 남기고, 같은 티켓들의 다른 열린 매칭은 시스템 취소하고 잠금을 푼다. 채팅 메시지·교환 이력·차단은 후속이다.
+ * <h3>COMPLETED와 티켓 처리 규칙 (8차 답변, 2026-10-09 / Q-15 확정)</h3>
+ * <b>COMPLETED 시점(양쪽이 '교환 수락'을 누르는 순간)에 한 트랜잭션에서</b> ①기존 두 티켓을 EXCHANGED 로 바꾸고(flush 로 uk_ticket_active_seat 에서 먼저 뺀다 - Hibernate 는 INSERT 를 UPDATE 보다
+ * 먼저 실행하므로 명시적 flush 가 필요하다) ②각자 새 자리 티켓(소유자 그대로, 상대의 기존 회차·구역·열·번)을 INSERT ③exchange_history 2행(스냅샷, old/new_ticket_id) ④두 기존 요청을 CLOSED
+ * ⑤예약 잠금 2행 삭제 ⑥매칭을 COMPLETED(reserved_* NULL)로 바꾼다. 한쪽만 수락했을 때는 수락 시각만 기록한다. 매칭 행의 티켓 id 는 교환 전 티켓 그대로다.
+ * <b>같은 티켓들의 다른 CHATTING 매칭은 자동 취소하지 않는다</b>(Q-15). 그 매칭 카드는 응답의 myTicketExchanged/counterpartTicketExchanged 로 "이미 교환된 좌석이에요"를 보여 주고,
+ * 서버는 안전장치로 그 매칭의 새 reserve 를 409 TICKET_EXCHANGED 로 막는다. 채팅 메시지·차단은 후속이다.
  *
  * 공연 시작 후에도 예약·예약 취소·취소가 가능하다. 이미 시작한 채팅의 reserve/unreserve 에는 회차 마감 검사를 하지 않는다(새 매칭 생성에만 적용).
  */
@@ -100,12 +107,16 @@ public class ExchangeMatchService {
     static final String ALREADY_RESERVED_CODE = "TICKET_ALREADY_RESERVED";
     static final String ALREADY_RESERVED_MESSAGE = "이 매칭의 티켓이 이미 다른 매칭에서 예약되어 있어 예약할 수 없습니다.";
     static final String UNRESERVE_FIRST_MESSAGE = "먼저 예약을 취소해주세요.";
+    static final String RESERVE_FIRST_MESSAGE = "예약한 뒤에 교환 수락할 수 있어요.";
+    static final String TICKET_EXCHANGED_CODE = "TICKET_EXCHANGED";
+    static final String TICKET_EXCHANGED_MESSAGE = "이미 교환된 좌석이에요.";
 
     private final ExchangeMatchRepository matchRepository;
     private final ExchangeRequestRepository requestRepository;
     private final TicketRepository ticketRepository;
     private final ExchangeTicketLockRepository lockRepository;
     private final ExchangeCandidateRepository candidateRepository;
+    private final ExchangeHistoryRepository historyRepository;
     private final ExchangeMatchQueryRepository queryRepository;
     private final SessionTimePolicy timePolicy;
     private final TransactionTemplate tx;
@@ -115,6 +126,7 @@ public class ExchangeMatchService {
                                 TicketRepository ticketRepository,
                                 ExchangeTicketLockRepository lockRepository,
                                 ExchangeCandidateRepository candidateRepository,
+                                ExchangeHistoryRepository historyRepository,
                                 ExchangeMatchQueryRepository queryRepository,
                                 SessionTimePolicy timePolicy,
                                 PlatformTransactionManager transactionManager) {
@@ -123,6 +135,7 @@ public class ExchangeMatchService {
         this.ticketRepository = ticketRepository;
         this.lockRepository = lockRepository;
         this.candidateRepository = candidateRepository;
+        this.historyRepository = historyRepository;
         this.queryRepository = queryRepository;
         this.timePolicy = timePolicy;
         this.tx = new TransactionTemplate(transactionManager);
@@ -228,6 +241,81 @@ public class ExchangeMatchService {
         return act(userId, matchId, ExchangeMatchAction.CANCEL);
     }
 
+    /**
+     * 교환 수락. 잠금 순서는 다른 동작과 같다(티켓 id↑ -> 요청 id↑ -> 매칭 FOR UPDATE, 잠금 읽기가 트랜잭션의 첫 쿼리들).
+     * 같은 매칭의 두 사람이 동시에 눌러도 직렬화되어 COMPLETED 는 정확히 한 번 일어난다.
+     */
+    public ExchangeMatchResponse complete(Long userId, Long matchId) {
+        ExchangeMatch pre = matchRepository.findById(matchId)
+                .orElseThrow(() -> new NotFoundException(MATCH_NOT_FOUND_MESSAGE));
+        Side side = pre.sideOf(userId);
+        if (side == null) {
+            throw new NotFoundException(MATCH_NOT_FOUND_MESSAGE);
+        }
+        return tx.execute(status -> {
+            Map<Long, Ticket> tickets = lockTickets(List.of(pre.getTicketAId(), pre.getTicketBId()));
+            Map<Long, ExchangeRequest> requests = lockRequests(List.of(pre.getRequestAId(), pre.getRequestBId()));
+            ExchangeMatch m = matchRepository.findByIdForUpdate(matchId)
+                    .orElseThrow(() -> new NotFoundException(MATCH_NOT_FOUND_MESSAGE));
+            if (!ExchangeMatch.isAllowed(m.getStatus(), ExchangeMatchAction.COMPLETE)) {
+                throw m.getStatus() == ExchangeMatchStatus.CHATTING
+                        ? new ConflictException(RESERVE_FIRST_MESSAGE, Map.of("code", STATE_CONFLICT_CODE,
+                                "status", m.getStatus().name(), "action", ExchangeMatchAction.COMPLETE.name()))
+                        : stateConflict(m.getStatus(), ExchangeMatchAction.COMPLETE);
+            }
+            if (m.hasAccepted(side)) {
+                return view(m.getId(), userId);   // 멱등: 내가 이미 수락했다. 아무것도 쓰지 않는다.
+            }
+            ensureCompletable(m, tickets.values(), requests.values());
+            LocalDateTime now = timePolicy.now();
+            m.markAccepted(side, now);
+            Side other = side == Side.A ? Side.B : Side.A;
+            if (!m.hasAccepted(other)) {
+                matchRepository.saveAndFlush(m);   // 첫 수락: 수락 시각만 기록, RESERVED 유지
+            } else {
+                doComplete(m, tickets.get(m.getTicketAId()), tickets.get(m.getTicketBId()), now);
+            }
+            return view(m.getId(), userId);
+        });
+    }
+
+    /** 불변식: RESERVED 매칭이면 두 티켓 ACTIVE·두 요청 OPEN·잠금 정확히 2행. 깨졌으면 IllegalStateException 으로 되돌린다. */
+    private void ensureCompletable(ExchangeMatch m, java.util.Collection<Ticket> tickets, java.util.Collection<ExchangeRequest> requests) {
+        if (tickets.stream().anyMatch(t -> !t.isActive()) || requests.stream().anyMatch(rq -> !rq.isOpen())
+                || lockRepository.countByMatchId(m.getId()) != 2) {
+            throw new IllegalStateException("RESERVED 매칭의 불변식 위반: matchId=" + m.getId());
+        }
+    }
+
+    /** 양쪽 수락 완료. 모든 단계가 한 트랜잭션이다(순서가 중요하다: 기존 티켓 EXCHANGED + flush -> 새 티켓 INSERT). */
+    private void doComplete(ExchangeMatch m, Ticket oldA, Ticket oldB, LocalDateTime now) {
+        // a/b. 기존 두 티켓을 닫고 즉시 flush: Hibernate 는 INSERT 를 UPDATE 보다 먼저 실행하므로, 이 flush 없이는 새 티켓 INSERT 가
+        // 아직 ACTIVE 인 기존 티켓과 uk_ticket_active_seat(회차·구역·열·번) 에서 충돌할 수 있다.
+        oldA.markExchanged();
+        oldB.markExchanged();
+        ticketRepository.flush();
+        // c. 새 자리 티켓: 소유자는 그대로, 회차·구역·열·번은 상대의 기존 티켓 값. (활성 20개 상한 검사 없음: 활성 수가 변하지 않는다)
+        Ticket newA = ticketRepository.saveAndFlush(Ticket.exchangedFrom(oldA.getUser(), oldB));
+        Ticket newB = ticketRepository.saveAndFlush(Ticket.exchangedFrom(oldB.getUser(), oldA));
+        // d. 이력 2행(스냅샷). 잠금 없는 일반 조회로 회차·공연을 읽는다.
+        Ticket oldAWithSession = ticketRepository.findWithSessionById(oldA.getId()).orElse(oldA);
+        Ticket oldBWithSession = ticketRepository.findWithSessionById(oldB.getId()).orElse(oldB);
+        historyRepository.save(ExchangeHistory.of(m.getId(), oldAWithSession, newA));
+        historyRepository.save(ExchangeHistory.of(m.getId(), oldBWithSession, newB));
+        historyRepository.flush();
+        // e. 기존 티켓의 요청은 CLOSED(status = OPEN 조건 유지). 그 티켓의 다른 CHATTING 매칭은 취소하지 않는다(Q-15).
+        requestRepository.closeByTicketId(oldA.getId(), now);
+        requestRepository.closeByTicketId(oldB.getId(), now);
+        // f. 예약 잠금 해제
+        int deleted = lockRepository.deleteByMatchId(m.getId());
+        if (deleted != 2) {
+            throw new IllegalStateException("RESERVED 매칭의 예약 잠금이 2행이 아닙니다: matchId=" + m.getId() + ", rows=" + deleted);
+        }
+        // g. COMPLETED (reserved_* 는 같은 문장에서 NULL)
+        m.complete(now);
+        matchRepository.saveAndFlush(m);
+    }
+
     private ExchangeMatchResponse act(Long userId, Long matchId, ExchangeMatchAction action) {
         // 트랜잭션 밖의 읽기: 티켓·요청·사용자 id 는 바뀌지 않으므로 잠금 대상과 참여 여부를 미리 확정할 수 있다.
         ExchangeMatch pre = matchRepository.findById(matchId)
@@ -259,6 +347,10 @@ public class ExchangeMatchService {
                 LocalDateTime now = timePolicy.now();
                 switch (action) {
                     case RESERVE -> {
+                        // 교환 완료로 닫힌 티켓은 일반 검사(TICKET_NOT_ACTIVE)보다 먼저 409 TICKET_EXCHANGED 로 구분한다.
+                        if (tickets.values().stream().anyMatch(Ticket::isExchanged)) {
+                            throw ticketExchanged();
+                        }
                         // 새 예약에만 적용(멱등 reserve·unreserve·reject·cancel 에는 없다): 이미 열린 매칭이라도 닫힌 요청/내린 티켓은 예약할 수 없다.
                         ensureReservable(tickets.values(), requests.values());
                         doReserve(m, userId, now);
@@ -360,6 +452,10 @@ public class ExchangeMatchService {
             case COMPLETED -> "이미 교환이 완료된 매칭입니다.";
             case CHATTING, RESERVED -> "현재 상태(" + status + ")에서는 처리할 수 없습니다.";
         };
+    }
+
+    private static ConflictException ticketExchanged() {
+        return new ConflictException(TICKET_EXCHANGED_MESSAGE, Map.of("code", TICKET_EXCHANGED_CODE));
     }
 
     private static ConflictException alreadyReserved() {

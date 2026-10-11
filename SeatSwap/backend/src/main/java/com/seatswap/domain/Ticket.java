@@ -103,6 +103,22 @@ public class Ticket {
         return status == TicketStatus.ACTIVE;
     }
 
+    public boolean isExchanged() {
+        return status == TicketStatus.EXCHANGED;
+    }
+
+    /**
+     * 교환 완료 시 새 자리 티켓: 소유자는 그대로(owner), 회차·구역·열·번(label·key)은 상대의 기존 티켓에서 그대로 복사한다.
+     * 키는 이미 정규화된 값이므로 다시 정규화하지 않는다. 상태는 ACTIVE.
+     */
+    public static Ticket exchangedFrom(User owner, Ticket counterpartOld) {
+        requireNonNull(counterpartOld, "counterpartOld");
+        return create(owner, counterpartOld.performanceSession,
+                counterpartOld.zoneLabel, counterpartOld.zoneKey,
+                counterpartOld.rowLabel, counterpartOld.rowKey,
+                counterpartOld.colLabel, counterpartOld.colKey);
+    }
+
     /** 보유자 여부. LAZY 프록시의 id만 읽으므로 추가 쿼리가 나가지 않는다. */
     public boolean isOwnedBy(Long userId) {
         return userId != null && user != null && userId.equals(user.getId());
@@ -111,6 +127,14 @@ public class Ticket {
     /** 티켓 내리기(소프트 삭제). 이미 INACTIVE면 아무 일도 하지 않는다. */
     public void deactivate() {
         this.status = TicketStatus.INACTIVE;
+    }
+
+    /** 교환 완료로 기존 티켓을 닫는다. ACTIVE 에서만 가능하다(이미 내렸거나 교환된 티켓은 IllegalStateException). */
+    public void markExchanged() {
+        if (status != TicketStatus.ACTIVE) {
+            throw new IllegalStateException("ACTIVE 티켓만 교환 완료 처리할 수 있습니다: " + status);
+        }
+        this.status = TicketStatus.EXCHANGED;
     }
 
     private static String requireText(String value, int maxLength, String field) {

@@ -75,6 +75,12 @@ export const exchangeApi = {
     return data;
   },
 
+  /** POST /api/exchange/matches/{id}/complete — 교환 수락(본문 없음). 양쪽이 모두 누르면 COMPLETED. 내가 이미 수락했으면 멱등 200 */
+  async complete(matchId: number): Promise<ExchangeMatch> {
+    const { data } = await apiClient.post<ExchangeMatch>(`/exchange/matches/${matchId}/complete`);
+    return data;
+  },
+
   /** POST /api/exchange/matches/{id}/reject — 제안받은 쪽의 거절 (제안한 쪽이 부르면 403) */
   async reject(matchId: number): Promise<ExchangeMatch> {
     const { data } = await apiClient.post<ExchangeMatch>(`/exchange/matches/${matchId}/reject`);

@@ -15,6 +15,7 @@ import java.util.Optional;
 /**
  * 내 매칭 조회 (읽기 전용, 잠금 없음). 매칭 1건당 한 번의 조인으로 양쪽 티켓 좌석·회차·추가금 스냅샷·요청 삭제 여부·닉네임을 모두 읽어 N+1이 없다.
  * 호출자가 a측/b측인지는 SQL이 아니라 {@link Row#toResponse}가 가른다(양쪽을 항상 읽으므로 CASE 가 필요 없다).
+ * 티켓 교환 완료(EXCHANGED) 여부는 이미 조인한 ta/tb 의 status 로, '다른 매칭에서 예약 중'은 exchange_ticket_lock PK 점조회 EXISTS 서브쿼리로 계산한다(조인 폭증 없음).
  * 접근 경로: 내 사용자 id -> idx_exchange_match_user_a / user_b (ALL 이면 index_merge) -> 매칭 행 -> 나머지는 PK 점조회.
  * 전제: 목록은 INNER JOIN 8개, COUNT 는 exchange_match 만 센다. FK 때문에 고아 행이 없어 두 결과가 같다(users 익명화·티켓 삭제를 도입하면 LEFT JOIN 또는 COUNT 에도 같은 조인 필요).
  * STRAIGHT_JOIN: 소규모 테이블(회차 등)에서 옵티마이저가 작은 테이블부터 해시 조인으로 시작하는 것을 막고 매칭 행(사용자 인덱스)에서 시작하도록 고정한다.
@@ -36,6 +37,9 @@ public class ExchangeMatchQueryRepository {
                    psb.id AS b_session_id, psb.starts_at AS b_starts_at,
                    m.a_extra_type, m.a_extra_amount, m.b_extra_type, m.b_extra_amount,
                    ra.status AS a_request_status, rb.status AS b_request_status,
+                   ta.status AS a_ticket_status, tb.status AS b_ticket_status,
+                   EXISTS (SELECT 1 FROM exchange_ticket_lock la WHERE la.ticket_id = ta.id AND la.match_id <> m.id) AS a_reserved_elsewhere,
+                   EXISTS (SELECT 1 FROM exchange_ticket_lock lb WHERE lb.ticket_id = tb.id AND lb.match_id <> m.id) AS b_reserved_elsewhere,
                    ua.nickname AS a_nickname, ub.nickname AS b_nickname
             FROM exchange_match m
             JOIN ticket ta               ON ta.id = m.ticket_a_id
@@ -64,6 +68,8 @@ public class ExchangeMatchQueryRepository {
                       ExchangeMatchResponse.Seat aSeat, ExchangeMatchResponse.Seat bSeat,
                       String aExtraType, Integer aExtraAmount, String bExtraType, Integer bExtraAmount,
                       boolean aRequestDeleted, boolean bRequestDeleted,
+                      boolean aTicketExchanged, boolean bTicketExchanged,
+                      boolean aReservedElsewhere, boolean bReservedElsewhere,
                       String aNickname, String bNickname) {
 
         public ExchangeMatchResponse toResponse(Long userId) {
@@ -84,6 +90,8 @@ public class ExchangeMatchQueryRepository {
                     mineIsA ? aExtraType : bExtraType, mineIsA ? aExtraAmount : bExtraAmount,
                     mineIsA ? bExtraType : aExtraType, mineIsA ? bExtraAmount : aExtraAmount,
                     mineIsA ? aRequestDeleted : bRequestDeleted, mineIsA ? bRequestDeleted : aRequestDeleted,
+                    mineIsA ? aTicketExchanged : bTicketExchanged, mineIsA ? bTicketExchanged : aTicketExchanged,
+                    mineIsA ? aReservedElsewhere : bReservedElsewhere, mineIsA ? bReservedElsewhere : aReservedElsewhere,
                     reservedBy, reservedAt, mineIsA ? aAccepted : bAccepted, mineIsA ? bAccepted : aAccepted,
                     canceledBy, canceledAt, createdAt, updatedAt);
         }
@@ -152,6 +160,8 @@ public class ExchangeMatchQueryRepository {
                 rs.getString("a_extra_type"), (Integer) rs.getObject("a_extra_amount"),
                 rs.getString("b_extra_type"), (Integer) rs.getObject("b_extra_amount"),
                 "DELETED".equals(rs.getString("a_request_status")), "DELETED".equals(rs.getString("b_request_status")),
+                "EXCHANGED".equals(rs.getString("a_ticket_status")), "EXCHANGED".equals(rs.getString("b_ticket_status")),
+                rs.getBoolean("a_reserved_elsewhere"), rs.getBoolean("b_reserved_elsewhere"),
                 rs.getString("a_nickname"), rs.getString("b_nickname"));
     }
 }

@@ -14,7 +14,11 @@ import java.time.LocalDateTime;
  * myRequestDeleted / counterpartRequestDeleted 는 그 쪽 교환 요청이 삭제(DELETED)됐는지다(삭제돼도 매칭 기록은 남는다).
  * reservedBy 는 RESERVED 일 때 예약한 사람: ME / COUNTERPART (그 외 상태는 null), reservedAt 은 그 시각(RESERVED 일 때만 값).
  * 예약은 둘 중 한 명이 하고 누구든 취소할 수 있다(8차 답변). myAccepted / counterpartAccepted 는 '교환 수락'(a/b_completed_at) 표시이며
- * 교환 수락 기능이 아직 없어 지금은 항상 false 다(예약 취소 시 초기화된다).
+ * 예약 취소 시 초기화된다. 둘 다 true 가 되는 순간 매칭이 COMPLETED 가 된다.
+ * myTicketExchanged / counterpartTicketExchanged 는 그 쪽 티켓이 교환 완료(status = EXCHANGED)로 닫혔는지다(다른 매칭의 완료로 EXCHANGED 가 된 좌석이 걸린
+ * CHATTING 매칭 카드에서 "이미 교환된 좌석이에요"를 보여주는 근거. COMPLETED 매칭 자신의 두 티켓도 true 다).
+ * myTicketReservedElsewhere / counterpartTicketReservedElsewhere 는 그 쪽 티켓이 이 매칭이 아닌 다른 매칭의 예약 잠금에 걸려 있는지다
+ * (CHATTING 카드에서만 의미가 있다. 이 매칭이 RESERVED 일 때 자기 잠금은 세지 않는다).
  * status 가 RESERVED 이면 두 티켓이 잠겨 있다. canceledBy 는 CANCELED 일 때만: ME / COUNTERPART / SYSTEM.
  */
 public record ExchangeMatchResponse(
@@ -35,6 +39,10 @@ public record ExchangeMatchResponse(
         Integer counterpartExtraAmount,
         boolean myRequestDeleted,
         boolean counterpartRequestDeleted,
+        boolean myTicketExchanged,
+        boolean counterpartTicketExchanged,
+        boolean myTicketReservedElsewhere,
+        boolean counterpartTicketReservedElsewhere,
         String reservedBy,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = DateTimeFormats.SECOND)
         LocalDateTime reservedAt,

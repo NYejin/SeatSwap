@@ -123,4 +123,59 @@ class ExchangeMatchTest {
 
         assertThatThrownBy(() -> m.cancel(1L, NOW)).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void markAcceptedRecordsOnlyCallersSideAndIsIdempotent() {
+        ExchangeMatch m = match();
+        m.reserve(1L, NOW);
+
+        m.markAccepted(Side.A, NOW.plusMinutes(1));
+        m.markAccepted(Side.A, NOW.plusMinutes(9));   // 두 번째는 시각을 덮어쓰지 않는다
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.RESERVED);
+        assertThat(m.getACompletedAt()).isEqualTo(NOW.plusMinutes(1));
+        assertThat(m.getBCompletedAt()).isNull();
+        assertThat(m.hasAccepted(Side.A)).isTrue();
+        assertThat(m.hasAccepted(Side.B)).isFalse();
+        assertThat(m.getReservedById()).isEqualTo(1L);
+    }
+
+    @Test
+    void markAcceptedRequiresReservedAndAParticipant() {
+        ExchangeMatch chatting = match();
+        assertThatThrownBy(() -> chatting.markAccepted(Side.A, NOW)).isInstanceOf(IllegalStateException.class);
+        ExchangeMatch reserved = match();
+        reserved.reserve(1L, NOW);
+        assertThatThrownBy(() -> reserved.markAccepted(null, NOW)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void completeClearsReservedColumnsAndKeepsBothAcceptMarks() {
+        ExchangeMatch m = match();
+        m.reserve(1L, NOW);
+        m.markAccepted(Side.A, NOW.plusMinutes(1));
+        m.markAccepted(Side.B, NOW.plusMinutes(2));
+
+        m.complete(NOW.plusMinutes(2));
+
+        assertThat(m.getStatus()).isEqualTo(ExchangeMatchStatus.COMPLETED);
+        assertThat(m.getReservedById()).isNull();
+        assertThat(m.getReservedAt()).isNull();
+        assertThat(m.getACompletedAt()).isNotNull();
+        assertThat(m.getBCompletedAt()).isNotNull();
+        assertThat(m.getTicketAId()).as("매칭 행의 티켓은 교환 전 티켓").isEqualTo(700L);
+        assertThat(m.isOpen()).isFalse();
+        assertThatThrownBy(() -> m.cancel(1L, NOW)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(m::unreserve).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void completeNeedsReservedAndBothAccepted() {
+        ExchangeMatch chatting = match();
+        assertThatThrownBy(() -> chatting.complete(NOW)).isInstanceOf(IllegalStateException.class);
+        ExchangeMatch oneAccepted = match();
+        oneAccepted.reserve(1L, NOW);
+        oneAccepted.markAccepted(Side.A, NOW);
+        assertThatThrownBy(() -> oneAccepted.complete(NOW)).isInstanceOf(IllegalStateException.class);
+    }
 }

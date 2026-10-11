@@ -102,7 +102,7 @@ export interface MatchSeat {
 /**
  * 매칭 (호출자 기준). POST proposals/reserve/unreserve/reject/cancel 응답, GET /matches/me 항목, GET /matches/{id}가 같은 모양이다.
  * RESERVED일 때 reservedBy가 예약한 쪽이다(ME 또는 COUNTERPART, 그 외 null).
- * myAccepted/counterpartAccepted는 '교환 수락' 여부(교환 수락 기능 구현 전에는 서버가 항상 false).
+ * myAccepted/counterpartAccepted는 '교환 수락' 여부. COMPLETED의 좌석은 항상 교환 전 자리다.
  */
 export interface ExchangeMatch {
   id: number;
@@ -127,6 +127,12 @@ export interface ExchangeMatch {
   reservedAt: string | null;
   myAccepted: boolean;
   counterpartAccepted: boolean;
+  /** 내/상대 티켓이 교환 완료로 EXCHANGED가 됐는지 (그 티켓이 걸린 CHATTING 카드에서 예약 불가 안내용) */
+  myTicketExchanged: boolean;
+  counterpartTicketExchanged: boolean;
+  /** 내/상대 티켓이 이 매칭이 아닌 다른 매칭에서 예약 잠금 중인지 (CHATTING 카드에서만 의미) */
+  myTicketReservedElsewhere: boolean;
+  counterpartTicketReservedElsewhere: boolean;
   canceledBy: CanceledBy | null;
   canceledAt: string | null;
   createdAt: string;

@@ -67,4 +67,41 @@ class TicketDomainTest {
         assertThat(PerformanceSession.create(session.getPerformance(), LocalDateTime.of(2026, 11, 1, 23, 50))
                 .registrationDeadline()).isEqualTo(LocalDateTime.of(2026, 11, 2, 0, 0));
     }
+
+    @Test
+    void markExchangedOnlyFromActive() {
+        Ticket ticket = ticket();
+
+        ticket.markExchanged();
+
+        assertThat(ticket.getStatus()).isEqualTo(TicketStatus.EXCHANGED);
+        assertThat(ticket.isExchanged()).isTrue();
+        assertThat(ticket.isActive()).isFalse();
+        assertThatThrownBy(ticket::markExchanged).isInstanceOf(IllegalStateException.class);
+
+        Ticket inactive = ticket();
+        inactive.deactivate();
+        assertThatThrownBy(inactive::markExchanged).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void exchangedFromKeepsOwnerAndCopiesCounterpartSeat() {
+        User other = userWithId(2L);
+        PerformanceSession otherSession = PerformanceSession.create(session.getPerformance(), LocalDateTime.of(2026, 11, 2, 19, 0));
+        Ticket theirs = Ticket.create(other, otherSession, "2층 B", "2층B", "7열", "7", "9번", "9");
+
+        Ticket mineNew = Ticket.exchangedFrom(owner, theirs);
+
+        assertThat(mineNew.getUser()).isSameAs(owner);
+        assertThat(mineNew.getPerformanceSession()).isSameAs(otherSession);
+        assertThat(mineNew.getZoneLabel()).isEqualTo("2층 B");
+        assertThat(mineNew.getZoneKey()).isEqualTo("2층B");
+        assertThat(mineNew.getRowLabel()).isEqualTo("7열");
+        assertThat(mineNew.getRowKey()).isEqualTo("7");
+        assertThat(mineNew.getColLabel()).isEqualTo("9번");
+        assertThat(mineNew.getColKey()).isEqualTo("9");
+        assertThat(mineNew.isActive()).isTrue();
+        assertThat(mineNew.getId()).isNull();
+        assertThatThrownBy(() -> Ticket.exchangedFrom(owner, null)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

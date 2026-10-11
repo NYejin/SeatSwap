@@ -2,7 +2,7 @@
 title: 잠금 순서와 인덱스·유니크 키 함정
 type: gotcha
 tags: [mysql, 교착, 인덱스, flyway, 동시성]
-sources: [산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/db/migration/V8__exchange_match_single_reserve.sql, CLAUDE.md]
+sources: [SeatSwap/backend/src/main/resources/db/migration/V9__exchange_complete_history.sql, 산출물/08_ERD/exchange-schema-design.md, SeatSwap/backend/README.md, SeatSwap/backend/src/main/resources/db/migration/V3__ticket_seat_columns.sql, SeatSwap/backend/src/main/resources/db/migration/V5__exchange_match_tables.sql, SeatSwap/backend/src/main/resources/db/migration/V7__exchange_request_soft_delete.sql, SeatSwap/backend/src/main/resources/db/migration/V8__exchange_match_single_reserve.sql, CLAUDE.md]
 updated: 2026-10-11
 confidence: high
 status: draft
@@ -39,7 +39,7 @@ status: draft
 
 함정:
 - 매칭 쌍 유니크는 a, b 순서가 달라도 같은 쌍으로 잡도록 `LEAST`/`GREATEST` 생성 컬럼을 쓴다.
-- 티켓 상태에 새 값(`EXCHANGED`)을 추가하면 `active_flag`는 NULL이 되어 자동으로 슬롯을 비운다. 다만 `ck_ticket_status`(V3, `ACTIVE`·`INACTIVE`만 허용)는 확장해야 하며, 확장은 V9 이후 새 마이그레이션에서 한다(아직 없음).
+- 티켓 상태에 새 값(`EXCHANGED`)을 추가하면 `active_flag`는 NULL이 되어 자동으로 슬롯을 비운다. `ck_ticket_status`(V3는 `ACTIVE`·`INACTIVE`만 허용)는 V9에서 `EXCHANGED`를 허용하도록 확장됐다.
 - 한 티켓이 어떤 매칭에서는 a측, 다른 매칭에서는 b측일 수 있어 매칭 테이블의 유니크 하나로는 티켓당 예약 1개를 못 막는다. 그래서 `exchange_ticket_lock`의 PK(`ticket_id`)를 쓴다 (설계 3.2절).
 - 생성 컬럼은 UPDATE 대상이 아니다. 요청 CLOSED 처리 쿼리는 `status = OPEN` 조건을 유지해야 한다. 없으면 DELETED 요청을 되살려 `live_flag`가 1이 되고 유일 키를 위반할 수 있다 (`ExchangeRequestRepository` 주석).
 - RESERVED를 벗어나는 모든 UPDATE는 같은 문장에서 `reserved_by_id`·`reserved_at`을 NULL로 만들어야 `ck_exchange_match_reserved`를 통과한다 (V8 주석).
@@ -62,5 +62,11 @@ status: draft
 
 - Flyway는 체크섬을 저장하므로 적용된 파일을 고치면 기동 시 체크섬 불일치로 앱이 뜨지 않는다 (CLAUDE.md의 티켓 등록 항목: 로컬 DB에 V3가 적용돼 있어 V3 파일을 수정하면 기동되지 않는다).
 - 스키마 변경은 새 V 파일로만 한다 (README 규칙). 낡은 주석도 그대로 둔다. 예: V5 주석의 "양쪽이 눌러야 RESERVED" 설명은 V8로 낡았고, V8 주석에 변경 사실을 적었다.
+- V9의 `exchange_history`는 `old_ticket_id`, `new_ticket_id`에 각각 단일 컬럼 UNIQUE를 둔다. 이 유니크 키가 FK 인덱스를 겸한다. 일부러 (match, user) 같은 복합 UNIQUE를 두지 않았다. 복합 UNIQUE가 match FK 인덱스로 쓰이면 2절과 같은 FK 인덱스 문제가 생길 수 있어서다. match/user/performance FK는 단일 컬럼 KEY다.
 - V2·V6·V7·V8은 중간 실패 후 `flyway repair`로 이어서 재적용할 수 있게 INFORMATION_SCHEMA 가드 프로시저 패턴을 쓴다. V3·V8은 데이터가 조건에 안 맞으면 아무것도 바꾸기 전에 `SIGNAL`로 실패시킨다.
 - 같은 이름의 CHECK를 한 문장에서 DROP/ADD하면 충돌할 수 있어 문장을 나눈다 (V7 주석).
+
+## 7. Hibernate flush 순서와 유니크 키
+
+- 증상: 한 트랜잭션에서 "기존 티켓 UPDATE, 새 티켓 INSERT" 순서로 호출해도 Hibernate는 flush 때 INSERT를 UPDATE보다 먼저 실행한다. 3절의 `uk_ticket_active_seat`는 UPDATE가 먼저 나가야 슬롯이 비므로, 순서가 뒤집히면 유니크 위반이 난다.
+- 해결: UPDATE 직후 명시적으로 flush해 순서를 강제한 뒤 INSERT한다. 교환 완료가 이 경우다 ([근거 페이지](../decisions/exchange-complete-new-ticket.md)). 유니크 키가 걸린 "비우고 채우기"는 이 점을 테스트(실제 MySQL IT)로 확인한다.

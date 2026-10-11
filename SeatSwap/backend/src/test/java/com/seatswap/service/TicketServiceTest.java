@@ -314,6 +314,24 @@ class TicketServiceTest {
         verify(lockRepository, never()).existsByTicketId(anyLong());
     }
 
+    @Test
+    void 교환_완료된_EXCHANGED_티켓은_내릴_수_없고_409_TICKET_EXCHANGED다() {
+        Ticket ticket = ticketOf(me, TicketStatus.ACTIVE);
+        ticket.markExchanged();
+        when(ticketRepository.findByIdForUpdate(500L)).thenReturn(Optional.of(ticket));
+
+        assertThatThrownBy(() -> service.deactivate(1L, 500L))
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.getMessage()).isEqualTo(TicketService.TICKET_EXCHANGED_MESSAGE);
+                    assertThat(e.getDetails()).containsEntry("code", "TICKET_EXCHANGED");
+                });
+
+        assertThat(ticket.getStatus()).isEqualTo(TicketStatus.EXCHANGED);
+        verify(exchangeRequestRepository, never()).closeByTicketId(anyLong(), any());
+        verify(matchRepository, never()).cancelChattingByTicketA(anyLong(), any());
+        verify(matchRepository, never()).cancelChattingByTicketB(anyLong(), any());
+    }
+
     private TicketService serviceAt(LocalDateTime now) {
         java.time.Clock clock = java.time.Clock.fixed(now.atZone(PerformanceFixtures.KST).toInstant(),
                 PerformanceFixtures.KST);

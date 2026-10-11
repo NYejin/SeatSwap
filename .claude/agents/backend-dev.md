@@ -14,9 +14,9 @@ Spring Boot 3.x, Spring Security(JWT), Spring Data JPA, WebSocket(STOMP), MySQL,
 `com.seatswap` 아래 `domain`(엔티티) · `controller` · `service` · `repository` · `config`(Security·WebSocket·Clock·JPA Auditing) · `security`(JwtTokenProvider) · `exception`(커스텀 예외 + GlobalExceptionHandler) · `dto`.
 
 ## 현재 범위
-- DB는 Flyway V1~V8, 10개 테이블. 다음 마이그레이션은 V9부터이고 적용된 V1~V8은 수정하지 않는다. 스키마 구조 변경은 직접 하지 말고 db-schema-architect에게 먼저 설계를 요청하라고 사용자에게 알린다. 엔티티는 `산출물/08_ERD/erd.dot`을 따른다.
-- 구현됨: 인증, 공연(등록·목록·상세·lookup만), 티켓, 교환 희망 조건(`/api/exchange/requests`), 후보 조회(`.../candidates`), 제안·예약(`.../proposals`, `/api/exchange/matches/{id}/reserve|unreserve|reject|cancel`), 매칭 조회(`/api/exchange/matches/me`, `/{id}`; 비참여자 404).
-- 미구현(V9 이후, 지시 전에는 시작하지 않음): 교환 수락·완료(COMPLETED), `exchange_history`, 채팅, 사용자 차단, 알림, 신고, 링크 기반 공연 정보 자동 입력, 관리자 기능.
+- DB는 Flyway V1~V9, 11개 테이블. 다음 마이그레이션은 V10부터이고 적용된 V1~V9는 수정하지 않는다. 스키마 구조 변경은 직접 하지 말고 db-schema-architect에게 먼저 설계를 요청하라고 사용자에게 알린다. 엔티티는 `산출물/08_ERD/erd.dot`을 따른다.
+- 구현됨: 인증, 공연(등록·목록·상세·lookup만), 티켓, 교환 희망 조건(`/api/exchange/requests`), 후보 조회(`.../candidates`), 제안·예약(`.../proposals`, `/api/exchange/matches/{id}/reserve|unreserve|complete|reject|cancel`), 매칭 조회(`/api/exchange/matches/me`, `/{id}`; 비참여자 404), 교환 완료(V9 `exchange_history` 기록 포함).
+- 미구현(V10 이후, 지시 전에는 시작하지 않음): 교환 이력 조회 API, 채팅, 사용자 차단, 알림, 신고, 링크 기반 공연 정보 자동 입력, 관리자 기능.
 - 좌석표 트랙은 동결이다. seatmap-service와 좌석표 코드는 삭제되어 태그 `archive/seatmap-track-20261007`에 보관된다. 좌석 인식(OpenCV/OCR)은 이 에이전트의 책임이 아니고, 좌석표 관련 새 기능은 사용자가 다시 지시하기 전에는 만들지 않는다.
 
 ## 도메인 규칙
@@ -27,7 +27,7 @@ Spring Boot 3.x, Spring Security(JWT), Spring Data JPA, WebSocket(STOMP), MySQL,
 - **회차 마감**: 회차 당일 끝(다음날 0시 KST)까지 티켓 등록·요청·매칭 허용, 이후 자동 비활성. 이미 시작한 채팅의 예약·취소에는 마감 검사를 하지 않는다.
 - **예약**: 한 명이 `reserve`하면 즉시 RESERVED + 두 티켓 `exchange_ticket_lock` INSERT(같은 트랜잭션, 이미 RESERVED면 멱등 200, 다른 매칭에서 잠겼으면 409 `TICKET_ALREADY_RESERVED`). 누구든 `unreserve`하면 CHATTING 복귀 + 잠금 해제 + `reserved_*`·`a/b_completed_at` 초기화(양쪽 완료 전). RESERVED에서 `cancel`·`reject`는 409 `MATCH_STATE_CONFLICT`(먼저 예약 취소). 예약된 티켓의 새 제안·새 예약만 막고 이미 열린 다른 채팅은 유지. 예약-취소 남용 방지 장치는 없다. RESERVED를 벗어나는 UPDATE는 같은 문장에서 `reserved_by_id`·`reserved_at`을 NULL로 만든다. `a/b_reserved_at`은 레거시라 읽지도 쓰지도 않는다.
 - **취소**: 양쪽 완료 전에는 누구든 취소 가능하고 재매칭 불가가 아니다(재매칭 불가는 차단·신고 때만). 한쪽만 완료하고 방치돼도 자동 완료·취소는 없고 7일 경과 알림만 보낸다(알림 미구현).
-- **교환 완료(구현 예정)**: 두 사람이 모두 '교환 수락'(API `complete`)하는 순간 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓(소유자 그대로, 상대의 기존 회차·구역·열·번)을 INSERT, `exchange_history`에 `(기존 자리) -> (바꾼 자리)` 스냅샷과 `old_ticket_id`/`new_ticket_id`를 남긴다. 매칭 행의 좌석은 교환 전 자리. 완료된 매칭은 취소 불가, EXCHANGED 티켓은 내리기 불가, `ck_ticket_status` 변경은 새 V 파일로. 기존 티켓의 교환 요청은 CLOSED로 닫는다. 교환 완료된 좌석의 다른 CHATTING 매칭은 자동 취소하지 않고 버튼 비활성 + "이미 교환된 좌석이에요" 표시. 근거: `wiki/decisions/exchange-complete-new-ticket.md`.
+- **교환 완료(구현됨, V9)**: 첫 '교환 수락'(API `complete`)은 `*_completed_at`만 기록하고 RESERVED를 유지한다. 두 번째가 한 트랜잭션에서 기존 두 티켓을 `EXCHANGED`로 바꾸고 각자 새 자리 티켓(소유자 그대로, 상대의 기존 회차·구역·열·번)을 INSERT, `exchange_history`에 `(기존 자리) -> (바꾼 자리)` 스냅샷과 `old_ticket_id`/`new_ticket_id`를 남긴다. 매칭 행의 좌석은 교환 전 자리. 완료된 매칭은 취소 불가, EXCHANGED 티켓은 내리기·예약 모두 409 `TICKET_EXCHANGED`. 기존 티켓의 교환 요청은 CLOSED로 닫는다. 잠금 순서(티켓 → 요청 → 매칭)와 마감 검사 없음은 서비스 Javadoc 참고. 교환 완료된 좌석의 다른 CHATTING 매칭은 자동 취소하지 않고 버튼 비활성 + "이미 교환된 좌석이에요" 표시. 근거: `wiki/decisions/exchange-complete-new-ticket.md`.
 - **공연**: 공연장은 `Performance.venueName` 텍스트(1~100자). 공연은 등록 후 아무도 수정·삭제할 수 없고 변경은 추후 관리자 '수정 제안'으로만 한다.
 
 ## 잠금·동시성 (`wiki/gotchas/lock-order-and-index-pitfalls.md`)
